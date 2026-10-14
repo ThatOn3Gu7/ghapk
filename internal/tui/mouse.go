@@ -1,0 +1,290 @@
+package tui
+
+import (
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/ghapk/ghapk/internal/tui/components"
+)
+
+// rect is an outer panel rectangle in screen cells.
+type rect struct {
+	x, y, w, h int
+}
+
+func (r rect) contains(px, py int) bool {
+	return px >= r.x && px < r.x+r.w && py >= r.y && py < r.y+r.h
+}
+
+// panelRects computes the exact geometry the dashboard renders with, so
+// mouse hit-testing can never drift from what is on screen. The layout
+// formulas here are the single source of truth — renderGrid uses them too.
+func (m Model) panelRects() map[PanelID]rect {
+	if m.compact {
+		bodyH := m.height - 2 - 1 // header + status + tab bar
+		return map[PanelID]rect{
+			m.focus: {0, 2, m.width, bodyH},
+		}
+	}
+	h := m.height - 2 // header + status
+	leftW := 26
+	if m.width > 130 {
+		leftW = 32
+	}
+	midW := (m.width - leftW) * 2 / 5
+	rightW := m.width - leftW - midW
+
+	lTop := h * 1 / 2
+	if lTop < 6 {
+		lTop = 6
+	}
+	lBot := h - lTop
+	mTop := runsPanelH(h)
+	mBot := h - mTop
+
+	return map[PanelID]rect{
+		PanelRepos:     {0, 1, leftW, lTop},
+		PanelWorkflows: {0, 1 + lTop, leftW, lBot},
+		PanelRuns:      {leftW, 1, midW, mTop},
+		PanelDevice:    {leftW, 1 + mTop, midW, mBot},
+		PanelArtifacts: {leftW + midW, 1, rightW, h},
+	}
+}
+
+// compactTabRects gives the clickable spans of the compact tab bar.
+// It mirrors renderCompact: each tab is " label " plus one join space,
+// where label comes from compactTabLabel (hotkey + name + live count).
+func (m Model) compactTabRects() map[PanelID]rect {
+	out := map[PanelID]rect{}
+	x := 0
+	for _, p := range FocusOrder {
+		w := len(m.compactTabLabel(p)) + 2 // one space padding on each side
+		out[p] = rect{x, 1, w, 1}
+		x += w + 1 // join space
+	}
+	return out
+}
+
+// splitFor returns the list/sub-box heights of a split panel (outer h).
+func (m Model) splitFor(p PanelID, r rect) (listH, subH int) {
+	switch p {
+	case PanelRepos:
+		bannerH, lH := reposSplit(r.h, len(m.repos.Items), r.w)
+		return lH, bannerH
+	case PanelWorkflows:
+		return flowsSplit(r.h, len(m.workflows.Items))
+	case PanelRuns:
+		return runsSplit(r.h, len(m.runs.Items))
+	case PanelArtifacts:
+		count := 0
+		if rRun, ok := m.selectedRun(); ok {
+			count = len(m.runCache[rRun.ID])
+		}
+		return artSplit(r.h, count)
+	}
+	return r.h - 2, 0
+}
+
+// panelCenterTop is the vertical offset of the list inside its panel.
+func panelCenterTop(p PanelID, r rect, l *components.List) int { return 0 }
+
+// panelListShown mirrors the visible lines of the list half of a panel.
+func (m Model) panelListShown(p PanelID, r rect, l *components.List) int {
+	listH, subH := m.splitFor(p, r)
+	if subH > 1 && listH > 0 {
+		return listH
+	}
+	return r.h - 2
+}
+
+// listOf returns the model's list for a panel, or nil for non-list panels.
+func (m *Model) listOf(p PanelID) *components.List {
+	switch p {
+	case PanelRepos:
+		return &m.repos
+	case PanelWorkflows:
+		return &m.workflows
+	case PanelRuns:
+		return &m.runs
+	case PanelArtifacts:
+		return &m.arts
+	}
+	return nil
+}
+
+// handleMouse implements click-to-focus, click-to-select,
+// click-again-to-activate, and wheel scrolling of the hovered panel.
+func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.screen != ScreenDashboard || m.modal != ModalNone {
+		return m, nil
+	}
+
+	switch msg.Type {
+
+	case tea.MouseWheelUp, tea.MouseWheelDown:
+		d := 3
+		if msg.Type == tea.MouseWheelUp {
+			d = -3
+		}
+		for p, r := range m.panelRects() {
+			if !r.contains(msg.X, msg.Y) {
+				continue
+			}
+			// In Workflows, scroll the YAML preview if hovering over the sub-box
+			if p == PanelWorkflows {
+				listH, subH := flowsSplit(r.h, len(m.workflows.Items))
+				subBoxTop := r.y + 1 + listH
+				if subH > 1 && msg.Y >= subBoxTop {
+					m.scrollWorkflowYAML(d)
+					return m, nil
+				}
+			}
+			if l := m.listOf(p); l != nil {
+				l.MoveBy(d)
+				// mouse scroll does not steal keyboard focus
+				switch p {
+				case PanelRuns:
+					return m, m.fetchArtifactsForSelection()
+				case PanelWorkflows:
+					m.wfScroll = 0
+					return m, m.fetchWorkflowForSelection()
+				}
+			}
+			return m, nil
+		}
+		return m, nil
+
+	case tea.MouseLeft:
+		if m.compact {
+			for p, r := range m.compactTabRects() {
+				if r.contains(msg.X, msg.Y) {
+					m.focus = p
+					m.wfYAMLFocused = false
+					return m, nil
+				}
+			}
+		}
+		for p, r := range m.panelRects() {
+			if !r.contains(msg.X, msg.Y) {
+				continue
+			}
+			m.focus = p
+			l := m.listOf(p)
+			if l == nil {
+				m.wfYAMLFocused = false
+				return m, nil
+			}
+
+			if p == PanelRepos {
+				bannerH, listH := reposSplit(r.h, len(m.repos.Items), r.w)
+				listInnerH := listH - 2
+				if listInnerH < 1 {
+					listInnerH = 1
+				}
+				row := msg.Y - (r.y + 2 + bannerH)
+				if row < 0 || row >= listInnerH {
+					return m, nil
+				}
+				idx := l.Offset + row
+				fs := l.Filtered()
+				if idx < 0 || idx >= len(fs) {
+					return m, nil
+				}
+				same := l.Cursor == idx
+				l.Cursor = idx
+				l.MoveBy(0)
+				if same {
+					return m, m.activate()
+				}
+				return m, nil
+			}
+
+			if p == PanelWorkflows {
+				listH, subH := flowsSplit(r.h, len(m.workflows.Items))
+				subBoxTop := r.y + 1 + listH
+				if subH > 1 && msg.Y >= subBoxTop && msg.Y < subBoxTop+subH {
+					m.wfYAMLFocused = true
+					return m, nil
+				}
+				m.wfYAMLFocused = false
+				listInnerH := listH - 2
+				if listInnerH < 1 {
+					listInnerH = 1
+				}
+				row := msg.Y - (r.y + 2)
+				if row < 0 || row >= listInnerH {
+					return m, nil
+				}
+				idx := l.Offset + row
+				fs := l.Filtered()
+				if idx < 0 || idx >= len(fs) {
+					return m, nil
+				}
+				same := l.Cursor == idx
+				l.Cursor = idx
+				l.MoveBy(0)
+				if same {
+					return m, m.activate()
+				}
+				m.wfScroll = 0
+				return m, m.fetchWorkflowForSelection()
+			}
+
+			if p == PanelRuns {
+				m.wfYAMLFocused = false
+				listH, _ := runsSplit(r.h, len(m.runs.Items))
+				listInnerH := listH - 2
+				if listInnerH < 1 {
+					listInnerH = 1
+				}
+				row := msg.Y - (r.y + 2)
+				if row < 0 || row >= listInnerH {
+					return m, nil
+				}
+				idx := l.Offset + row
+				fs := l.Filtered()
+				if idx < 0 || idx >= len(fs) {
+					return m, nil
+				}
+				same := l.Cursor == idx
+				l.Cursor = idx
+				l.MoveBy(0)
+				if same {
+					return m, m.activate()
+				}
+				return m, m.fetchArtifactsForSelection()
+			}
+
+			if p == PanelArtifacts {
+				m.wfYAMLFocused = false
+				count := 0
+				if rRun, ok := m.selectedRun(); ok {
+					count = len(m.runCache[rRun.ID])
+				}
+				listH, _ := artSplit(r.h, count)
+				listInnerH := listH - 2
+				if listInnerH < 1 {
+					listInnerH = 1
+				}
+				row := msg.Y - (r.y + 2)
+				if row < 0 || row >= listInnerH {
+					return m, nil
+				}
+				idx := l.Offset + row
+				fs := l.Filtered()
+				if idx < 0 || idx >= len(fs) {
+					return m, nil
+				}
+				same := l.Cursor == idx
+				l.Cursor = idx
+				l.MoveBy(0)
+				if same {
+					return m, m.activate()
+				}
+				return m, nil
+			}
+
+			return m, nil
+		}
+		return m, nil
+	}
+	return m, nil
+}
