@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ghapk — One-line installer for Android (Termux), Linux, and macOS
+# ghapk — One-line universal installer for Android (Termux), Linux, and macOS
 # Repository: https://github.com/ThatOn3Gu7/ghapk
 
 set -euo pipefail
@@ -8,30 +8,42 @@ REPO="ThatOn3Gu7/ghapk"
 DEFAULT_TAG="v4.2.6"
 INSTALL_NAME="ghapk"
 
-# Colors
-BOLD='\033[1m'
-GREEN='\033[38;2;166;227;161m'
-CYAN='\033[38;2;137;180;250m'
-YELLOW='\033[38;2;249;226;175m'
-RED='\033[38;2;243;139;168m'
-DIM='\033[2m'
-RESET='\033[0m'
+# Determine terminal color support
+if [ -t 1 ] || [ "${FORCE_COLOR:-0}" = "1" ]; then
+    ESC=$(printf '\033')
+    RESET="${ESC}[0m"
+    BOLD="${ESC}[1m"
+    DIM="${ESC}[2m"
+    GREEN="${ESC}[1;32m"
+    CYAN="${ESC}[1;36m"
+    YELLOW="${ESC}[1;33m"
+    RED="${ESC}[1;31m"
+else
+    RESET=""
+    BOLD=""
+    DIM=""
+    GREEN=""
+    CYAN=""
+    YELLOW=""
+    RED=""
+fi
 
-info()  { printf "${CYAN}==>${RESET} ${BOLD}%s${RESET}\n" "$*"; }
-ok()    { printf "${GREEN}==>${RESET} ${BOLD}%s${RESET}\n" "$*"; }
-warn()  { printf "${YELLOW}==> WARNING:${RESET} %s\n" "$*"; }
-err()   { printf "${RED}==> ERROR:${RESET} %s\n" "$*" >&2; exit 1; }
+info()  { printf "%s %s\n" "${CYAN}==>${RESET}" "$*"; }
+ok()    { printf "%s %s\n" "${GREEN}==>${RESET}" "$*"; }
+warn()  { printf "%s %s\n" "${YELLOW}==> WARNING:${RESET}" "$*"; }
+err()   { printf "%s %s\n" "${RED}==> ERROR:${RESET}" "$*" >&2; exit 1; }
 
+# Print Banner
 printf "\n"
-printf "${CYAN}  ██████╗ ██╗  ██╗   █████╗ ██████╗ ██╗  ██╗${RESET}\n"
-printf "${CYAN} ██╔════╝ ██║  ██║  ${GREEN}██╔══██╗██╔══██╗██║ ██╔╝${RESET}\n"
-printf "${CYAN} ██║  ███╗███████║  ${GREEN}███████║██████╔╝█████╔╝ ${RESET}\n"
-printf "${CYAN} ██║   ██║██╔══██║  ${GREEN}██╔══██║██╔═══╝ ██╔═██╗ ${RESET}\n"
-printf "${CYAN} ╚██████╔╝██║  ██║  ${GREEN}██║  ██║██║     ██║  ██╗${RESET}\n"
-printf "${CYAN}  ╚═════╝ ╚═╝  ╚═╝  ${GREEN}╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝${RESET}\n"
-printf "${DIM}         GitHub Actions APK Manager Installer${RESET}\n\n"
+printf "%s  ██████╗ ██╗  ██╗   █████╗ ██████╗ ██╗  ██╗%s\n" "${CYAN}" "${RESET}"
+printf "%s ██╔════╝ ██║  ██║  %s██╔══██╗██╔══██╗██║ ██╔╝%s\n" "${CYAN}" "${GREEN}" "${RESET}"
+printf "%s ██║  ███╗███████║  %s███████║██████╔╝█████╔╝ %s\n" "${CYAN}" "${GREEN}" "${RESET}"
+printf "%s ██║   ██║██╔══██║  %s██╔══██║██╔═══╝ ██╔═██╗ %s\n" "${CYAN}" "${GREEN}" "${RESET}"
+printf "%s ╚██████╔╝██║  ██║  %s██║  ██║██║     ██║  ██╗%s\n" "${CYAN}" "${GREEN}" "${RESET}"
+printf "%s  ╚═════╝ ╚═╝  ╚═╝  %s╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝%s\n" "${CYAN}" "${GREEN}" "${RESET}"
+printf "%s         GitHub Actions APK Manager Installer%s\n\n" "${DIM}" "${RESET}"
 
-# 1. Detect OS
+# 1. Detect Operating System
 OS=""
 IS_TERMUX=0
 
@@ -80,15 +92,15 @@ else
     BIN_DIR="/usr/local/bin"
 fi
 
-# 4. Resolve Version
+# 4. Resolve Target Version
 TAG="${GHAPK_VERSION:-}"
 if [ -z "$TAG" ]; then
-    # Try fetching latest release from public GitHub API
+    # Try fetching latest release from GitHub API
     LATEST_JSON="$(curl -fsSL -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null || true)"
     if [ -n "$LATEST_JSON" ]; then
         TAG="$(printf '%s' "$LATEST_JSON" | grep -m1 '"tag_name":' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/' || true)"
     fi
-    # If API call failed (e.g. private repo or offline), use fallback default
+    # Fallback to default tag if API was unreachable or rate-limited
     if [ -z "$TAG" ]; then
         TAG="$DEFAULT_TAG"
     fi
@@ -96,7 +108,7 @@ fi
 
 info "Target version: ${BOLD}${TAG}${RESET}"
 
-# 5. Download Binary
+# 5. Download Binary & Checksums
 TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t 'ghapk')"
 trap 'rm -rf "$TMP_DIR"' EXIT
 TMP_FILE="$TMP_DIR/$TARGET_BINARY"
@@ -108,6 +120,8 @@ if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
     info "Attempting download via authenticated GitHub CLI..."
     if gh release download "$TAG" -R "$REPO" --pattern "$TARGET_BINARY" --dir "$TMP_DIR" >/dev/null 2>&1; then
         DOWNLOAD_SUCCESS=1
+        # Try fetching checksums as well
+        gh release download "$TAG" -R "$REPO" --pattern "sha256sums.txt" --dir "$TMP_DIR" >/dev/null 2>&1 || true
     fi
 fi
 
@@ -115,7 +129,7 @@ fi
 if [ "$DOWNLOAD_SUCCESS" -eq 0 ]; then
     DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/${TARGET_BINARY}"
     info "Downloading from ${DOWNLOAD_URL}..."
-    
+
     CURL_AUTH=()
     if [ -n "${GITHUB_TOKEN:-}" ]; then
         CURL_AUTH=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
@@ -125,11 +139,32 @@ if [ "$DOWNLOAD_SUCCESS" -eq 0 ]; then
 
     if curl -fL "${CURL_AUTH[@]}" -o "$TMP_FILE" "$DOWNLOAD_URL" 2>/dev/null; then
         DOWNLOAD_SUCCESS=1
+        # Try fetching checksums as well
+        curl -fsSL "${CURL_AUTH[@]}" -o "$TMP_DIR/sha256sums.txt" "https://github.com/${REPO}/releases/download/${TAG}/sha256sums.txt" 2>/dev/null || true
     fi
 fi
 
 if [ "$DOWNLOAD_SUCCESS" -eq 0 ]; then
-    err "Failed to download ${TARGET_BINARY} for version ${TAG}.\n    If the repository is private, ensure 'gh auth login' is active or pass GITHUB_TOKEN=... to curl."
+    err "Failed to download ${TARGET_BINARY} for version ${TAG}.\n    Ensure internet connectivity or run 'gh auth login' if accessing a private repo."
+fi
+
+# Verify SHA256 Checksum if available
+if [ -f "$TMP_DIR/sha256sums.txt" ] && grep -q "$TARGET_BINARY" "$TMP_DIR/sha256sums.txt" 2>/dev/null; then
+    EXPECTED_SHA="$(grep "$TARGET_BINARY" "$TMP_DIR/sha256sums.txt" | awk '{print $1}')"
+    ACTUAL_SHA=""
+    if command -v sha256sum >/dev/null 2>&1; then
+        ACTUAL_SHA="$(sha256sum "$TMP_FILE" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then
+        ACTUAL_SHA="$(shasum -a 256 "$TMP_FILE" | awk '{print $1}')"
+    fi
+
+    if [ -n "$ACTUAL_SHA" ] && [ -n "$EXPECTED_SHA" ]; then
+        if [ "$ACTUAL_SHA" = "$EXPECTED_SHA" ]; then
+            ok "SHA256 checksum verified successfully."
+        else
+            err "Checksum verification failed!\n    Expected: $EXPECTED_SHA\n    Actual:   $ACTUAL_SHA"
+        fi
+    fi
 fi
 
 # 6. Install to Destination
@@ -156,7 +191,7 @@ case ":$PATH:" in
     *)
         warn "${BIN_DIR} is not in your \$PATH."
         printf "    Add it by running:\n"
-        printf "    ${CYAN}export PATH=\"%s:\$PATH\"${RESET}\n" "$BIN_DIR"
+        printf "    %sexport PATH=\"%s:\$PATH\"%s\n" "$CYAN" "$BIN_DIR" "$RESET"
         printf "    (Add this line to your ~/.bashrc or ~/.zshrc)\n\n"
         ;;
 esac
@@ -165,16 +200,16 @@ esac
 if ! command -v gh >/dev/null 2>&1; then
     warn "The GitHub CLI ('gh') is required for ghapk to fetch runs and artifacts."
     if [ "$IS_TERMUX" -eq 1 ]; then
-        printf "    Install it via: ${CYAN}pkg install gh && gh auth login${RESET}\n\n"
+        printf "    Install it via: %spkg install gh && gh auth login%s\n\n" "$CYAN" "$RESET"
     elif [ "$OS" = "darwin" ]; then
-        printf "    Install it via: ${CYAN}brew install gh && gh auth login${RESET}\n\n"
+        printf "    Install it via: %sbrew install gh && gh auth login%s\n\n" "$CYAN" "$RESET"
     else
-        printf "    Install it via: https://cli.github.com/ and run ${CYAN}gh auth login${RESET}\n\n"
+        printf "    Install it via: https://cli.github.com/ and run %sgh auth login%s\n\n" "$CYAN" "$RESET"
     fi
 else
     if ! gh auth status >/dev/null 2>&1; then
         warn "GitHub CLI ('gh') is installed but not authenticated."
-        printf "    Run: ${CYAN}gh auth login${RESET}\n\n"
+        printf "    Run: %sgh auth login%s\n\n" "$CYAN" "$RESET"
     else
         ok "GitHub CLI ('gh') is installed and authenticated."
     fi
