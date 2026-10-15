@@ -1,145 +1,241 @@
-# ghapk
+<p align="center">
+  <img src="assets/logo.png" alt="ghapk logo" width="180"/>
+</p>
 
-**GitHub Actions → APK installer, now as a full-screen TUI.**
+<h1 align="center">ghapk</h1>
 
-`ghapk` finds the newest successful build of your app in GitHub Actions,
-scores every artifact for *your* device (ABI, API level, debug/release),
-downloads the best one and hands it to Android's installer — all from an
-interactive LazyGit-style terminal UI that leaves your shell untouched
-when you quit.
+<p align="center">
+  <strong>GitHub Actions &rarr; APK installer, built for developers on Android (Termux), Linux & macOS.</strong>
+</p>
 
-It is a ground-up Go rewrite of the original 13,000-line `ghapk` bash
-script, with the same scoring algorithm, the same config-file format and
-the same install-handoff order — plus the interactive interface the
-script always wanted.
+<p align="center">
+  <a href="https://github.com/ThatOn3Gu7/ghapk/releases"><img src="https://img.shields.io/github/v/release/ThatOn3Gu7/ghapk?color=a6e3a1&style=flat-square" alt="Latest Release"></a>
+  <a href="https://go.dev/"><img src="https://img.shields.io/badge/go-1.24-89dceb?style=flat-square&logo=go" alt="Go Version"></a>
+  <a href="https://github.com/ThatOn3Gu7/ghapk/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-f9e2af?style=flat-square" alt="License"></a>
+  <a href="https://termux.dev/"><img src="https://img.shields.io/badge/platform-Android%20%7C%20Linux%20%7C%20macOS-cba6f7?style=flat-square" alt="Platform"></a>
+</p>
 
+---
+
+## ⚡ What is ghapk?
+
+Testing Android apps built with **GitHub Actions** usually means endless friction: opening your phone's browser, authenticating to GitHub, finding the workflow run, downloading a multi-hundred megabyte zip file, extracting the `.apk`, finding it in your file manager, and manually installing it.
+
+**`ghapk` eliminates all of that.**
+
+With a single keyboard shortcut or touch tap from your terminal, `ghapk`:
+1. Discovers the latest successful GitHub Actions workflow runs for your repository.
+2. Inspects your actual physical device hardware (CPU architecture / ABI, Android SDK level, debug/release preference).
+3. Evaluates and scores every available artifact to automatically pick the optimal build for your device.
+4. Streams and extracts the APK directly.
+5. Hands the APK off to Android's native package installer (or `xdg-open` on desktop).
+
+All through a sleek, reactive, **LazyGit-style Terminal User Interface (TUI)** that cleans up after itself and leaves your terminal scrollback untouched.
+
+```text
+  ██████╗ ██╗  ██╗   █████╗ ██████╗ ██╗  ██╗
+ ██╔════╝ ██║  ██║  ██╔══██╗██╔══██╗██║ ██╔╝
+ ██║  ███╗███████║  ███████║██████╔╝█████╔╝ 
+ ██║   ██║██╔══██║  ██╔══██║██╔═══╝ ██╔═██╗ 
+ ╚██████╔╝██║  ██║  ██║  ██║██║     ██║  ██╗
+  ╚═════╝ ╚═╝  ╚═╝  ╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝
+             GitHub Actions APK Manager
 ```
-  ghapk    acme/rocket   main  RUNNING                                          @tester  action
-╭─ Repositories ──╮╭─ Runs  3 ─────────────╮╭─ Artifacts  3 ────────────────────╮
-│ ▶ acme/rocket   ││  ✓ #412  fix login …  ││ ★ rocket-universal-debug.apk 20M  │
-│                 ││  ⣻ #411  bump gradle   ││   rocket-arm64-v8a-debug.apk 14M  │
-│                 ││  ✗ #410  fix the thing ││   mappings.txt                1M  │
-╰─────────────────╯╰──────────────────────╯╰──────────────────────────────────╯
-╭─ Workflows ─────╮╭─ Device ─────────────╮╭─ Details ─────────────────────────╮
-│ ▶ ◆ any workflow││ model  Pixel 7       ││ ✓ #412 fix login crash            │
-│   CI            ││ abis   arm64-v8a,…   ││ size     20.0 MB (zip)            │
-│   Nightly       ││ sdk    34            ││ score    150                      │
-╰─────────────────╯╰──────────────────────╯╰──────────────────────────────────╯
-d:download  i:install  tab:panels  /:filter  s:settings  ?:help  q:quit
-```
 
-## Quick start
+---
+
+## 🚀 Quick Install
+
+### One-line curl (Recommended)
+
+Run this in **Termux**, **Linux**, or **macOS**. It automatically detects your operating system and CPU architecture, downloads the right binary, and puts it in your path:
 
 ```bash
-# prerequisites: the GitHub CLI, authenticated
-pkg install gh        # Termux    (macOS: brew install gh)
+curl -fsSL https://raw.githubusercontent.com/ThatOn3Gu7/ghapk/master/install.sh | bash
+```
+
+*(Or with `wget`: `wget -qO- https://raw.githubusercontent.com/ThatOn3Gu7/ghapk/master/install.sh | bash`)*
+
+---
+
+### Prerequisites
+
+`ghapk` uses GitHub's official command line interface (`gh`) to communicate with the GitHub Actions API securely:
+
+```bash
+# On Android (Termux)
+pkg install gh
 gh auth login
 
-ghapk                 # open the TUI
+# On macOS (Homebrew)
+brew install gh
+gh auth login
+
+# On Ubuntu / Debian
+sudo apt install gh
+gh auth login
 ```
 
-First launch asks for a repository (`owner/name`, with recents +
-GitHub search + auto-detection from the git remote of your working
-directory). Everything after that is point-and-shoot: pick a run, the
-artifacts are ranked automatically, press `d` or `i`.
-
-When you press `q`, your terminal scrollback is exactly where you left
-it — the app lives entirely in the alternate screen buffer.
-
-## Keys
-
-| key | what it does |
-| --- | --- |
-| `tab` / `shift+tab`, `1`–`6` | switch panels |
-| `j` `k` `↑` `↓` / `ctrl+d` `ctrl+u` / `g` `G` | move |
-| `enter` | activate (switch repo, filter by workflow, …) |
-| **mouse** | click focuses & selects, click again opens, wheel scrolls |
-| `d` / `i` | download / download & install the selected artifact |
-| `o` / `O` | open run in browser / open download folder |
-| `R` | repository picker (recents, git remote, GitHub search) |
-| `B` | branch picker |
-| `r` / `w` | refresh now / watch mode (fast auto-refresh while builds run) |
-| `/` | filter the focused list |
-| `f` | star a recent repo |
-| `s` | settings editor (per-repo or global save) |
-| `t` | cycle theme: **action**, **mocha**, **emerald**, **paper** |
-| `D` | doctor — environment health check |
-| `?` | help |
-| `ctrl+z` | suspend to shell (`fg` to return) |
-| `q` / `ctrl+c` | quit |
-
-Narrow terminals (a phone in portrait, < 96 columns) automatically get a
-single-column tabbed layout instead of the grid.
-
-## Classic mode
-
-The original one-shot pipeline is still there for scripts and CI:
+Once logged in, simply launch:
 
 ```bash
-ghapk get --repo owner/repo --arch arm64 --variant debug -i
-ghapk get --repo owner/repo --dry-run      # print the plan, fetch nothing
-ghapk doctor                               # health check without the TUI
+ghapk
 ```
 
-## Configuration
+---
 
-Same places, same `KEY=VALUE` format as the bash script:
+## 📦 Pre-Built Binaries
 
-- `~/.config/ghapk/config` — global
-- `~/.config/ghapk/repos/<owner>_<repo>.conf` — per-repo (outranks global)
-- `.ghapk.conf` — working directory
-- flags on the command line — outrank everything
+Pre-compiled standalone binaries with zero external runtime dependencies are available on the **[Releases](https://github.com/ThatOn3Gu7/ghapk/releases)** page:
 
-Everything editable from the settings screen (`s`): theme, arch
-preference, variant, source, branch, workflow, artifact pattern, package
-name, run limit, auto-refresh, watch, no-open, keep-cache.
+| Platform | Architecture | Target File |
+| :--- | :--- | :--- |
+| **Android (Termux)** | `arm64` (aarch64) | [`ghapk-android-arm64`](https://github.com/ThatOn3Gu7/ghapk/releases/latest) |
+| **Linux** | `amd64` (x86_64) | [`ghapk-linux-amd64`](https://github.com/ThatOn3Gu7/ghapk/releases/latest) |
+| **Linux** | `arm64` (aarch64) | [`ghapk-linux-arm64`](https://github.com/ThatOn3Gu7/ghapk/releases/latest) |
+| **macOS** | `arm64` (Apple Silicon) | [`ghapk-darwin-arm64`](https://github.com/ThatOn3Gu7/ghapk/releases/latest) |
+| **macOS** | `amd64` (Intel) | [`ghapk-darwin-amd64`](https://github.com/ThatOn3Gu7/ghapk/releases/latest) |
+| **Windows** | `amd64` (x86_64) | [`ghapk-windows-amd64.exe`](https://github.com/ThatOn3Gu7/ghapk/releases/latest) |
 
-Downloads land in `~/.cache/ghapk/apk/`.
+### Install via Go
 
-## Architecture
+If you have Go installed:
+
+```bash
+go install github.com/ThatOn3Gu7/ghapk@latest
+```
+
+---
+
+## 🎮 Navigation & Keybindings
+
+`ghapk` is built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) and supports both **keyboard navigation** and **mouse / touch gestures**:
 
 ```
+╭─ Repositories ────────╮╭─ Runs  (main) ────────────────╮╭─ Artifacts ────────────────────────╮
+│ ▶ ThatOn3Gu7/Nazo     ││  ✓ #42  feat: block+pipe logo ││ ★ app-arm64-v8a-debug.apk   14.2 MB │
+│   ThatOn3Gu7/ghapk    ││  ✓ #41  refactor: centering   ││   app-universal-debug.apk   20.1 MB │
+│   acme/mobile-app     ││  ✗ #40  fix build script      ││   mapping-release.txt        1.1 MB │
+╰───────────────────────╯╰───────────────────────────────╯╰────────────────────────────────────╯
+╭─ Workflows ───────────╮╭─ Device Info ─────────────────╮╭─ Artifact Details ─────────────────╮
+│ ▶ ◆ All Workflows     ││ Model:   Pixel 7 Pro          ││ Name:   app-arm64-v8a-debug.apk     │
+│   Build APK (CI)      ││ ABI:     arm64-v8a            ││ Score:  150 (optimal device match)  │
+│   Nightly Release     ││ SDK:     34 (Android 14)      ││ Action: [d] Download  [i] Install   │
+╰───────────────────────╯╰───────────────────────────────╯╰────────────────────────────────────╯
+```
+
+| Key | Action |
+| :--- | :--- |
+| `Tab` / `Shift+Tab` | Cycle through panels |
+| `1` – `6` | Jump directly to a panel |
+| `↑` `↓` / `j` `k` | Move cursor in the current list |
+| `g` / `G` | Jump to top / bottom |
+| `Ctrl+D` / `Ctrl+U` | Half-page down / up |
+| `Enter` | Select repository, filter workflow, view details |
+| **Mouse / Touch** | Tap to focus & select item; scroll wheel or drag to scroll |
+| `d` | Download selected artifact to local cache |
+| `i` | Download and immediately launch installer on device |
+| `R` | Quick repository switcher (recent repos, git remote detection, search) |
+| `B` | Switch branch filter |
+| `r` | Refresh current view from GitHub API |
+| `w` | Toggle watch mode (live polling for running CI workflows) |
+| `/` | Real-time fuzzy filter within current panel |
+| `f` | Star / favorite a repository |
+| `s` | Open interactive settings editor |
+| `t` | Cycle color theme (`action`, `mocha`, `emerald`, `paper`) |
+| `D` | Run diagnostic Doctor tool |
+| `?` | Toggle help overlay |
+| `q` / `Ctrl+C` | Clean exit (restores terminal state) |
+
+*Note for mobile users:* On narrow screens (< 96 columns), `ghapk` automatically switches to a compact tabbed view designed specifically for portrait phones.
+
+---
+
+## 🤖 Non-Interactive & Scripting Mode
+
+Need to fetch APKs from a shell script or CI pipeline without opening the interactive TUI? `ghapk get` provides a pure CLI command:
+
+```bash
+# Download and install the best APK for the current device
+ghapk get --repo ThatOn3Gu7/Nazo -i
+
+# Download specific architecture and build variant
+ghapk get --repo ThatOn3Gu7/Nazo --arch arm64 --variant debug
+
+# Dry-run: calculate and print the plan without downloading
+ghapk get --repo ThatOn3Gu7/Nazo --dry-run
+
+# Run environment health check
+ghapk doctor
+```
+
+---
+
+## 🛠 Project Structure
+
+```text
 ghapk/
-├── main.go                  CLI entry (TUI default, get/doctor/version)
+├── assets/                  # Branding, icons, logos, and previews
+│   ├── logo.png             # High-resolution badge icon
+│   └── logo.svg             # Crisp vector graphic badge
+├── cmd/ or root             # Application entrypoint (main.go)
 ├── internal/
-│   ├── config/              KEY=VALUE config, recents, favourites
-│   ├── ghapi/               GitHub API via the gh CLI, downloads, unzip
-│   ├── device/              Android probe (ABIs/SDK/pm), installer handoff
-│   ├── score/               the artifact-ranking algorithm (ported from bash)
-│   ├── flow/                classic linear pipeline (ghapk get)
-│   └── tui/
-│       ├── app.go           root model, messages, async commands
-│       ├── dashboard.go     grid + compact layouts
-│       ├── content.go       panel contents
-│       ├── handlers.go      key handling
-│       ├── pickers.go       repo/branch pickers
-│       ├── settings.go      settings editor
-│       ├── task.go          download/install progress modal
-│       ├── help.go doctor.go
-│       ├── theme/           palettes, glyphs, styles
-│       └── components/      panels, lists, statusbar, modals
-├── docs/BUILD.md            single-executable build guide
-└── Makefile
+│   ├── config/              # Persistent configuration (~/.config/ghapk/)
+│   ├── device/              # Android & host probing (ABI, SDK, dumpsys, getprop)
+│   ├── flow/                # Headless one-shot CLI execution (ghapk get)
+│   ├── ghapi/               # GitHub Actions REST API client wrapper (via gh CLI)
+│   ├── score/               # Artifact scoring algorithm (ABI, SDK, variant match)
+│   └── tui/                 # Full-screen Bubble Tea terminal interface
+│       ├── components/      # UI widgets (boxes, badges, scrollbars, dialogs)
+│       ├── theme/           # Color palettes (Action, Mocha, Emerald, Paper)
+│       ├── app.go           # Central state model and message router
+│       ├── content.go       # Panel rendering (ANSI Shadow logo, shimmering, lists)
+│       ├── mouse.go         # Terminal mouse & touch event translation
+│       └── view.go          # Screen composition & responsive breakpoints
+├── docs/
+│   └── BUILD.md             # In-depth single-executable compilation guide
+├── .github/workflows/
+│   └── release.yml          # Automated CI cross-platform build & release
+├── Makefile                 # Easy developer build automation
+└── install.sh               # One-line universal curl/bash installer
 ```
 
-Runs entirely in the **alternate screen buffer** (`ESC[?1049h` on start,
-`ESC[?1049l` on exit) — quitting restores the shell exactly as it was,
-no scrollback is cleared or redrawn. Set `GHAPK_ASCII=1` for terminals
-without Unicode glyphs, `NO_COLOR=1` to disable color.
+---
 
-Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea),
-[Bubbles](https://github.com/charmbracelet/bubbles) and
-[Lip Gloss](https://github.com/charmbracelet/lipgloss) — the Go TUI
-stack. All GitHub traffic goes through the `gh` CLI, so authentication
-is `gh auth login` and nothing else.
+## 🏗 Building from Source
 
-## Building
+`ghapk` is written in standard Go (≥ 1.22) with zero CGO dependencies.
 
 ```bash
-make build        # ./ghapk static binary for this machine
-make termux       # android/arm64 binary for your phone
-make release      # every target, stripped + checksummed
+# Clone the repository
+git clone https://github.com/ThatOn3Gu7/ghapk.git
+cd ghapk
+
+# Build locally
+make
+
+# Build optimized binary for Termux (Android arm64)
+make termux
+
+# Cross-compile stripped binaries for all platforms
+make release
 ```
 
-See **[docs/BUILD.md](docs/BUILD.md)** for the full single-executable
-story (stripping, UPX compression, cross-compiling for Termux, `go install`).
+Detailed instructions on compiler optimization, UPX compression, and distribution can be found in **[docs/BUILD.md](docs/BUILD.md)**.
+
+---
+
+## ⚙ Configuration
+
+Settings can be customized inside the TUI (`s`) or directly via configuration files:
+
+- **Global Config:** `~/.config/ghapk/config`
+- **Per-Repository Config:** `~/.config/ghapk/repos/<owner>_<repo>.conf`
+- **Local Workspace Config:** `.ghapk.conf`
+- **Downloaded APK Storage:** `~/.cache/ghapk/apk/`
+
+---
+
+## 📄 License
+
+MIT &copy; [ThatOn3Gu7](https://github.com/ThatOn3Gu7)
