@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/ghapk/ghapk/internal/apk"
 	"github.com/ghapk/ghapk/internal/device"
 	"github.com/ghapk/ghapk/internal/ghapi"
 )
@@ -93,6 +94,13 @@ type DownloadDoneMsg struct {
 }
 
 type InstallLogMsg struct{ Line string }
+type InstallPreparedMsg struct {
+	Path     string
+	Meta     apk.Inspection
+	QueryPkg string
+	App      device.InstalledApp
+	Found    bool
+}
 type InstallDoneMsg struct {
 	Result device.InstallResult
 	Err    error
@@ -298,6 +306,31 @@ func installApkCmd(path string, allowDowngrade bool, logCh chan tea.Msg) tea.Cmd
 		res, err := device.InstallAPK(path, allowDowngrade, logf)
 		logCh <- InstallDoneMsg{Result: res, Err: err}
 		return nil
+	}
+}
+
+func prepareInstallCmd(path string, meta apk.Inspection, needInspect bool, queryPkg string) tea.Cmd {
+	return func() tea.Msg {
+		if needInspect {
+			if ins, err := apk.Inspect(path); err == nil {
+				meta = ins
+			}
+		}
+		if queryPkg == "" && meta.HaveInfo {
+			queryPkg = meta.Info.Package
+		}
+		var app device.InstalledApp
+		var found bool
+		if queryPkg != "" {
+			app, found = device.QueryPackage(queryPkg)
+		}
+		return InstallPreparedMsg{
+			Path:     path,
+			Meta:     meta,
+			QueryPkg: queryPkg,
+			App:      app,
+			Found:    found,
+		}
 	}
 }
 

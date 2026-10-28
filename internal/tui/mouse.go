@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ghapk/ghapk/internal/tui/components"
 )
@@ -113,8 +115,11 @@ func (m *Model) listOf(p PanelID) *components.List {
 // handleMouse implements click-to-focus, click-to-select,
 // click-again-to-activate, and wheel scrolling of the hovered panel.
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.screen != ScreenDashboard || m.modal != ModalNone {
+	if m.screen != ScreenDashboard {
 		return m, nil
+	}
+	if m.modal != ModalNone {
+		return m.handleModalMouse(msg)
 	}
 
 	switch msg.Type {
@@ -288,3 +293,76 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
+
+// handleModalMouse supports clicking action buttons in ModalConfirm and ModalTask.
+func (m Model) handleModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Type != tea.MouseLeft {
+		return m, nil
+	}
+	var buttons []string
+	switch m.modal {
+	case ModalConfirm:
+		buttons = m.confirm.Options
+	case ModalTask:
+		if m.task != nil && m.task.isDismissable() {
+			buttons = m.task.buttons
+		}
+	}
+	if len(buttons) == 0 {
+		return m, nil
+	}
+	idx := m.modalButtonHit(msg.X, msg.Y, buttons)
+	if idx < 0 {
+		return m, nil
+	}
+	switch m.modal {
+	case ModalConfirm:
+		m.confirm.Cursor = idx
+		cmd := m.confirmAccept()
+		return m, cmd
+	case ModalTask:
+		m.task.btnIdx = idx
+		cmd := m.task.activateFocused(&m)
+		return m, cmd
+	}
+	return m, nil
+}
+
+// modalButtonHit returns the 0-based index of the modal button at screen cell
+// (px, py), or -1 if (px, py) is outside the button strip.
+func (m Model) modalButtonHit(px, py int, buttons []string) int {
+	lines := strings.Split(m.View(), "\n")
+	bottomY := -1
+	for y := len(lines) - 1; y >= 1; y-- {
+		plain := components.StripANSI(lines[y])
+		if strings.Contains(plain, "╰─") || strings.Contains(plain, "+-") {
+			bottomY = y
+			break
+		}
+	}
+	if bottomY < 1 || py != bottomY-1 {
+		return -1
+	}
+	btnPlain := components.StripANSI(lines[bottomY-1])
+	runes := []rune(btnPlain)
+	borderCol := -1
+	for i, r := range runes {
+		if r == '│' || r == '|' {
+			borderCol = components.VisibleWidth(string(runes[:i]))
+			break
+		}
+	}
+	if borderCol < 0 {
+		return -1
+	}
+	curX := borderCol + 3 // 1 cell border + 2 cells left padding
+	for i, b := range buttons {
+		bw := components.VisibleWidth(b) + 4 // ButtonFocus/ButtonBlur PaddingLeft(2)+PaddingRight(2)
+		if px >= curX && px < curX+bw {
+			return i
+		}
+		curX += bw + 2 // "  " join separator
+	}
+	return -1
+}
+

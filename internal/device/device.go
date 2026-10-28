@@ -62,7 +62,7 @@ func QueryPackage(pkg string) (InstalledApp, bool) {
 		if !hasPath(c.bin) {
 			continue
 		}
-		out, err := runShortCmd(4*time.Second, c.bin, c.args...)
+		out, err := runShortCmd(1500*time.Millisecond, c.bin, c.args...)
 		if err != nil || out == "" {
 			continue
 		}

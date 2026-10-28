@@ -1,15 +1,23 @@
 package tui
 
 import (
+	"archive/zip"
+	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ghapk/ghapk/internal/apk"
+	"github.com/ghapk/ghapk/internal/config"
 	"github.com/ghapk/ghapk/internal/device"
 	"github.com/ghapk/ghapk/internal/ghapi"
+	"github.com/ghapk/ghapk/internal/tui/components"
 )
 
 func TestTaskModalHonestInstallOutcomes(t *testing.T) {
@@ -143,5 +151,319 @@ func TestStartInstallPromptsOnDowngradeAutoAndBlocksReflexY(t *testing.T) {
 	mo3 := mm3.(Model)
 	if mo3.modal != ModalNone || cmd3 != nil {
 		t.Fatalf("Enter on default Cancel must abort install cleanly: modal=%v cmd=%v", mo3.modal, cmd3)
+	}
+}
+
+// TestDownloadAndInstallTransitionsDirectlyToInstall verifies that selecting
+// "Download & Install" (via Enter, Space, 'y', or even when NoOpen=true in
+// config) starts installation upon download completion instead of stranding the
+// user on a dead Install/Close menu.
+func TestDownloadAndInstallTransitionsDirectlyToInstall(t *testing.T) {
+	t.Setenv("GHAPK_HISTORY", filepath.Join(t.TempDir(), "history.json"))
+	apkPath := filepath.Join(t.TempDir(), "app-debug.apk")
+	if err := os.WriteFile(apkPath, []byte("apk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, confirmKey := range []tea.KeyMsg{
+		{Type: tea.KeyEnter},
+		{Type: tea.KeyRunes, Runes: []rune{' '}},
+		{Type: tea.KeyRunes, Runes: []rune{'y'}},
+	} {
+		m := seedArtifacts(seedRuns(newTestModel()))
+		m.dev = device.Info{OS: "android", CanInstall: true, InstallVia: "termux-open"}
+		m.settings.NoOpen = true // even with no-open=1 in config, explicit Download & Install must work
+
+		// Focus Artifacts panel, open Confirm download, move to "Download & Install" (index 1).
+		mm, _ := m.Update(key("4"))
+		m = mm.(Model)
+		mm, _ = m.Update(key("d"))
+		m = mm.(Model)
+		mm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+		m = mm.(Model)
+		if m.confirm.Cursor != 1 || m.confirm.Options[m.confirm.Cursor] != "Download & Install" {
+			t.Fatalf("expected cursor on Download & Install, got idx=%d opts=%v", m.confirm.Cursor, m.confirm.Options)
+		}
+
+		// Confirm "Download & Install"
+		mm, dlCmd := m.Update(confirmKey)
+		m = mm.(Model)
+		if dlCmd == nil || !m.pendingInstall {
+			t.Fatalf("key %q did not arm pendingInstall (pending=%v cmdNil=%v)", confirmKey.String(), m.pendingInstall, dlCmd == nil)
+		}
+
+		// Complete download: must immediately enter Installing, NOT stop at ["Install", "Close"].
+		mm, instCmd := m.Update(DownloadDoneMsg{
+			APK: ghapi.ExtractedAPK{
+				Path: apkPath,
+				Name: "app-debug.apk",
+				Size: 3,
+				Meta: apk.Inspection{
+					HaveInfo: true,
+					Info:     apk.Info{Package: "com.acme.rocket", VersionCode: 10, VersionName: "1.0"},
+				},
+			},
+		})
+		m = mm.(Model)
+		if instCmd == nil {
+			t.Fatalf("DownloadDoneMsg with pendingInstall returned nil install cmd (key %q)", confirmKey.String())
+		}
+		if m.modal != ModalTask || m.task == nil || m.task.Kind != "install" || m.task.phase != "installing" {
+			t.Fatalf("expected ModalTask in installing phase, got modal=%v task=%+v", m.modal, m.task)
+		}
+	}
+}
+
+// TestPostDownloadMenuInstallAndCloseActions verifies both buttons ("Install"
+// and "Close") on the post-download TaskState menu via keyboard (Enter, Space,
+// 'i', Tab) and mouse click, including async InstallPreparedMsg handoff.
+func TestPostDownloadMenuInstallAndCloseActions(t *testing.T) {
+	t.Setenv("GHAPK_HISTORY", filepath.Join(t.TempDir(), "history.json"))
+	apkPath := filepath.Join(t.TempDir(), "app-debug.apk")
+	if err := os.WriteFile(apkPath, []byte("apk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	makePostDownloadModel := func() Model {
+		m := seedArtifacts(seedRuns(newTestModel()))
+		m.dev = device.Info{OS: "android", CanInstall: true, InstallVia: "termux-open"}
+		m.settings.NoOpen = true // regression guard: NoOpen must not make Install button a no-op
+		m.task = newTask("Downloading artifact", "app-debug.apk", progressColor{m.st.P.Accent, m.st.P.AccentAlt})
+		m.modal = ModalTask
+		mm, _ := m.Update(DownloadDoneMsg{
+			APK: ghapi.ExtractedAPK{
+				Path: apkPath,
+				Name: "app-debug.apk",
+				Size: 3,
+				Meta: apk.Inspection{
+					HaveInfo: true,
+					Info:     apk.Info{Package: "com.acme.rocket", VersionCode: 12, VersionName: "1.2"},
+				},
+			},
+		})
+		mo := mm.(Model)
+		if mo.task == nil || len(mo.task.buttons) != 2 || mo.task.buttons[0] != "Install" || mo.task.buttons[1] != "Close" {
+			t.Fatalf("expected [Install Close] buttons, got %+v", mo.task)
+		}
+		return mo
+	}
+
+	// 1. Pressing Enter on "Install" starts installation flow -> InstallPreparedMsg -> executeInstall.
+	for _, trigger := range []tea.Msg{
+		tea.KeyMsg{Type: tea.KeyEnter},
+		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}},
+		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}},
+	} {
+		m := makePostDownloadModel()
+		mm, prepCmd := m.Update(trigger)
+		m = mm.(Model)
+		if prepCmd == nil || m.task == nil || m.task.Kind != "install" || m.task.phase != "installing" {
+			t.Fatalf("trigger %T (%v) on Install did nothing: cmdNil=%v task=%+v", trigger, trigger, prepCmd == nil, m.task)
+		}
+
+		// Complete async prepare step -> must launch installer cmd batch.
+		mm, execCmd := m.Update(InstallPreparedMsg{
+			Path:     apkPath,
+			Meta:     m.downloadedAPK.Meta,
+			QueryPkg: "com.acme.rocket",
+		})
+		m = mm.(Model)
+		if execCmd == nil || m.task == nil || m.task.phase != "installing" {
+			t.Fatalf("InstallPreparedMsg did not start installer execution: cmdNil=%v task=%+v", execCmd == nil, m.task)
+		}
+	}
+
+	// 2. Selecting "Close" via Right+Enter or Tab+Enter dismisses without installing.
+	for _, nav := range []tea.KeyMsg{
+		{Type: tea.KeyRight},
+		{Type: tea.KeyTab},
+	} {
+		m := makePostDownloadModel()
+		mm, _ := m.Update(nav)
+		m = mm.(Model)
+		if m.task.btnIdx != 1 {
+			t.Fatalf("nav %q did not focus Close (btnIdx=%d)", nav.String(), m.task.btnIdx)
+		}
+		mm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = mm.(Model)
+		if cmd != nil || m.modal != ModalNone || m.task != nil {
+			t.Fatalf("Close did not cleanly dismiss modal without installing: cmd=%v modal=%v task=%v", cmd, m.modal, m.task)
+		}
+	}
+
+	// 3. Mouse clicks on "Install" and "Close" buttons hit exact coordinates.
+	findBtnCoords := func(m Model, targetIdx int) (int, int) {
+		lines := strings.Split(m.View(), "\n")
+		for y := len(lines) - 1; y >= 1; y-- {
+			plain := components.StripANSI(lines[y])
+			if strings.Contains(plain, "╰─") || strings.Contains(plain, "+-") {
+				btnLine := []rune(components.StripANSI(lines[y-1]))
+				for i, r := range btnLine {
+					if r == '│' || r == '|' {
+						x := components.VisibleWidth(string(btnLine[:i])) + 3
+						for b := 0; b < targetIdx; b++ {
+							x += components.VisibleWidth(m.task.buttons[b]) + 6
+						}
+						return x + 2, y - 1
+					}
+				}
+			}
+		}
+		t.Fatal("modal button row not found in View()")
+		return 0, 0
+	}
+
+	mClickInstall := makePostDownloadModel()
+	ix, iy := findBtnCoords(mClickInstall, 0)
+	mm, clickCmd := mClickInstall.Update(tea.MouseMsg{Type: tea.MouseLeft, X: ix, Y: iy})
+	mClickInstall = mm.(Model)
+	if clickCmd == nil || mClickInstall.task == nil || mClickInstall.task.Kind != "install" {
+		t.Fatalf("mouse click on Install failed at (%d,%d): cmdNil=%v task=%+v", ix, iy, clickCmd == nil, mClickInstall.task)
+	}
+
+	mClickClose := makePostDownloadModel()
+	cx, cy := findBtnCoords(mClickClose, 1)
+	mm, closeCmd := mClickClose.Update(tea.MouseMsg{Type: tea.MouseLeft, X: cx, Y: cy})
+	mClickClose = mm.(Model)
+	if closeCmd != nil || mClickClose.modal != ModalNone || mClickClose.task != nil {
+		t.Fatalf("mouse click on Close failed at (%d,%d): cmd=%v modal=%v task=%v", cx, cy, closeCmd, mClickClose.modal, mClickClose.task)
+	}
+}
+
+type syncBuf struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
+
+// TestLiveTeaProgramInstallMenuEndToEnd drives an actual tea.NewProgram loop
+// with stubbed `gh` and `adb` binaries to verify live menu interaction from
+// artifact download -> [Install / Close] -> Install -> adb install -> Close.
+func TestLiveTeaProgramInstallMenuEndToEnd(t *testing.T) {
+	tmp := t.TempDir()
+	binDir := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GHAPK_CONFIG_DIR", filepath.Join(tmp, "cfg"))
+	t.Setenv("GHAPK_CACHE_DIR", filepath.Join(tmp, "cache"))
+	t.Setenv("GHAPK_HISTORY", filepath.Join(tmp, "cfg", "history.json"))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	// Create a valid artifact zip containing app-arm64-v8a-debug.apk.
+	artZip := filepath.Join(tmp, "artifact.zip")
+	zf, err := os.Create(artZip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(zf)
+	w, err := zw.Create("app-universal-debug.apk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = w.Write([]byte("PK\x03\x04fake-apk-payload"))
+	_ = zw.Close()
+	_ = zf.Close()
+
+	adbMarker := filepath.Join(tmp, "adb-invoked.txt")
+	adbScript := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"get-state\" ]; then echo device; exit 0; fi\n" +
+		"if [ \"$1\" = \"shell\" ]; then echo 'Unable to find package'; exit 0; fi\n" +
+		"if [ \"$1\" = \"install\" ]; then echo \"$@\" > '" + adbMarker + "'; echo 'Performing Streamed Install'; echo 'Success'; exit 0; fi\n" +
+		"exit 0\n"
+	if err := os.WriteFile(filepath.Join(binDir, "adb"), []byte(adbScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ghScript := "#!/bin/sh\n" +
+		"case \"$*\" in\n" +
+		"  *--version*) echo 'gh version 2.62.0'; exit 0 ;;\n" +
+		"  *'api user'*) echo '{\"login\":\"tester\"}'; exit 0 ;;\n" +
+		"  *'/zip'*) cat '" + artZip + "'; exit 0 ;;\n" +
+		"  *'/artifacts'*) echo '{\"artifacts\":[{\"id\":9001,\"name\":\"app-debug\",\"size_in_bytes\":128,\"expired\":false}]}'; exit 0 ;;\n" +
+		"  *'/runs'*) echo '{\"workflow_runs\":[{\"id\":101,\"run_number\":1,\"name\":\"CI\",\"head_branch\":\"main\",\"status\":\"completed\",\"conclusion\":\"success\",\"display_title\":\"build\"}]}'; exit 0 ;;\n" +
+		"  *'/workflows'*) echo '{\"workflows\":[{\"id\":1,\"name\":\"CI\",\"path\":\".github/workflows/ci.yml\",\"state\":\"active\"}]}'; exit 0 ;;\n" +
+		"  *'/releases'*) echo '[]'; exit 0 ;;\n" +
+		"  *'repos/acme/rocket'*) echo '{\"full_name\":\"acme/rocket\",\"default_branch\":\"main\"}'; exit 0 ;;\n" +
+		"esac\n" +
+		"echo '{}'\n"
+	if err := os.WriteFile(filepath.Join(binDir, "gh"), []byte(ghScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	inR, inW := io.Pipe()
+	defer inR.Close()
+	var out syncBuf
+
+	s := config.Defaults()
+	s.Repo = "acme/rocket"
+	s.NoOpen = true // ensure even with no-open set, interactive Install works
+	m := New(Options{Settings: s})
+	p := tea.NewProgram(m, tea.WithInput(inR), tea.WithOutput(&out), tea.WithoutSignalHandler())
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := p.Run()
+		done <- err
+	}()
+
+	p.Send(tea.WindowSizeMsg{Width: 120, Height: 36})
+
+	waitForOut := func(sub string) {
+		deadline := time.Now().Add(8 * time.Second)
+		for time.Now().Before(deadline) {
+			if strings.Contains(components.StripANSI(out.String()), sub) {
+				return
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		t.Fatalf("timed out waiting for %q in live TUI output:\n%s", sub, components.StripANSI(out.String()))
+	}
+
+	// Wait for artifact list to load in live TUI, focus Artifacts ('4'), open
+	// Confirm download ('d'), and confirm Download ('\r') so the post-download
+	// ["Install", "Close"] menu appears on screen.
+	waitForOut("app-debug")
+	_, _ = inW.Write([]byte("4"))
+	waitForOut("d:download")
+	_, _ = inW.Write([]byte("d"))
+	waitForOut("Confirm download")
+	_, _ = inW.Write([]byte("\r"))
+
+	// Wait for download to finish and display the post-download ["Install", "Close"] menu.
+	waitForOut("done in")
+	waitForOut("Close")
+
+	// Press Enter on "Install" -> must invoke our stub `adb install` and render confirmed install!
+	_, _ = inW.Write([]byte("\r"))
+	waitForOut("installed")
+
+	gotADB, err := os.ReadFile(adbMarker)
+	if err != nil || !strings.Contains(string(gotADB), "install -r") {
+		t.Fatalf("expected live Install action to run `adb install -r`, got marker=%q err=%v", string(gotADB), err)
+	}
+
+	// Press Enter on "Close" to dismiss modal, then 'q' to quit cleanly.
+	_, _ = inW.Write([]byte("\rq"))
+	_ = inW.Close()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("tea.Program exited with error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("tea.Program did not exit after Close + q")
 	}
 }

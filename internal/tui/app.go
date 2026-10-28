@@ -504,6 +504,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case DownloadDoneMsg:
 		if msg.Err != nil {
+			m.pendingInstall = false
 			if m.task != nil {
 				m.task.fail(msg.Err)
 			} else {
@@ -514,16 +515,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.downloadedAPK = msg.APK
 		m.haveDownload = true
-		if m.task != nil {
-			m.task.downloadDone(msg)
-		}
 		m.busy = false
 		m.detailLog(fmt.Sprintf("saved %s (%s)", msg.APK.Path, ghapi.HumanBytes(msg.APK.Size)))
 		if m.pendingInstall {
 			m.pendingInstall = false
-			return m, m.startInstall(msg.APK.Path)
+			cmd := m.startInstall(msg.APK.Path)
+			return m, cmd
+		}
+		if m.task != nil {
+			m.task.downloadDone(msg, m.dev.CanInstall)
 		}
 		return m, nil
+
+	case InstallPreparedMsg:
+		if msg.QueryPkg != "" && (msg.Found || msg.App.Queryable) {
+			if m.instPkg == "" || m.instPkg == msg.QueryPkg {
+				m.instPkg = msg.QueryPkg
+				m.instApp = msg.App
+				m.instFound = msg.Found
+			}
+		}
+		cmd := m.finishStartInstall(msg.Path, msg.Meta, msg.App, msg.Found)
+		return m, cmd
 
 	case InstallLogMsg:
 		if m.task != nil {

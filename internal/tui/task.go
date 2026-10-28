@@ -79,12 +79,13 @@ func (t *TaskState) fail(err error) {
 	t.buttons = []string{"Close"}
 }
 
-func (t *TaskState) downloadDone(msg DownloadDoneMsg) {
+func (t *TaskState) downloadDone(msg DownloadDoneMsg, canInstall bool) {
+	device_CanInstall = canInstall
 	t.result = msg.APK
 	t.phase = "done"
 	t.running = false
 	t.buttons = []string{"Close"}
-	if device_CanInstall {
+	if canInstall {
 		t.buttons = []string{"Install", "Close"}
 	}
 	t.btnIdx = 0
@@ -133,8 +134,13 @@ func (t *TaskState) activateFocused(m *Model) tea.Cmd {
 	switch t.buttons[t.btnIdx] {
 	case "Install":
 		m.pendingInstall = false
-		return m.startInstall(t.result.Path)
+		path := t.result.Path
+		if path == "" {
+			path = m.downloadedAPK.Path
+		}
+		return m.startInstall(path)
 	case "Close":
+		m.pendingInstall = false
 		m.modal = ModalNone
 		m.task = nil
 		return nil
@@ -280,19 +286,18 @@ func (m *Model) startDownload(withInstall bool) tea.Cmd {
 // before streaming the installer handoff.
 func (m *Model) startInstall(path string) tea.Cmd {
 	if path == "" {
+		path = m.downloadedAPK.Path
+	}
+	if path == "" {
+		if m.modal == ModalTask && m.task != nil {
+			m.task.fail(fmt.Errorf("nothing downloaded yet"))
+		}
 		m.toastf("nothing downloaded yet")
 		return nil
 	}
-	if m.settings.NoOpen {
-		m.toastf("open installer is off in settings — APK saved")
-		return nil
-	}
+
 	meta := m.downloadedAPK.Meta
-	if m.downloadedAPK.Path != path || (!meta.HaveInfo && meta.InfoErr == "") {
-		if ins, err := apk.Inspect(path); err == nil {
-			meta = ins
-		}
-	}
+	needInspect := m.downloadedAPK.Path != path || (!meta.HaveInfo && meta.InfoErr == "")
 
 	hist, hasHist := config.History(m.settings.Repo)
 	expectPkg := m.settings.PackageName
@@ -304,18 +309,35 @@ func (m *Model) startInstall(path string) tea.Cmd {
 		queryPkg = meta.Info.Package
 	}
 
-	instApp := m.instApp
-	instFound := m.instFound
-	if queryPkg != "" && (m.instPkg != queryPkg || !m.instFound) {
-		if app, found := device.QueryPackage(queryPkg); found || app.Queryable {
-			instApp = app
-			instFound = found
-			if m.instPkg == "" || m.instPkg == queryPkg {
-				m.instPkg = queryPkg
-				m.instApp = app
-				m.instFound = found
-			}
-		}
+	haveCachedPkg := queryPkg == "" || (m.instPkg == queryPkg && (m.instFound || m.instApp.Queryable))
+	if !needInspect && haveCachedPkg {
+		return m.finishStartInstall(path, meta, m.instApp, m.instFound)
+	}
+
+	// Transition modal immediately to "Installing" while inspecting the APK and
+	// querying device package state off the UI goroutine so the Install button
+	// responds right away without freezing the TUI.
+	t := newTask("Installing", filepath.Base(path), progressColor{m.st.P.Accent, m.st.P.AccentAlt})
+	t.Kind = "install"
+	t.phase = "installing"
+	if m.downloadedAPK.Path == path {
+		t.result = m.downloadedAPK
+	}
+	device_CanInstall = m.dev.CanInstall
+	m.task = t
+	m.modal = ModalTask
+	return prepareInstallCmd(path, meta, needInspect, queryPkg)
+}
+
+func (m *Model) finishStartInstall(path string, meta apk.Inspection, instApp device.InstalledApp, instFound bool) tea.Cmd {
+	if m.downloadedAPK.Path == path && !m.downloadedAPK.Meta.HaveInfo && meta.HaveInfo {
+		m.downloadedAPK.Meta = meta
+	}
+
+	hist, hasHist := config.History(m.settings.Repo)
+	expectPkg := m.settings.PackageName
+	if expectPkg == "" && hasHist {
+		expectPkg = hist.Pkg
 	}
 
 	safety := apk.EvaluateSafety(meta, apk.SafetyInput{
@@ -347,6 +369,7 @@ func (m *Model) startInstall(path string) tea.Cmd {
 			body = append(body, m.st.Warn.Render("! "+w.Title))
 			body = append(body, w.Message)
 		}
+		m.task = nil
 		m.safetyInstallPath = path
 		m.safetyAllowDowngrade = safety.IsDowngrade || m.settings.Downgrade == "allow"
 		m.confirmKind = confirmSafetyOverride
