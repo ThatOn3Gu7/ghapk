@@ -44,7 +44,7 @@ func (m Model) View() string {
 func (m Model) modalBox() string {
 	switch m.modal {
 	case ModalHelp:
-		return m.modalWindow("Help", m.helpVP.View())
+		return m.modalWindow("Help", m.renderHelp())
 	case ModalSettings:
 		if m.settingsUI != nil {
 			return m.modalWindow("Settings", m.settingsUI.view(&m))
@@ -120,8 +120,8 @@ func (m Model) renderTooSmall() string {
 	return lipgloss.NewStyle().Foreground(m.st.P.Warning).Render(body)
 }
 
-// modalWindow renders the dialog without the surrounding whitespace.
-func (m Model) modalWindow(title, body string) string {
+// modalWindowWidth is the shared width used by dialog layout and hit-testing.
+func (m Model) modalWindowWidth() int {
 	w := m.width * 3 / 4
 	if w < 50 {
 		w = m.width - 8
@@ -132,6 +132,12 @@ func (m Model) modalWindow(title, body string) string {
 	if w < 30 {
 		w = m.width - 2
 	}
+	return w
+}
+
+// modalWindow renders the dialog without the surrounding whitespace.
+func (m Model) modalWindow(title, body string) string {
+	w := m.modalWindowWidth()
 	{
 		ls := strings.Split(body, "\n")
 		for i := range ls {

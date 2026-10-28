@@ -90,13 +90,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "?":
 		m.modal = ModalHelp
-		h := m.buildHelp()
-		h.Height = 24
-		if m.height > 0 && m.height-10 > 10 {
-			h.Height = m.height - 10
-		}
-		h.Width = 66
-		m.helpVP = h
+		m.helpDragging = false
+		m.helpVP = m.buildHelp()
 		return m, nil
 
 	case "s":

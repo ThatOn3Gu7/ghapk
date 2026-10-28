@@ -137,7 +137,7 @@ go install github.com/ThatOn3Gu7/ghapk@latest
 | `g` / `G` | Jump to top / bottom |
 | `Ctrl+D` / `Ctrl+U` | Half-page down / up |
 | `Enter` / `→` | Open a build’s artifacts; Enter on an artifact downloads and installs it |
-| **Mouse / Touch** | Tap to select; tap the repo name for the picker or a bottom hint to run it |
+| **Mouse / Touch** | Tap to select; tap the repo name for the picker or a bottom hint to run it; swipe or drag the scroll bar in Help |
 | `d` | Download selected artifact to local cache |
 | `i` | Download and immediately launch installer on device |
 | `R` | Quick repository switcher (recent repos, git remote detection, search) |
