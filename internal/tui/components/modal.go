@@ -44,7 +44,7 @@ func (sb StatusBar) Render(st theme.Styles) string {
 	}
 	bar := left.String() + strings.Repeat(" ", gap) + msg
 	bar = Clamp(bar, sb.Width)
-	return st.StatusBarBg.Render(Pad(bar, sb.Width))
+	return Pad(bar, sb.Width)
 }
 
 // Confirm is a yes/no style dialog.
@@ -55,7 +55,7 @@ type Confirm struct {
 	Cursor  int
 }
 
-// Modal renders content centered in a bordered box on a dim background.
+// Modal renders content centered in a bordered box on the terminal background.
 func Modal(st theme.Styles, width, height int, title string, body string) string {
 	bw := width * 3 / 4
 	if bw < 40 {
@@ -77,8 +77,7 @@ func Modal(st theme.Styles, width, height int, title string, body string) string
 	}
 	box = strings.Join(lines, "\n")
 	_ = bh
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box,
-		lipgloss.WithWhitespaceBackground(st.P.Bg))
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
 }
 
 func overlayCenter(borderLine, content string) string {

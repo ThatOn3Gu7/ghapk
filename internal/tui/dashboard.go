@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/ghapk/ghapk/internal/tui/components"
 )
 
@@ -89,7 +88,7 @@ func (m Model) renderHeader() string {
 	if gap < 0 {
 		gap = 0
 	}
-	return lipgloss.NewStyle().Background(st.P.BgPanel).Render(components.Pad(bar+strings.Repeat(" ", gap)+right, w))
+	return components.Pad(bar+strings.Repeat(" ", gap)+right, w)
 }
 
 // compMiddleEll ellipsizes the CENTER of s ("termux-x11-un…-wrapp") so the

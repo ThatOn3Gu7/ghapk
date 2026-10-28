@@ -14,9 +14,6 @@ type Palette struct {
 	Name        string
 	Description string
 
-	Bg          lipgloss.Color // app background
-	BgPanel     lipgloss.Color // panel background
-	BgActive    lipgloss.Color // focused panel background
 	Border      lipgloss.Color // unfocused panel border
 	BorderFocus lipgloss.Color // focused panel border
 
@@ -38,7 +35,6 @@ type Palette struct {
 var Themes = map[string]Palette{
 	"action": {
 		Name: "action", Description: "GitHub-dark canvas, Android-green accent (default)",
-		Bg: "#0D1117", BgPanel: "#0D1117", BgActive: "#111820",
 		Border: "#30363D", BorderFocus: "#3DDC84",
 		Text: "#E6EDF3", Muted: "#8B949E", Dim: "#6E7681",
 		Accent: "#3DDC84", AccentAlt: "#A371F7", OnAccent: "#06281A",
@@ -47,7 +43,6 @@ var Themes = map[string]Palette{
 	},
 	"mocha": {
 		Name: "mocha", Description: "Catppuccin Mocha — soft latte-dark, peach accent",
-		Bg: "#1E1E2E", BgPanel: "#1E1E2E", BgActive: "#232336",
 		Border: "#45475A", BorderFocus: "#FAB387",
 		Text: "#CDD6F4", Muted: "#A6ADC8", Dim: "#6C7086",
 		Accent: "#FAB387", AccentAlt: "#CBA6F7", OnAccent: "#2A1D12",
@@ -56,7 +51,6 @@ var Themes = map[string]Palette{
 	},
 	"emerald": {
 		Name: "emerald", Description: "Termux homage — phosphor green on near-black",
-		Bg: "#000000", BgPanel: "#000000", BgActive: "#04140A",
 		Border: "#1F3D2B", BorderFocus: "#00E676",
 		Text: "#D7FFE7", Muted: "#7FBF97", Dim: "#3F7A57",
 		Accent: "#00E676", AccentAlt: "#26C6DA", OnAccent: "#00150A",
@@ -65,7 +59,6 @@ var Themes = map[string]Palette{
 	},
 	"paper": {
 		Name: "paper", Description: "GitHub light — for bright rooms",
-		Bg: "#FFFFFF", BgPanel: "#FFFFFF", BgActive: "#F3F7EE",
 		Border: "#D0D7DE", BorderFocus: "#1A7F37",
 		Text: "#1F2328", Muted: "#59636E", Dim: "#8C959F",
 		Accent: "#1A7F37", AccentAlt: "#8250DF", OnAccent: "#FFFFFF",
@@ -161,7 +154,6 @@ type Styles struct {
 	Info    lipgloss.Style
 	Running lipgloss.Style
 
-	StatusBarBg   lipgloss.Style
 	StatusKey     lipgloss.Style
 	StatusText    lipgloss.Style
 	Toast         lipgloss.Style
@@ -183,19 +175,17 @@ func New(p Palette) Styles {
 	if noColor := os.Getenv("NO_COLOR"); noColor != "" {
 		s = noColorStyles(s)
 	}
-	base := lipgloss.NewStyle().Background(p.Bg)
-
-	s.Header = base.Foreground(p.OnAccent).Background(p.Accent).Bold(true).PaddingLeft(1).PaddingRight(1)
-	s.HeaderAccent = base.Foreground(p.Accent).Bold(true)
+	// Only interactive highlights carry backgrounds; ordinary surfaces use
+	// the terminal's own background, including transparent terminals.
+	s.Header = lipgloss.NewStyle().Foreground(p.OnAccent).Background(p.Accent).Bold(true).PaddingLeft(1).PaddingRight(1)
+	s.HeaderAccent = lipgloss.NewStyle().Foreground(p.Accent).Bold(true)
 
 	s.PanelBorder = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(p.Border).
-		Background(p.BgPanel)
+		BorderForeground(p.Border)
 	s.PanelFocus = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(p.BorderFocus).
-		Background(p.BgActive)
+		BorderForeground(p.BorderFocus)
 	s.PanelTitle = lipgloss.NewStyle().Foreground(p.Muted).Bold(true)
 	s.PanelTitleFoc = lipgloss.NewStyle().Foreground(p.Accent).Bold(true)
 	s.PanelBody = lipgloss.NewStyle().Foreground(p.Text)
@@ -217,12 +207,11 @@ func New(p Palette) Styles {
 	s.Info = lipgloss.NewStyle().Foreground(p.Info)
 	s.Running = lipgloss.NewStyle().Foreground(p.Warning)
 
-	s.StatusBarBg = lipgloss.NewStyle().Background(p.BgPanel)
 	s.StatusKey = lipgloss.NewStyle().Foreground(p.Accent).Bold(true)
 	s.StatusText = lipgloss.NewStyle().Foreground(p.Muted)
 	s.Toast = lipgloss.NewStyle().Foreground(p.OnAccent).Background(p.AccentAlt).PaddingLeft(1).PaddingRight(1)
 	s.ButtonFocus = lipgloss.NewStyle().Foreground(p.OnAccent).Background(p.Accent).PaddingLeft(2).PaddingRight(2).Bold(true)
-	s.ButtonBlur = lipgloss.NewStyle().Foreground(p.Text).Background(p.BgPanel).PaddingLeft(2).PaddingRight(2)
+	s.ButtonBlur = lipgloss.NewStyle().Foreground(p.Text).PaddingLeft(2).PaddingRight(2)
 	s.FieldFocused = lipgloss.NewStyle().Foreground(p.Text).Background(p.Selection)
 	s.BadgeStyle = lipgloss.NewStyle().Foreground(p.OnAccent).Background(p.AccentAlt).PaddingLeft(1).PaddingRight(1)
 	s.ProgressFull = p.Accent
