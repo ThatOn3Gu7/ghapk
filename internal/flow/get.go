@@ -65,71 +65,102 @@ func Run(o GetOptions) int {
 	}
 	out("ghapk: repo %s", repo)
 
-	// [3/6] runs
-	runs, err := ghapi.ListRuns(repo, s.Workflow, s.Branch, s.RunLimit)
-	if err != nil {
-		out("ghapk: listing runs: %v", err)
-		return 5
-	}
-	var good []ghapi.Run
-	for _, r := range runs {
-		if r.Finished() && r.Conclusion == "success" {
-			good = append(good, r)
-		}
-	}
-	if len(good) == 0 {
-		out("ghapk: no successful runs found for %s%s", repo, branchSuffix(s.Branch))
-		return 6
-	}
-	out("ghapk: %d successful run(s), newest #%d", len(good), good[0].RunNumber)
-
-	// [4/6] locate artifact
+	// [3/6] & [4/6] locate source (actions artifacts and/or releases)
 	var (
-		art    ghapi.Artifact
-		run    ghapi.Run
-		empty  int
-		unseen int
+		art      ghapi.Artifact
+		run      ghapi.Run
+		relPick  ghapi.RankedReleaseAsset
+		useRel   bool
 	)
-	for _, r := range good {
-		arts, err := ghapi.ListArtifacts(repo, r.ID)
+
+	if s.Source != "releases" {
+		runs, err := ghapi.ListRuns(repo, s.Workflow, s.Branch, s.RunLimit)
+		if err != nil && s.Source == "actions" {
+			out("ghapk: listing runs: %v", err)
+			return 5
+		}
+		var good []ghapi.Run
+		for _, r := range runs {
+			if r.Finished() && r.Conclusion == "success" {
+				good = append(good, r)
+			}
+		}
+		if len(good) == 0 && s.Source == "actions" {
+			out("ghapk: no successful runs found for %s%s", repo, branchSuffix(s.Branch))
+			return 6
+		}
+		if len(good) > 0 {
+			out("ghapk: %d successful run(s), newest #%d", len(good), good[0].RunNumber)
+		}
+
+		var empty, unseen int
+		for _, r := range good {
+			arts, aerr := ghapi.ListArtifacts(repo, r.ID)
+			if aerr != nil {
+				unseen++
+				continue
+			}
+			var ranked []ghapi.Artifact
+			for _, a := range arts {
+				if a.Expired {
+					continue
+				}
+				if s.ArtifactPattern != "" && !containsFold(a.Name, s.ArtifactPattern) {
+					continue
+				}
+				if s.ExcludePattern != "" && containsFold(a.Name, s.ExcludePattern) {
+					continue
+				}
+				a.Score = score.ArtifactRank(a.Name, prefs, sd)
+				if !score.AllowedByPolicy(a.Name, prefs, sd) {
+					continue
+				}
+				ranked = append(ranked, a)
+			}
+			if len(ranked) == 0 {
+				empty++
+				continue
+			}
+			best := ranked[0]
+			for _, a := range ranked[1:] {
+				if a.Score > best.Score {
+					best = a
+				}
+			}
+			art, run = best, r
+			break
+		}
+		if art.ID == 0 && s.Source == "actions" {
+			out("ghapk: no matching artifact in %d run(s) (%d empty, %d unreadable)",
+				len(good), empty, unseen)
+			return 7
+		}
+	}
+
+	if art.ID == 0 && s.Source != "actions" {
+		rels, err := ghapi.ListReleases(repo, 10)
 		if err != nil {
-			unseen++
-			continue
+			out("ghapk: listing releases: %v", err)
+			return 5
 		}
-		var ranked []ghapi.Artifact
-		for _, a := range arts {
-			if a.Expired {
-				continue
-			}
-			if s.ArtifactPattern != "" && !containsFold(a.Name, s.ArtifactPattern) {
-				continue
-			}
-			a.Score = score.ArtifactRank(a.Name, prefs, sd)
-			if !score.AllowedByPolicy(a.Name, prefs, sd) {
-				continue
-			}
-			ranked = append(ranked, a)
-		}
-		if len(ranked) == 0 {
-			empty++
-			continue
-		}
-		best := ranked[0]
-		for _, a := range ranked[1:] {
-			if a.Score > best.Score {
-				best = a
+		rankedRels := ghapi.RankReleaseAssets(rels, s.ArtifactPattern, s.FilePattern, s.ExcludePattern, prefs, sd)
+		for _, cand := range rankedRels {
+			if !cand.Asset.Rejected {
+				relPick = cand
+				useRel = true
+				break
 			}
 		}
-		art, run = best, r
-		break
+		if !useRel {
+			out("ghapk: no matching APK found in workflow artifacts or releases")
+			return 7
+		}
+		out("ghapk: release asset %s (%s) from %s",
+			relPick.Asset.Name, ghapi.HumanBytes(relPick.Asset.Size), relPick.ReleaseTag)
+	} else {
+		out("ghapk: artifact %s (%s) from run #%d", art.Name,
+			ghapi.HumanBytes(art.SizeInBytes), run.RunNumber)
 	}
-	if art.ID == 0 {
-		out("ghapk: no matching artifact in %d run(s) (%d empty, %d unreadable)",
-			len(good), empty, unseen)
-		return 7
-	}
-	out("ghapk: artifact %s (%s) from run #%d", art.Name,
-		ghapi.HumanBytes(art.SizeInBytes), run.RunNumber)
 
 	if o.DryRun {
 		out("ghapk: dry run — would download to %s", config.CacheDir()+"/apk")
@@ -141,7 +172,6 @@ func Run(o GetOptions) int {
 	if dir == "" {
 		dir = filepath.Join(config.CacheDir(), "apk")
 	}
-	zipPath := filepath.Join(dir, fmt.Sprintf("%d.zip", art.ID))
 	lastReport := int64(-1)
 	prog := func(got, total int64) {
 		mb := got / (1 << 20)
@@ -150,24 +180,55 @@ func Run(o GetOptions) int {
 			fmt.Fprintf(os.Stderr, "\rghapk: downloading… %s", ghapi.HumanBytes(got))
 		}
 	}
-	if err := ghapi.DownloadArtifact(repo, art, zipPath, prog); err != nil {
-		out("\nghapk: download failed: %v", err)
-		return 8
-	}
-	ds := ghapi.DigestStatusFor(art.Digest)
-	if ds == apk.DigestVerified {
-		out("\rghapk: downloaded %s (sha256 verified against GitHub digest)   ", ghapi.HumanBytes(art.SizeInBytes))
-	} else {
-		out("\rghapk: downloaded %s (digest unverified — GitHub published none)   ", ghapi.HumanBytes(art.SizeInBytes))
-	}
 
-	apkOut, err := ghapi.ExtractBestAPK(zipPath, dir, s.FilePattern, prefs, sd)
-	if err != nil {
-		out("ghapk: unpacking: %v", err)
-		return 9
+	var apkOut ghapi.ExtractedAPK
+	if useRel {
+		var rerr error
+		apkOut, rerr = ghapi.FetchReleaseAPK(repo, relPick.Asset, dir, s.FilePattern, s.ExcludePattern, s.KeepCache, prefs, sd, prog)
+		if rerr != nil {
+			out("\nghapk: release download failed: %v", rerr)
+			return 8
+		}
+		if !s.KeepCache && o.PrintDir == "" {
+			ghapi.PruneAPKCache(dir, 3, apkOut.Path)
+		}
+		if apkOut.DigestStatus == apk.DigestVerified {
+			out("\rghapk: downloaded release asset (sha256 verified against GitHub digest)   ")
+		} else {
+			out("\rghapk: downloaded release asset (digest unverified — GitHub published none)   ")
+		}
+	} else {
+		zipPath := filepath.Join(dir, fmt.Sprintf("%d.zip", art.ID))
+		cached, derr := ghapi.DownloadArtifactCached(repo, art, zipPath, s.KeepCache, prog)
+		if derr != nil {
+			out("\nghapk: download failed: %v", derr)
+			return 8
+		}
+		ds := ghapi.DigestStatusFor(art.Digest)
+		switch {
+		case cached:
+			out("\rghapk: reused verified cached archive %s   ", filepath.Base(zipPath))
+		case ds == apk.DigestVerified:
+			out("\rghapk: downloaded %s (sha256 verified against GitHub digest)   ", ghapi.HumanBytes(art.SizeInBytes))
+		default:
+			out("\rghapk: downloaded %s (digest unverified — GitHub published none)   ", ghapi.HumanBytes(art.SizeInBytes))
+		}
+
+		var xerr error
+		apkOut, xerr = ghapi.ExtractBestAPKFiltered(zipPath, dir, s.FilePattern, s.ExcludePattern, prefs, sd)
+		if !s.KeepCache {
+			_ = os.Remove(zipPath)
+			if xerr == nil && o.PrintDir == "" {
+				ghapi.PruneAPKCache(dir, 3, apkOut.Path)
+			}
+		}
+		if xerr != nil {
+			out("ghapk: unpacking: %v", xerr)
+			return 9
+		}
+		apkOut.DigestStatus = ds
+		apkOut.Meta.DigestStatus = ds
 	}
-	apkOut.DigestStatus = ds
-	apkOut.Meta.DigestStatus = ds
 	out("ghapk: apk %s (%s)", apkOut.Path, ghapi.HumanBytes(apkOut.Size))
 	if apkOut.Meta.HaveInfo {
 		out("ghapk: manifest %s · v%s (%d)",

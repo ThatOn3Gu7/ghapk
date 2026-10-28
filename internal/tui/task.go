@@ -229,17 +229,38 @@ func (t *TaskState) view(m *Model) string {
 
 // ─────────────────── start actions on the model ───────────────────
 
-// startDownload launches download of the selected artifact.
+// startDownload launches download of the selected workflow artifact or release asset.
 func (m *Model) startDownload(withInstall bool) tea.Cmd {
+	cacheDir := config.CacheDir()
+	outDir := filepath.Join(cacheDir, "apk")
+
+	if m.usingReleaseAssets() {
+		ra, ok := m.selectedReleaseAsset()
+		if !ok {
+			m.toastf("no release asset selected")
+			return nil
+		}
+		m.pendingInstall = withInstall
+		m.progCh = make(chan tea.Msg, 64)
+		device_CanInstall = m.dev.CanInstall
+		m.task = newTask("Downloading release asset", ra.Asset.Name, progressColor{m.st.P.Accent, m.st.P.AccentAlt})
+		m.busy = true
+		m.busyMsg = "downloading"
+		m.modal = ModalTask
+		return tea.Batch(
+			downloadReleaseApkCmd(m.settings.Repo, ra.Asset, outDir, m.settings.FilePattern, m.settings.ExcludePattern,
+				m.settings.KeepCache, m.dev, archPrefs{m.settings.Arch, m.settings.Variant}, m.progCh),
+			waitProgress(m.progCh),
+		)
+	}
+
 	art, ok := m.selectedArtifact()
 	if !ok {
 		m.toastf("no artifact selected")
 		return nil
 	}
 	run, _ := m.selectedRun()
-	cacheDir := config.CacheDir()
-	zipPath := filepath.Join(cacheDir, "apk", fmt.Sprintf("%d-%s.zip", art.ID, sanitize(art.Name)))
-	outDir := filepath.Join(cacheDir, "apk")
+	zipPath := filepath.Join(outDir, fmt.Sprintf("%d-%s.zip", art.ID, sanitize(art.Name)))
 	m.pendingInstall = withInstall
 	m.progCh = make(chan tea.Msg, 64)
 	device_CanInstall = m.dev.CanInstall
@@ -249,8 +270,8 @@ func (m *Model) startDownload(withInstall bool) tea.Cmd {
 	m.busyMsg = "downloading"
 	m.modal = ModalTask
 	return tea.Batch(
-		downloadApkCmd(m.settings.Repo, art, zipPath, outDir, m.settings.FilePattern,
-			m.dev, archPrefs{m.settings.Arch, m.settings.Variant}, m.progCh),
+		downloadApkCmd(m.settings.Repo, art, zipPath, outDir, m.settings.FilePattern, m.settings.ExcludePattern,
+			m.settings.KeepCache, m.dev, archPrefs{m.settings.Arch, m.settings.Variant}, m.progCh),
 		waitProgress(m.progCh),
 	)
 }

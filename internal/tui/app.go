@@ -432,13 +432,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		arts := m.scoreArtifacts(msg.List)
 		m.runCache[msg.RunID] = arts
 		if sel, ok := m.selectedRun(); ok && sel.ID == msg.RunID {
-			m.setArtifactItems(arts)
+			if m.usingReleaseAssets() {
+				m.syncReleaseArtifactItems()
+			} else {
+				m.setArtifactItems(arts)
+			}
 		}
 		return m, nil
 
 	case ReleasesMsg:
 		if msg.Err == nil {
 			m.releases = msg.List
+			if m.usingReleaseAssets() {
+				m.syncReleaseArtifactItems()
+			}
 		}
 		return m, nil
 
@@ -1076,4 +1083,98 @@ func (m *Model) recordAPKHistory(meta apk.Inspection) {
 		entry.VName = meta.Info.VersionName
 	}
 	_ = config.RecordInstall(m.settings.Repo, entry)
+}
+
+func (m *Model) rankedReleases() []ghapi.RankedReleaseAsset {
+	if len(m.releases) == 0 {
+		return nil
+	}
+	prefs := score.Prefs{Arch: m.settings.Arch, Variant: m.settings.Variant}
+	dev := score.Device{ABIs: m.dev.ABIs, SDK: m.dev.SDK}
+	return ghapi.RankReleaseAssets(
+		m.releases,
+		m.settings.ArtifactPattern,
+		m.settings.FilePattern,
+		m.settings.ExcludePattern,
+		prefs,
+		dev,
+	)
+}
+
+// usingReleaseAssets reports whether PanelArtifacts should present GitHub
+// Release assets (either explicitly via source=releases, or as auto fallback
+// when workflow artifacts are unavailable).
+func (m *Model) usingReleaseAssets() bool {
+	if m.settings.Source == "actions" {
+		return false
+	}
+	rels := m.rankedReleases()
+	if len(rels) == 0 {
+		return false
+	}
+	if m.settings.Source == "releases" {
+		return true
+	}
+	r, ok := m.selectedRun()
+	if !ok {
+		return m.runsLoaded
+	}
+	if m.fetching[r.ID] {
+		return false
+	}
+	arts, cached := m.runCache[r.ID]
+	return cached && len(arts) == 0
+}
+
+func (m *Model) syncReleaseArtifactItems() {
+	rels := m.rankedReleases()
+	items := make([]components.Item, 0, len(rels))
+	for _, ra := range rels {
+		items = append(items, components.Item{
+			ID:    -ra.Asset.ID,
+			Label: ra.Asset.Name,
+		})
+	}
+	m.arts.SetItems(items)
+	if len(rels) > 0 {
+		found := false
+		for _, ra := range rels {
+			if -ra.Asset.ID == m.selectedArtID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			m.selectedArtID = -rels[0].Asset.ID
+		}
+	} else {
+		m.selectedArtID = 0
+	}
+}
+
+func (m *Model) selectedReleaseAsset() (ghapi.RankedReleaseAsset, bool) {
+	rels := m.rankedReleases()
+	if len(rels) == 0 {
+		return ghapi.RankedReleaseAsset{}, false
+	}
+	if m.selectedArtID < 0 {
+		for _, ra := range rels {
+			if -ra.Asset.ID == m.selectedArtID {
+				return ra, true
+			}
+		}
+	}
+	return m.cursorReleaseAsset()
+}
+
+func (m *Model) cursorReleaseAsset() (ghapi.RankedReleaseAsset, bool) {
+	rels := m.rankedReleases()
+	if len(rels) == 0 {
+		return ghapi.RankedReleaseAsset{}, false
+	}
+	idx := m.arts.SelectedIndex()
+	if idx < 0 || idx >= len(rels) {
+		return ghapi.RankedReleaseAsset{}, false
+	}
+	return rels[idx], true
 }
