@@ -158,6 +158,19 @@ func ListReleases(repo string, limit int) ([]Release, error) {
 	return r, nil
 }
 
+// ListUserRepos fetches repositories recently pushed by or accessible to the
+// authenticated user to seed the repository picker.
+func ListUserRepos(limit int) ([]Repo, error) {
+	if limit <= 0 {
+		limit = 40
+	}
+	var rs []Repo
+	if err := api(&rs, defaultTimeout, fmt.Sprintf("user/repos?sort=pushed&per_page=%d", limit)); err != nil {
+		return nil, err
+	}
+	return rs, nil
+}
+
 // SearchRepos powers the repo picker's suggestions.
 func SearchRepos(query string, limit int) ([]SearchHit, error) {
 	if strings.TrimSpace(query) == "" {

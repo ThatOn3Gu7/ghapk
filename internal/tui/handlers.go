@@ -108,17 +108,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.openDoctor()
 
 	case "R":
-		m.openRepoPicker()
-		return m, nil
+		return m, m.openRepoPicker()
 
 	case "B":
 		if m.settings.Repo == "" {
 			m.toastf("set a repository first (R)")
 			return m, nil
 		}
-		m.modal = ModalPickBranch
-		m.branchList.MaxShown = 12
-		return m, fetchBranchesCmd(m.settings.Repo)
+		return m, m.openBranchPicker()
+
+	case "W":
+		if m.settings.Repo == "" {
+			m.toastf("set a repository first (R)")
+			return m, nil
+		}
+		return m, m.openWorkflowPicker()
 
 	case "t":
 		next := theme.Next(m.settings.Theme)
@@ -442,28 +446,44 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ModalPickBranch:
-		switch key {
-		case "esc", "q":
-			m.modal = ModalNone
-		case "j", "down":
-			m.branchList.MoveBy(1)
-		case "k", "up":
-			m.branchList.MoveBy(-1)
-		case "enter":
-			if sel, ok := m.branchList.Selected(); ok {
-				m.branchSel, _ = sel.ID.(string)
+		if m.branchPicker != nil {
+			return m.branchPicker.handleKey(msg, &m, func(val string) tea.Cmd {
+				m.branchSel = val
+				m.settings.Branch = val
 				m.runsLoaded = false
 				m.runs.SetItems(nil)
 				m.arts.SetItems(nil)
-				m.modal = ModalNone
-				if m.branchSel == "" {
+				m.branchPicker = nil
+				if val == "" {
 					m.toastf("branch: all")
 				} else {
-					m.toastf("branch: %s", m.branchSel)
+					m.toastf("branch: %s", val)
 				}
-				return m, tea.Batch(m.refreshAll()...)
-			}
+				return tea.Batch(m.refreshAll()...)
+			})
 		}
+		m.modal = ModalNone
+		return m, nil
+
+	case ModalPickWorkflow:
+		if m.workflowPicker != nil {
+			return m.workflowPicker.handleKey(msg, &m, func(val string) tea.Cmd {
+				m.settings.Workflow = val
+				m.workflowSel = val
+				m.workflows.SelectByID(val)
+				m.runsLoaded = false
+				m.runs.SetItems(nil)
+				m.arts.SetItems(nil)
+				m.workflowPicker = nil
+				if val == "" {
+					m.toastf("workflow: all")
+				} else {
+					m.toastf("workflow: %s", val)
+				}
+				return tea.Batch(m.refreshAll()...)
+			})
+		}
+		m.modal = ModalNone
 		return m, nil
 
 	case ModalConfirm:

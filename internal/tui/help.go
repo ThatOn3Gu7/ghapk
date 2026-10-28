@@ -41,8 +41,9 @@ func (m Model) buildHelp() viewport.Model {
 	row("x", "remove it from the recents file")
 
 	h1("Pickers & screens")
-	row("R", "repository picker (recents + GitHub search)")
-	row("B", "branch picker")
+	row("R", "repository picker (recents, yours, GitHub search)")
+	row("B", "branch picker (filter + default/protected/PR branches)")
+	row("W", "workflow picker (filter workflows by name or .yml)")
 	row("s", "settings editor")
 	row("t", "cycle theme")
 	row("D", "doctor — environment health check")

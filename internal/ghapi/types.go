@@ -20,6 +20,17 @@ type Workflow struct {
 	State string `json:"state"`
 }
 
+// File returns the basename of Path (for example "build.yml").
+func (w Workflow) File() string {
+	p := w.Path
+	for i := len(p) - 1; i >= 0; i-- {
+		if p[i] == '/' {
+			return p[i+1:]
+		}
+	}
+	return p
+}
+
 // Run is one entry of GET /repos/{owner}/{repo}/actions/runs.
 type Run struct {
 	ID           int64     `json:"id"`

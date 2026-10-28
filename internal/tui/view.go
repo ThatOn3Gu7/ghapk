@@ -46,8 +46,15 @@ func (m Model) View() string {
 			return m.overlayModal("Repository", m.repoPicker.view(&m))
 		}
 	case ModalPickBranch:
+		if m.branchPicker != nil {
+			return m.overlayModal("Branch", m.branchPicker.view(&m))
+		}
 		body := m.branchList.Render(m.st, 44)
 		return m.overlayModal("Branch", body)
+	case ModalPickWorkflow:
+		if m.workflowPicker != nil {
+			return m.overlayModal("Workflow", m.workflowPicker.view(&m))
+		}
 	case ModalEditRepo:
 		body := m.editInput.View() + "\n\n" +
 			m.st.Dim.Render("enter saves as owner/repo · esc cancels")

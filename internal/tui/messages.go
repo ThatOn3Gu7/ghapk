@@ -75,6 +75,11 @@ type SearchResultsMsg struct {
 	Err   error
 }
 
+type UserReposMsg struct {
+	List []ghapi.Repo
+	Err  error
+}
+
 type DownloadProgressMsg struct {
 	Received int64
 	Total    int64
@@ -198,6 +203,13 @@ func searchReposCmd(query string) tea.Cmd {
 	return func() tea.Msg {
 		hits, err := ghapi.SearchRepos(query, 8)
 		return SearchResultsMsg{Query: query, Hits: hits, Err: err}
+	}
+}
+
+func fetchUserReposCmd() tea.Cmd {
+	return func() tea.Msg {
+		rs, err := ghapi.ListUserRepos(40)
+		return UserReposMsg{List: rs, Err: err}
 	}
 }
 
