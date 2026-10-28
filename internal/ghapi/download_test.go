@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -133,7 +134,12 @@ func TestExtractBestAPK_ValidArchiveAndRanking(t *testing.T) {
 		{name: "logs/2026-10-28T12:00:00Z/build.log", body: []byte("ok\n")},
 		{name: "app/build/outputs/apk/output-metadata.json", body: []byte(`{"version":3}`)},
 		{name: "app/build/outputs/apk/release/com.example.app-universal-release.apk", body: uniPayload},
-		{name: "./app/build/outputs/apk/debug/com.example.app-arm64-v8a-debug.apk", body: arm64Payload},
+		{
+			name:    "./app/build/outputs/apk/debug/com.example.app-arm64-v8a-debug.apk",
+			body:    arm64Payload,
+			mode:    os.ModeSetuid | 0o755,
+			hasMode: true,
+		},
 	})
 
 	outDir := filepath.Join(t.TempDir(), "nested", "out")
@@ -156,6 +162,16 @@ func TestExtractBestAPK_ValidArchiveAndRanking(t *testing.T) {
 	}
 	if !got.Candidate {
 		t.Errorf("got.Candidate = false, want true")
+	}
+
+	fi, err := os.Lstat(got.Path)
+	if err != nil {
+		t.Fatalf("Lstat(%q): %v", got.Path, err)
+	}
+	if runtime.GOOS != "windows" {
+		if fi.Mode().Perm()&0o111 != 0 || fi.Mode()&os.ModeSetuid != 0 {
+			t.Errorf("extracted APK inherited unsafe mode bits: %s", fi.Mode())
+		}
 	}
 
 	data, err := os.ReadFile(got.Path)
@@ -217,14 +233,18 @@ func TestExtractBestAPK_EnforcesSelectionPolicy(t *testing.T) {
 		}
 	})
 
-	t.Run("enforces policy on filePattern matches", func(t *testing.T) {
+	t.Run("enforces policy and exact glob semantics on filePattern matches", func(t *testing.T) {
 		zipPath := buildTestZip(t, []zipEntrySpec{
 			{name: "bundle-x86_64-debug.custom", body: []byte("x86-custom")},
+			{name: "notes.custom.txt", body: []byte("not-a-custom-bundle")},
 		})
 		outDir := t.TempDir()
 		_, err := ExtractBestAPK(zipPath, outDir, "*.custom", score.Prefs{Arch: "auto", Variant: "auto"}, arm64Phone)
 		if err == nil {
-			t.Fatal("expected policy rejection on incompatible filePattern candidate")
+			t.Fatal("expected policy rejection on incompatible filePattern candidate (and non-matching .txt ignored)")
+		}
+		if !strings.Contains(err.Error(), "policy") {
+			t.Fatalf("expected policy error rather than extracting notes.custom.txt, got: %v", err)
 		}
 	})
 }
@@ -249,6 +269,8 @@ func TestExtractBestAPK_RejectsMaliciousPaths(t *testing.T) {
 		"evil\x00.apk",
 		"evil\n.apk",
 		"evil\x7f.apk",
+		"evil\u009b31m.apk",
+		"app-\u202ekpa.exe.apk",
 		".. /evil.apk",
 		"evil.apk.",
 		"evil.apk ",
@@ -264,6 +286,7 @@ func TestExtractBestAPK_RejectsMaliciousPaths(t *testing.T) {
 
 	for _, bad := range maliciousNames {
 		t.Run(sanitizeDisplayPath(bad), func(t *testing.T) {
+			t.Setenv("GODEBUG", "zipinsecurepath=0")
 			parent := t.TempDir()
 			outDir := filepath.Join(parent, "out")
 			zipPath := buildTestZip(t, []zipEntrySpec{
@@ -274,6 +297,23 @@ func TestExtractBestAPK_RejectsMaliciousPaths(t *testing.T) {
 			_, err := ExtractBestAPK(zipPath, outDir, "", prefs, dev)
 			if err == nil {
 				t.Fatalf("expected error for malicious zip entry %q, got nil", bad)
+			}
+			if strings.HasPrefix(err.Error(), "not a zip:") {
+				t.Fatalf("zip.OpenReader short-circuited entry validator with %v", err)
+			}
+
+			// InspectZip must still safely list sanitized entries without leaking FDs.
+			listed, ierr := InspectZip(zipPath)
+			if ierr != nil {
+				t.Fatalf("InspectZip failed under zipinsecurepath=0: %v", ierr)
+			}
+			if len(listed) != 2 {
+				t.Fatalf("InspectZip returned %d entries, want 2", len(listed))
+			}
+
+			// Removing zipPath succeeds on all OSes (including Windows) only if r.Close() ran.
+			if err := os.Remove(zipPath); err != nil {
+				t.Fatalf("Remove(zipPath) failed (possible leaked zip file handle): %v", err)
 			}
 
 			// Verify nothing escaped into parent and nothing was published in outDir.
@@ -547,7 +587,8 @@ func TestExtractBestAPK_SizeAndEntryCountLimits(t *testing.T) {
 		if cdIdx < 0 {
 			t.Fatal("central directory signature not found")
 		}
-		// Spoof central directory UncompressedSize from 4096 down to 64 bytes.
+		// Spoof central directory UncompressedSize from 4096 down to 64 bytes so
+		// the metadata pre-check (64 <= 1024) passes and streaming must catch it.
 		binary.LittleEndian.PutUint32(raw[cdIdx+24:cdIdx+28], 64)
 
 		zipPath := filepath.Join(t.TempDir(), "spoofed.zip")
@@ -561,15 +602,36 @@ func TestExtractBestAPK_SizeAndEntryCountLimits(t *testing.T) {
 
 		_, err := extractBestAPKWithOpts(zipPath, outDir, "", prefs, dev, opts)
 		if err == nil {
-			t.Fatal("expected streaming size limit error for spoofed zip header, got nil")
+			t.Fatal("expected streaming error for spoofed zip header, got nil")
 		}
-		if !strings.Contains(err.Error(), "exceeds maximum extracted size") {
-			t.Errorf("unexpected error message: %v", err)
+		if !errors.Is(err, zip.ErrFormat) && !strings.Contains(err.Error(), "exceeds maximum extracted size") {
+			t.Errorf("unexpected error for spoofed zip stream: %v", err)
 		}
 		assertNoTempPartFiles(t, outDir)
 		if _, statErr := os.Stat(filepath.Join(outDir, "app-universal.apk")); !errors.Is(statErr, os.ErrNotExist) {
-			t.Fatalf("destination file must not exist after streaming size abort: %v", statErr)
+			t.Fatalf("destination file must not exist after streaming abort: %v", statErr)
 		}
+	})
+
+	t.Run("copyBounded enforces streaming byte cap and preserves existing target", func(t *testing.T) {
+		outDir := t.TempDir()
+		dest := filepath.Join(outDir, "app-universal.apk")
+		if err := os.WriteFile(dest, []byte("KEEP_ME"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		err := writeFileAtomicInDir(defaultAtomicFS(), outDir, "app-universal.apk", func(w io.Writer) error {
+			_, cerr := copyBounded(w, bytes.NewReader(bytes.Repeat([]byte("X"), 4096)), 1024)
+			return cerr
+		})
+		if err == nil || !strings.Contains(err.Error(), "exceeds maximum extracted size") {
+			t.Fatalf("expected streaming max-bytes error from copyBounded, got: %v", err)
+		}
+		gotOld, rerr := os.ReadFile(dest)
+		if rerr != nil || string(gotOld) != "KEEP_ME" {
+			t.Fatalf("existing destination modified: %q (%v)", gotOld, rerr)
+		}
+		assertNoTempPartFiles(t, outDir)
 	})
 
 	t.Run("rejects archive exceeding max entry count", func(t *testing.T) {
@@ -733,23 +795,32 @@ func TestDownloadReleaseAssetAndArtifact_PathSafetyAndAtomicStream(t *testing.T)
 	t.Run("rejects unsafe release asset names and destination paths", func(t *testing.T) {
 		outDir := t.TempDir()
 		badAssetNames := []string{
+			"",
 			"../evil.apk",
 			`..\evil.apk`,
 			"sub/evil.apk",
 			"C:evil.apk",
 			"NUL.apk",
 			"evil\x00.apk",
+			"app-\u202ekpa.exe.apk",
 		}
 		for _, bad := range badAssetNames {
 			if _, err := ResolveReleaseAssetDest(outDir, bad); err == nil {
 				t.Errorf("ResolveReleaseAssetDest accepted unsafe assetName %q", bad)
 			}
 			// Even if a caller pre-joined filepath.Join(outDir, bad), DownloadReleaseAsset must reject bad asset.Name.
-			preJoined := filepath.Join(outDir, bad)
+			preJoined := filepath.Join(outDir, "fallback.apk")
+			if bad != "" {
+				preJoined = filepath.Join(outDir, bad)
+			}
 			err := DownloadReleaseAsset("owner/repo", ReleaseAsset{ID: 1, Name: bad, Size: 10}, preJoined, nil)
 			if err == nil || errors.Is(err, ErrNoGH) {
 				t.Errorf("DownloadReleaseAsset(%q) returned %v, want validation error before spawning gh", bad, err)
 			}
+		}
+
+		if _, err := SafeDestinationPath("C:relative", "app.apk"); err == nil {
+			t.Error("SafeDestinationPath accepted drive-relative outDir 'C:relative'")
 		}
 
 		badDests := []string{

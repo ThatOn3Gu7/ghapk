@@ -233,7 +233,7 @@ func downloadReleaseApkCmd(repo string, asset ghapi.ReleaseAsset, dest, filePatt
 			return nil
 		}
 		size := asset.Size
-		if fi, statErr := os.Stat(target); statErr == nil {
+		if fi, statErr := os.Lstat(target); statErr == nil && fi.Mode().IsRegular() {
 			size = fi.Size()
 		}
 		progCh <- DownloadDoneMsg{
