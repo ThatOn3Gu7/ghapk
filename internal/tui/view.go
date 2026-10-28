@@ -44,7 +44,7 @@ func (m Model) View() string {
 func (m Model) modalBox() string {
 	switch m.modal {
 	case ModalHelp:
-		return m.modalWindow("Help", m.renderHelp())
+		return m.modalWindow(m.helpTitle(), m.renderHelp())
 	case ModalSettings:
 		if m.settingsUI != nil {
 			return m.modalWindow("Settings", m.settingsUI.view(&m))

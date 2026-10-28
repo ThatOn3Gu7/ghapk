@@ -131,6 +131,8 @@ type Model struct {
 	modal ModalKind
 
 	helpVP              viewport.Model
+	helpWrapOff         bool // session preference; wrap is enabled by default
+	helpLineEntries     []int
 	helpDragging        bool
 	helpDragScrollbar   bool
 	helpDragLastY       int

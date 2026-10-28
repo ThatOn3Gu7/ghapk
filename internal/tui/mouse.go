@@ -442,6 +442,10 @@ func (m Model) handleHelpMouse(msg tea.MouseMsg) Model {
 		return m
 	}
 	if msg.Action == tea.MouseActionPress && (msg.Type == tea.MouseLeft || msg.Button == tea.MouseButtonLeft) {
+		if m.helpWrapBounds().contains(msg.X, msg.Y) {
+			m.toggleHelpWrap()
+			return m
+		}
 		m.helpDragging = bounds.contains(msg.X, msg.Y)
 		m.helpDragLastY = msg.Y
 		start, size := m.helpThumb()
