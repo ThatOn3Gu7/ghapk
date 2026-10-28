@@ -364,7 +364,11 @@ func (m *Model) activate() tea.Cmd {
 			return tea.Batch(m.refreshAll()...)
 		}
 	case PanelArtifacts:
-		if a, ok := m.cursorArtifact(); ok {
+		if m.usingReleaseAssets() {
+			if ra, ok := m.cursorReleaseAsset(); ok {
+				m.selectedArtID = -ra.Asset.ID
+			}
+		} else if a, ok := m.cursorArtifact(); ok {
 			m.selectedArtID = a.ID
 		}
 		return m.requestDownload(false)
@@ -489,38 +493,46 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ModalConfirm:
 		switch key {
 		case "esc", "q":
-			m.modal = ModalNone
-			m.confirm = components.Confirm{}
+			m.resetConfirm()
 			return m, nil
-		case "left", "h":
+		case "left", "h", "shift+tab":
 			if m.confirm.Cursor > 0 {
 				m.confirm.Cursor--
 			}
-		case "right", "l", "tab":
+		case "right", "l":
 			if m.confirm.Cursor < len(m.confirm.Options)-1 {
 				m.confirm.Cursor++
+			}
+		case "tab":
+			if len(m.confirm.Options) > 0 {
+				m.confirm.Cursor = (m.confirm.Cursor + 1) % len(m.confirm.Options)
 			}
 		case "y":
 			if m.confirmKind == confirmSafetyOverride {
 				return m, nil // safety overrides require deliberate selection + Enter
 			}
-			m.confirm.Cursor = 0
-			return m, m.confirmAccept()
+			// Preserve an already-highlighted non-Cancel choice (e.g. "Download & Install");
+			// only default to option 0 if the cursor was sitting on Cancel.
+			if m.confirm.Cursor < 0 || m.confirm.Cursor >= len(m.confirm.Options)-1 {
+				m.confirm.Cursor = 0
+			}
+			cmd := m.confirmAccept()
+			return m, cmd
 		case "n":
-			m.modal = ModalNone
-			m.confirm = components.Confirm{}
+			m.resetConfirm()
 			return m, nil
-		case "enter":
-			return m, m.confirmAccept()
+		case "enter", " ":
+			cmd := m.confirmAccept()
+			return m, cmd
 		}
 		return m, nil
 
 	case ModalTask:
 		if m.task != nil {
 			// task handles its own keys (buttons after completion etc.)
-			var cmd tea.Cmd
 			finished := m.task.isDismissable()
 			if key == "esc" && (finished || !m.task.running) {
+				m.pendingInstall = false
 				m.modal = ModalNone
 				if finished {
 					m.task = nil
@@ -529,22 +541,37 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			if finished {
 				switch key {
-				case "left", "h":
+				case "left", "h", "shift+tab":
 					m.task.moveButton(-1)
 					return m, nil
 				case "right", "l":
 					m.task.moveButton(1)
 					return m, nil
-				case "enter":
-					return m, m.task.activateFocused(&m)
+				case "tab":
+					if len(m.task.buttons) > 1 {
+						m.task.btnIdx = (m.task.btnIdx + 1) % len(m.task.buttons)
+					}
+					return m, nil
+				case "enter", " ":
+					cmd := m.task.activateFocused(&m)
+					return m, cmd
+				case "i":
+					for idx, b := range m.task.buttons {
+						if b == "Install" {
+							m.task.btnIdx = idx
+							cmd := m.task.activateFocused(&m)
+							return m, cmd
+						}
+					}
+					return m, nil
 				case "q":
+					m.pendingInstall = false
 					m.modal = ModalNone
 					m.task = nil
 					return m, nil
 				}
 			}
-			cmd = nil
-			return m, cmd
+			return m, nil
 		}
 		if key == "esc" || key == "q" {
 			m.modal = ModalNone
@@ -660,12 +687,21 @@ func (m *Model) askRemoveRepo(repo string) {
 	m.modal = ModalConfirm
 }
 
+func (m *Model) resetConfirm() {
+	m.modal = ModalNone
+	m.confirm = components.Confirm{}
+	m.confirmKind = confirmDownload
+	m.confirmTarget = ""
+	m.safetyInstallPath = ""
+	m.safetyAllowDowngrade = false
+}
+
 // requestDownload asks what to do with the selected artifact or release asset.
 func (m *Model) requestDownload(withInstall bool) tea.Cmd {
 	if m.usingReleaseAssets() {
 		ra, ok := m.selectedReleaseAsset()
 		if !ok {
-			if m.haveDownload && withInstall {
+			if m.haveDownload && withInstall && m.dev.CanInstall {
 				return m.startInstall(m.downloadedAPK.Path)
 			}
 			m.toastf("select a release asset first (Tab to Artifacts)")
@@ -683,12 +719,14 @@ func (m *Model) requestDownload(withInstall bool) tea.Cmd {
 		if m.dev.CanInstall {
 			opts = []string{"Download", "Download & Install", "Cancel"}
 		}
+		m.confirmKind = confirmDownload
+		m.confirmTarget = ""
 		m.confirm = components.Confirm{
 			Title:   "Confirm download",
 			Body:    body,
 			Options: opts,
 		}
-		if withInstall {
+		if withInstall && m.dev.CanInstall && !m.settings.NoOpen {
 			m.confirm.Cursor = 1
 		}
 		m.modal = ModalConfirm
@@ -697,7 +735,7 @@ func (m *Model) requestDownload(withInstall bool) tea.Cmd {
 
 	art, ok := m.selectedArtifact()
 	if !ok {
-		if m.haveDownload && withInstall {
+		if m.haveDownload && withInstall && m.dev.CanInstall {
 			// install the last download again
 			return m.startInstall(m.downloadedAPK.Path)
 		}
@@ -716,12 +754,14 @@ func (m *Model) requestDownload(withInstall bool) tea.Cmd {
 	if m.dev.CanInstall {
 		opts = []string{"Download", "Download & Install", "Cancel"}
 	}
+	m.confirmKind = confirmDownload
+	m.confirmTarget = ""
 	m.confirm = components.Confirm{
 		Title:   "Confirm download",
 		Body:    body,
 		Options: opts,
 	}
-	if withInstall {
+	if withInstall && m.dev.CanInstall && !m.settings.NoOpen {
 		m.confirm.Cursor = 1
 	}
 	m.modal = ModalConfirm
