@@ -135,14 +135,7 @@ func (m Model) buildArtifacts(r rect) string {
 		for i := range l.Items {
 			for _, ra := range m.rankedReleases() {
 				if l.Items[i].ID == -ra.Asset.ID {
-					mark := "·"
-					if i == 0 && !ra.Asset.Rejected {
-						mark = "✓"
-					}
-					if ra.Asset.Rejected {
-						mark = "–"
-					}
-					l.Items[i].Rendered = mark + " " + ra.Asset.Name
+					l.Items[i].Rendered = m.artifactRow(ra.Asset.Name, ra.Asset.Rejected)
 					l.Items[i].Detail = humanSize(ra.Asset.Size)
 					l.Items[i].Rendered = components.Clamp(l.Items[i].Rendered, max(1, r.w-5-components.VisibleWidth(l.Items[i].Detail)))
 				}
@@ -154,14 +147,7 @@ func (m Model) buildArtifacts(r rect) string {
 		for i := range l.Items {
 			for _, a := range m.runCache[run.ID] {
 				if l.Items[i].ID == a.ID {
-					mark := "·"
-					if i == 0 && !a.Rejected {
-						mark = "✓"
-					}
-					if a.Rejected {
-						mark = "–"
-					}
-					l.Items[i].Rendered = mark + " " + a.Name
+					l.Items[i].Rendered = m.artifactRow(a.Name, a.Rejected)
 					l.Items[i].Detail = humanSize(a.SizeInBytes)
 					l.Items[i].Rendered = components.Clamp(l.Items[i].Rendered, max(1, r.w-5-components.VisibleWidth(l.Items[i].Detail)))
 				}

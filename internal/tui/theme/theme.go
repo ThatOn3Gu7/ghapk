@@ -90,22 +90,31 @@ func Next(name string) string {
 
 // Glyphs are the icons used across the UI.
 type Glyphs struct {
-	OK        string
-	Fail      string
-	Running   string
-	Queued    string
-	Skipped   string
-	Cancelled string
-	Neutral   string
-	Star      string
-	StarEmpty string
-	Dot       string
-	Arrow     string
-	Package   string
-	Rocket    string
-	Gear      string
-	Branch    string
-	Ellipsis  string
+	OK               string
+	Fail             string
+	Running          string
+	Queued           string
+	Skipped          string
+	Cancelled        string
+	Neutral          string
+	Star             string
+	StarEmpty        string
+	Dot              string
+	Arrow            string
+	Package          string
+	Rocket           string
+	Gear             string
+	Branch           string
+	Ellipsis         string
+	ArtifactAndroid  string
+	ArtifactIOS      string
+	ArtifactMac      string
+	ArtifactWindows  string
+	ArtifactLinux    string
+	ArtifactWeb      string
+	ArtifactDocument string
+	ArtifactArchive  string
+	ArtifactUnknown  string
 }
 
 // UnicodeGlyphs is the default set.
@@ -114,6 +123,9 @@ var UnicodeGlyphs = Glyphs{
 	Cancelled: "⊗", Neutral: "·", Star: "★", StarEmpty: "☆",
 	Dot: "•", Arrow: "▶", Package: "", Rocket: "",
 	Gear: "⚙", Branch: "", Ellipsis: "…",
+	ArtifactAndroid: "🤖", ArtifactIOS: "📱", ArtifactMac: "🍎",
+	ArtifactWindows: "⊞", ArtifactLinux: "🐧", ArtifactWeb: "🌐",
+	ArtifactDocument: "📄", ArtifactArchive: "📦", ArtifactUnknown: "◇",
 }
 
 // ASCIIGlyphs is the fallback for terminals that cannot draw icons.
@@ -122,6 +134,9 @@ var ASCIIGlyphs = Glyphs{
 	Cancelled: "x", Neutral: ".", Star: "*", StarEmpty: ".",
 	Dot: "-", Arrow: ">", Package: "A", Rocket: ">",
 	Gear: "*", Branch: "@", Ellipsis: "...",
+	ArtifactAndroid: "A", ArtifactIOS: "I", ArtifactMac: "M",
+	ArtifactWindows: "W", ArtifactLinux: "L", ArtifactWeb: "B",
+	ArtifactDocument: "T", ArtifactArchive: "Z", ArtifactUnknown: "?",
 }
 
 // Styles are the derived lipgloss styles for a palette.

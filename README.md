@@ -154,6 +154,8 @@ go install github.com/ThatOn3Gu7/ghapk@latest
 
 On a fresh start, the repository picker loads all repositories accessible to the authenticated `gh` account, including private and organization repositories where authorized. No local clone is required. Tap a repository to choose it, swipe to scroll, or type to filter or enter `owner/repo`. If loading fails, tap retry or press `Ctrl+R`.
 
+Artifact rows use name-based platform or file-type icons (🤖 Android, 📱 iOS, 🍎 macOS, ⊞ Windows, 🐧 Linux, 🌐 web, 📄 document, 📦 archive, ◇ unknown). An `!` marks an artifact rejected by your architecture or variant preferences. Icons are hints, not verified compatibility: Actions artifact names don't reveal their contents or app icons, and installation remains APK-focused. Set `GHAPK_ASCII=1` for letter-based icons.
+
 On Repos, select a repository and then a branch; choose “all branches” to leave Actions runs unfiltered. Branches come from GitHub and, when the current working tree has a matching GitHub origin, its local branches. A local-only branch needs a pushed Actions run to have downloadable artifacts.
 
 In Help, press `W` (or tap the wrap label) to toggle word wrapping; when wrapping is off, long lines are clipped on the right.
