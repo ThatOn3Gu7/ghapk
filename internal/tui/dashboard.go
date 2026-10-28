@@ -188,6 +188,10 @@ func (m Model) statusBar() components.StatusBar {
 					add("→/v", "view yaml", "right")
 				}
 			}
+		case PanelDevice:
+			add("↑", "up", "up")
+			add("↓", "down", "down")
+			add("r", "re-check", "r")
 		case PanelDownloads:
 			if !m.downloadDetail && m.width < 80 && m.downloadFocus == 0 {
 				add("↵", "detail", "enter")
@@ -288,9 +292,9 @@ func (m Model) tabLabels() (map[PanelID]string, bool) {
 	if total+2 <= m.width {
 		return labels, false
 	}
-	labels = map[PanelID]string{PanelRepos: "1 Repo", PanelRuns: "3 Build", PanelWorkflows: "2 Flow", PanelDownloads: "5 DL", PanelDevice: "4 Dev"}
+	labels = map[PanelID]string{PanelRepos: "1 Repo", PanelRuns: "3 Build", PanelWorkflows: "2 Flow", PanelDownloads: "4 DL", PanelDevice: "5 Dev"}
 	if m.width < 35 {
-		labels = map[PanelID]string{PanelRepos: "1 Rep", PanelWorkflows: "2 Flo", PanelRuns: "3 Bld", PanelDevice: "4 Dev", PanelDownloads: "5 DL"}
+		labels = map[PanelID]string{PanelRepos: "1 Rep", PanelWorkflows: "2 Flo", PanelRuns: "3 Bld", PanelDevice: "5 Dev", PanelDownloads: "4 DL"}
 	}
 	return labels, false
 }

@@ -58,3 +58,23 @@ func TestVerifyInstallUnchangedOnTimeout(t *testing.T) {
 		t.Fatalf("expected VerifyUnchanged when user never accepts prompt, got %+v", res)
 	}
 }
+
+func TestQueryPackageUnknownOutputDoesNotMeanNotInstalled(t *testing.T) {
+	withDeviceStubs(t, false, map[string]bool{"adb": true}, nil, func(ctx context.Context, name string, args ...string) (string, error) {
+		return "service temporarily unavailable", nil
+	})
+	app, found := QueryPackageContext(context.Background(), "com.example.rocket")
+	if found || app.Queryable {
+		t.Fatalf("ambiguous output must remain unknown: %+v", app)
+	}
+}
+
+func TestQueryPackageExplicitMissingIsQueryable(t *testing.T) {
+	withDeviceStubs(t, false, map[string]bool{"adb": true}, nil, func(ctx context.Context, name string, args ...string) (string, error) {
+		return "Unable to find package: com.example.rocket", nil
+	})
+	app, found := QueryPackageContext(context.Background(), "com.example.rocket")
+	if found || !app.Queryable {
+		t.Fatalf("explicit missing package should be queryable: %+v", app)
+	}
+}

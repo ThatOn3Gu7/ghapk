@@ -174,12 +174,8 @@ func (m Model) renderShimmerLogo(w int, totalBannerH ...int) string {
 	}
 	leftPad := strings.Repeat(" ", sp)
 
-	whiteBold := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFFFFF"))
-	whiteDim := lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0"))
-	if st.P.Name == "paper" {
-		whiteBold = lipgloss.NewStyle().Bold(true).Foreground(st.P.Text)
-		whiteDim = lipgloss.NewStyle().Foreground(st.P.Muted)
-	}
+	shineBright := st.Bold
+	shineSoft := st.Muted
 	shineEdge := lipgloss.NewStyle().Foreground(st.P.Accent)
 
 	var lines []string
@@ -204,9 +200,9 @@ func (m Model) renderShimmerLogo(w int, totalBannerH ...int) string {
 			if m.shimmerPos < maxShimmer {
 				switch dist {
 				case 0:
-					b.WriteString(whiteBold.Render(string(ch)))
+					b.WriteString(shineBright.Render(string(ch)))
 				case 1:
-					b.WriteString(whiteDim.Render(string(ch)))
+					b.WriteString(shineSoft.Render(string(ch)))
 				case 2:
 					b.WriteString(shineEdge.Render(string(ch)))
 				default:
@@ -309,8 +305,8 @@ func (m Model) reposContent(w, h int, mm *Model) string {
 }
 
 // renderBoxedList draws a list of options inside a single static bordered box
-// stretched out to width x height. The cursor row has a grayish background as
-// you move through, and the active/selected item has a green background.
+// stretched out to width x height. Cursor and selected rows use distinct
+// highlights from the active theme.
 // Moving through options never shifts the layout or characters.
 func renderBoxedList(l components.List, st theme.Styles, width, height int, focused bool, isSelected func(it components.Item) bool) string {
 	if width < 6 || height < 3 {
@@ -329,32 +325,14 @@ func renderBoxedList(l components.List, st theme.Styles, width, height int, focu
 		borderSt = lipgloss.NewStyle().Foreground(st.P.BorderFocus)
 	}
 
-	var grayBg, grayFg, greenBg, greenFg, bothBg, bothFg lipgloss.Color
-	if st.P.Name == "paper" {
-		grayBg = lipgloss.Color("#D0D7DE")
-		grayFg = lipgloss.Color("#1F2328")
-		if !focused {
-			grayBg = lipgloss.Color("#E1E4E8")
-		}
-		greenBg = lipgloss.Color("#2DA44E")
-		greenFg = lipgloss.Color("#FFFFFF")
-		bothBg = lipgloss.Color("#1A7F37")
-		bothFg = lipgloss.Color("#FFFFFF")
-	} else {
-		grayBg = lipgloss.Color("#373E47")
-		grayFg = lipgloss.Color("#E6EDF3")
-		if !focused {
-			grayBg = lipgloss.Color("#282E37")
-		}
-		greenBg = lipgloss.Color("#1E6B37")
-		greenFg = lipgloss.Color("#FFFFFF")
-		bothBg = lipgloss.Color("#2EA043")
-		bothFg = lipgloss.Color("#FFFFFF")
+	// Cursor, selected and cursor-on-selection stay distinct using this theme's palette.
+	cursorFg := st.P.Text
+	if !focused {
+		cursorFg = st.P.Muted
 	}
-
-	graySeq := components.StyleSeq(lipgloss.NewStyle().Background(grayBg).Foreground(grayFg))
-	greenSeq := components.StyleSeq(lipgloss.NewStyle().Background(greenBg).Foreground(greenFg).Bold(true))
-	bothSeq := components.StyleSeq(lipgloss.NewStyle().Background(bothBg).Foreground(bothFg).Bold(true))
+	graySeq := components.StyleSeq(lipgloss.NewStyle().Background(st.P.Selection).Foreground(cursorFg))
+	greenSeq := components.StyleSeq(lipgloss.NewStyle().Background(st.P.Accent).Foreground(st.P.OnAccent).Bold(true))
+	bothSeq := components.StyleSeq(lipgloss.NewStyle().Background(st.P.AccentAlt).Foreground(st.P.OnAccent).Bold(true))
 
 	fs := l.Filtered()
 	var lines []string
@@ -391,9 +369,9 @@ func renderBoxedList(l components.List, st theme.Styles, width, height int, focu
 				if it.Detail != "" {
 					d := st.Dim.Render(it.Detail)
 					if isSel {
-						d = lipgloss.NewStyle().Foreground(lipgloss.Color("#D7FFE7")).Render(it.Detail)
+						d = lipgloss.NewStyle().Foreground(st.P.OnAccent).Render(it.Detail)
 					} else if isCursor {
-						d = lipgloss.NewStyle().Foreground(lipgloss.Color("#BAC2DE")).Render(it.Detail)
+						d = st.Text.Render(it.Detail)
 					}
 					fitW := innerW - components.VisibleWidth(d) - 1
 					if fitW < 1 {
@@ -1193,124 +1171,6 @@ func (m Model) scoreWhy(name string) string {
 		return "no arch/variant hint in the name"
 	}
 	return strings.Join(parts, " · ")
-}
-
-// ───────────────────────────── Device ─────────────────────────────
-
-func (m Model) deviceContent(w, h int, mm *Model) string {
-	st := m.st
-	d := m.dev
-	if d.OS == "" {
-		return centerEmpty(m.spin.View()+st.Dim.Render(" probing device…"), w, h)
-	}
-
-	var b strings.Builder
-	kv := func(k, v string) {
-		if strings.TrimSpace(components.StripANSI(v)) == "" {
-			return
-		}
-		b.WriteString(st.Dim.Render(fmt.Sprintf("%-9s", k)) + components.Clamp(v, w-16) + "\n")
-	}
-	sect := func(t string) {
-		b.WriteString(st.AccentAlt.Render(t) + "\n")
-	}
-
-	sect("Device")
-	{
-		name := d.Model
-		if d.Manufacturer != "" && !strings.Contains(strings.ToLower(name), strings.ToLower(d.Manufacturer)) {
-			name = d.Manufacturer + " " + name
-		}
-		if name != "" {
-			kv("model", st.Bold.Render(name))
-		}
-		if d.Release != "" {
-			if d.OS == "android" && d.SDK > 0 {
-				kv("os", d.Release+"  "+st.Dim.Render(fmt.Sprintf("(API %d)", d.SDK)))
-			} else {
-				kv("os", d.Release)
-			}
-		}
-		if d.Kernel != "" {
-			kv("kernel", d.Kernel)
-		}
-		if d.Uptime != "" {
-			kv("uptime", d.Uptime)
-		}
-		if d.CPUModel != "" {
-			v := d.CPUModel
-			if d.Cores > 0 {
-				v += "  " + st.Dim.Render(fmt.Sprintf("(%d cores)", d.Cores))
-			}
-			kv("cpu", v)
-		} else if d.Cores > 0 {
-			kv("cpu", fmt.Sprintf("%d cores", d.Cores))
-		}
-		if d.MemTotalMB > 0 {
-			used := d.MemTotalMB - d.MemFreeMB
-			kv("ram", fmt.Sprintf("%.1f GB", float64(d.MemTotalMB)/1024)+"  "+
-				st.Dim.Render(fmt.Sprintf("(%.1f GB used)", float64(used)/1024)))
-		}
-		if d.DiskTotalGB > 0 {
-			kv("storage", fmt.Sprintf("%.0f GB  ", d.DiskTotalGB)+
-				st.Dim.Render(fmt.Sprintf("(%.0f GB free)", d.DiskFreeGB)))
-		}
-		if d.OS == "android" {
-			kv("abis", strings.Join(d.ABIs, ", "))
-		}
-	}
-
-	sect("Session")
-	{
-		if d.Terminal != "" {
-			kv("terminal", d.Terminal)
-		}
-		if d.Shell != "" {
-			kv("shell", d.Shell)
-		}
-		if m.ghVersion != "" {
-			kv("gh cli", m.ghVersion)
-		}
-		kv("theme", m.settings.Theme)
-	}
-
-	sect("Install")
-	{
-		route := "unavailable"
-		switch d.InstallVia {
-		case "termux-open":
-			route = "termux-open (prompt)"
-		case "am":
-			route = "am start (prompt)"
-		case "adb":
-			if d.ADBConnected {
-				route = "adb install (connected)"
-			} else {
-				route = "adb install (no device)"
-			}
-		}
-		if d.CanInstall && route != "unavailable" {
-			kv("method", route)
-		} else {
-			kv("method", st.Warn.Render("none — install adb or transfer APK"))
-		}
-		if m.instPkg != "" {
-			if m.instFound {
-				ver := m.instApp.VersionName
-				if ver == "" {
-					ver = "?"
-				}
-				kv("package", st.Bold.Render(m.instPkg))
-				kv("on-dev", st.OK.Render(fmt.Sprintf("%s (%d)", ver, m.instApp.VersionCode)))
-			} else {
-				kv("package", st.Bold.Render(m.instPkg))
-				kv("on-dev", st.Dim.Render("not installed"))
-			}
-		} else {
-			kv("package", st.Dim.Render("unset — press s to configure tracking"))
-		}
-	}
-	return strings.TrimSuffix(b.String(), "\n")
 }
 
 // ───────────────────────────── setup screen ─────────────────────────────

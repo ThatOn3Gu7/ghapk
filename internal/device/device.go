@@ -77,7 +77,11 @@ func QueryPackageContext(ctx context.Context, pkg string) (InstalledApp, bool) {
 		if strings.Contains(out, "SecurityException") || strings.Contains(out, "Permission Denial") {
 			continue
 		}
-		queryable = true
+		// A non-empty error or partial dump is not evidence that an app is
+		// absent. Only an explicit missing-package response is definitive.
+		if strings.Contains(out, "Unable to find package") || strings.Contains(out, "Unknown package") {
+			queryable = true
+		}
 		app, found := parseDumpsysPackage(pkg, out)
 		if found {
 			app.Queryable = true

@@ -13,25 +13,9 @@ import (
 	"github.com/ghapk/ghapk/internal/tui/theme"
 )
 
-// Match Claude's default cyan/amber/green visual language on these screens,
-// while preserving the user's explicitly selected alternative themes.
+// Keep the compact badge geometry while using the active app theme.
 func (m Model) downloadStyles() theme.Styles {
 	st := m.st
-	if m.settings.Theme == "action" || m.settings.Theme == "" {
-		p := st.P
-		p.Accent = "#56CCFF"
-		p.BorderFocus = p.Accent
-		p.OnAccent = "#0C1018"
-		p.Success = "#78E696"
-		p.Warning = "#FFBE5A"
-		p.Error = "#FF7882"
-		p.Muted = "#828C9B"
-		p.Dim = p.Muted
-		p.Text = "#E1E8F0"
-		p.Border = "#485669"
-		p.Selection = "#3A4454"
-		st = theme.New(p)
-	}
 	st.BadgeStyle = st.Dim.Padding(0, 1)
 	return st
 }
@@ -173,11 +157,8 @@ func (m Model) downloadBar(j *downloadJob, width int, st theme.Styles) string {
 		full, empty = "#", "-"
 		partials = nil
 	}
-	fill := lipgloss.NewStyle().Foreground(st.P.Accent)
-	if m.settings.Theme == "action" || m.settings.Theme == "" {
-		fill = lipgloss.NewStyle().Foreground(lipgloss.Color("#E1F5FF"))
-	}
-	track := lipgloss.NewStyle().Foreground(st.P.Border)
+	fill := st.Accent
+	track := st.Dim
 	if j.total <= 0 {
 		seg := max(2, width/4)
 		pos := (m.shimmerPos/2 + seg) % (width + seg)

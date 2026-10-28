@@ -184,7 +184,7 @@ func TestFooterTouchesDispatchActions(t *testing.T) {
 			}
 		}},
 		{"tab", PanelRuns, "tab", func(t *testing.T, m Model, c tea.Cmd) {
-			if m.focus != PanelDevice {
+			if m.focus != PanelDownloads {
 				t.Fatal("tab did not cycle")
 			}
 		}},
