@@ -51,7 +51,11 @@ func (m Model) modalBox() string {
 		}
 	case ModalPickRepo:
 		if m.repoPicker != nil {
-			return m.modalWindow("Repository", m.repoPicker.view(&m))
+			title := "Repository"
+			if m.userReposLoaded {
+				title = fmt.Sprintf("Repository · %d", len(m.cachedUserRepos))
+			}
+			return m.modalWindow(title, m.repoPicker.view(&m))
 		}
 	case ModalPickBranch:
 		if m.branchPicker != nil {
