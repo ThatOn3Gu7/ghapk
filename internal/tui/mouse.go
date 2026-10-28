@@ -307,7 +307,11 @@ func (m Model) handleModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	var buttons []string
 	switch m.modal {
 	case ModalConfirm:
-		buttons = m.confirm.Options
+		if m.safetyDialogTooLarge() {
+			buttons = []string{"Cancel"}
+		} else {
+			buttons = m.confirm.Options
+		}
 	case ModalTask:
 		if m.task != nil && m.task.isDismissable() {
 			buttons = m.task.buttons
@@ -327,6 +331,10 @@ func (m Model) handleModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	switch m.modal {
 	case ModalConfirm:
+		if m.safetyDialogTooLarge() {
+			m.resetConfirm()
+			return m, nil
+		}
 		m.confirm.Cursor = idx
 		cmd := m.confirmAccept()
 		return m, cmd
@@ -341,7 +349,7 @@ func (m Model) handleModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // Confirm buttons can wrap onto multiple lines on phones. Hit-test the
 // rendered labels rather than assuming every action is on the bottom row.
 func (m Model) confirmButtonHit(px, py int, buttons []string) int {
-	lines := strings.Split(m.View(), "\n")
+	lines := strings.Split(m.modalLayer(), "\n")
 	bottom := -1
 	for y := len(lines) - 1; y >= 0; y-- {
 		p := components.StripANSI(lines[y])
@@ -372,7 +380,7 @@ func (m Model) confirmButtonHit(px, py int, buttons []string) int {
 // modalButtonHit returns the 0-based index of the modal button at screen cell
 // (px, py), or -1 if (px, py) is outside the button strip.
 func (m Model) modalButtonHit(px, py int, buttons []string) int {
-	lines := strings.Split(m.View(), "\n")
+	lines := strings.Split(m.modalLayer(), "\n")
 	bottomY := -1
 	for y := len(lines) - 1; y >= 1; y-- {
 		plain := components.StripANSI(lines[y])

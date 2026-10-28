@@ -275,7 +275,7 @@ func TestPostDownloadMenuInstallAndCloseActions(t *testing.T) {
 
 	// 3. Mouse clicks on "Install" and "Close" buttons hit exact coordinates.
 	findBtnCoords := func(m Model, targetIdx int) (int, int) {
-		lines := strings.Split(m.View(), "\n")
+		lines := strings.Split(m.modalLayer(), "\n")
 		for y := len(lines) - 1; y >= 1; y-- {
 			plain := components.StripANSI(lines[y])
 			if strings.Contains(plain, "╰─") || strings.Contains(plain, "+-") {

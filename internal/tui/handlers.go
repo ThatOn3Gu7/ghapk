@@ -552,6 +552,13 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ModalConfirm:
+		if m.safetyDialogTooLarge() {
+			switch key {
+			case "esc", "q", "n", "enter", " ":
+				m.resetConfirm()
+			}
+			return m, nil
+		}
 		switch key {
 		case "esc", "q":
 			m.resetConfirm()
@@ -777,6 +784,10 @@ func (m *Model) requestDownload(withInstall bool) tea.Cmd {
 
 // confirmAccept runs after the user picked a confirm option.
 func (m *Model) confirmAccept() tea.Cmd {
+	if m.safetyDialogTooLarge() {
+		m.resetConfirm()
+		return nil
+	}
 	choice := m.confirm.Cursor
 	m.modal = ModalNone
 	m.confirm = components.Confirm{}
