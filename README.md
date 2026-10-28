@@ -255,8 +255,9 @@ Install first checks the device and presents a plan; APK manifest and signing
 information are inspected **after** downloading. Choose an artifact, then
 **Install**, **Download only**, or **Cancel**. Downloads run in the background;
 the Downloads tab shows progress, checksum status, processing steps and logs.
-On a narrow screen, select a job and press Enter (or tap it again) for details.
-Swipe lists or details to scroll. In Downloads, `c` cancels a job, `x` removes
+On a narrow screen, new jobs open their details automatically; press Esc to
+return to the lists, then select a job and press Enter (or tap it again) to
+reopen it. Swipe lists or details to scroll. In Downloads, `c` cancels a job, `x` removes
 a finished job or deletes a selected saved APK (with confirmation), `X`
 removes finished jobs, and `s` focuses saved APKs. Select a saved APK and press
 Enter to install it with the same safety checks.

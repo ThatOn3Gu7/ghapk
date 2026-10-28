@@ -282,13 +282,16 @@ func (m Model) tabLabels() (map[PanelID]string, bool) {
 		labels[p] = m.compactTabLabel(p)
 		total += components.VisibleWidth(labels[p])
 	}
-	if total+2*len(FocusOrder) <= m.width {
+	if total+2*len(FocusOrder)+2 <= m.width {
 		return labels, true
 	}
-	if total <= m.width {
+	if total+2 <= m.width {
 		return labels, false
 	}
 	labels = map[PanelID]string{PanelRepos: "1 Repo", PanelRuns: "3 Build", PanelWorkflows: "2 Flow", PanelDownloads: "5 DL", PanelDevice: "4 Dev"}
+	if m.width < 35 {
+		labels = map[PanelID]string{PanelRepos: "1 Rep", PanelWorkflows: "2 Flo", PanelRuns: "3 Bld", PanelDevice: "4 Dev", PanelDownloads: "5 DL"}
+	}
 	return labels, false
 }
 

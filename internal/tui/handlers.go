@@ -796,7 +796,8 @@ func (m *Model) askRemoveRepo(repo string) {
 	m.confirmKind = confirmRemoveRepo
 	m.confirmTarget = repo
 	m.confirm = components.Confirm{
-		Title: "Remove repo entry",
+		Title:  "Remove repo entry",
+		Danger: true,
 		Body: []string{
 			fmt.Sprintf("Remove  %s", m.st.Bold.Render(repo)),
 			m.st.Dim.Render("from the recent list (config file)"),

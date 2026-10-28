@@ -14,9 +14,10 @@ import (
 )
 
 type planChoice struct {
-	art     ghapi.Artifact
-	asset   ghapi.ReleaseAsset
-	release bool
+	art                     ghapi.Artifact
+	asset                   ghapi.ReleaseAsset
+	release                 bool
+	releaseTag, releaseName string
 }
 
 func (c planChoice) name() string {
@@ -54,7 +55,7 @@ func (m *Model) beginPlan() tea.Cmd {
 	p := &installPlan{repo: m.settings.Repo, settings: m.settings, button: 0, loading: true}
 	if m.usingReleaseAssets() {
 		for _, ra := range m.rankedReleases() {
-			p.choices = append(p.choices, planChoice{asset: ra.Asset, release: true})
+			p.choices = append(p.choices, planChoice{asset: ra.Asset, release: true, releaseTag: ra.ReleaseTag, releaseName: ra.ReleaseName})
 			if -ra.Asset.ID == m.selectedArtID {
 				p.selected = len(p.choices) - 1
 			}
@@ -95,82 +96,196 @@ func (m *Model) beginPlan() tea.Cmd {
 		return planReadyMsg{seq, dev, pkg, app, found}
 	}
 }
-func (p *installPlan) lines(m *Model) ([]string, []int, []int) {
-	w := max(10, m.modalWindowWidth())
-	lines := []string{}
-	add := func(s string) { lines = append(lines, components.Clamp(safeJobText(s), w)) }
-	add("Repo: " + p.repo)
+
+type planLayout struct {
+	lines            []string
+	choices, buttons []rect
+}
+
+func (m Model) planWidth() int { return min(78, m.width-2) }
+
+// planLayout keeps rows and their touch targets together, including when the
+// action strip stacks on a narrow phone.
+func (p *installPlan) layout(m *Model) planLayout {
+	st := m.downloadStyles()
+	w := max(1, m.planWidth()-4)
+	var out planLayout
+	add := func(line string) { out.lines = append(out.lines, components.Clamp(line, w)) }
+	label := func(s string) string { return st.Dim.Render(fmt.Sprintf("%-9s ", s)) }
+	choice := p.choices[p.selected]
+	if choice.release {
+		name := choice.releaseTag
+		if name == "" {
+			name = "release"
+		}
+		if choice.releaseName != "" && choice.releaseName != name {
+			name += " · " + choice.releaseName
+		}
+		add(label("Release") + st.Text.Render(safeJobText(name)))
+	} else {
+		build := fmt.Sprintf("#%d", p.run.RunNumber)
+		if p.run.RunNumber <= 0 {
+			build = fmt.Sprintf("#%d", p.run.ID)
+		}
+		description := ""
+		if p.run.HeadBranch != "" {
+			description += " · " + p.run.HeadBranch
+		}
+		if p.run.HeadSHA != "" {
+			sha := p.run.HeadSHA
+			if len(sha) > 7 {
+				sha = sha[:7]
+			}
+			description += " · " + sha
+		}
+		add(label("Build") + st.Accent.Render(build) + st.Dim.Render(safeJobText(description)))
+	}
+	if m.height >= 24 {
+		title := p.run.DisplayTitle
+		if choice.release {
+			title = choice.releaseName
+		}
+		if title != "" {
+			add(st.Text.Render("          " + safeJobText(title)))
+		}
+		add(st.Dim.Render("          " + safeJobText(p.repo)))
+		add("")
+	}
 	if p.loading {
-		add("Checking device and installed app…")
-		add("Please wait")
+		add(label("Device") + st.Warn.Render("Checking device…"))
+		add(label("Installed") + st.Dim.Render("checking…"))
 	} else {
 		abi := strings.Join(p.dev.ABIs, ", ")
 		if abi == "" {
 			abi = "unknown"
 		}
-		label := "Device: "
-		if p.dev.OS != "android" && !p.dev.ADBConnected {
-			label = "Host ABI: "
-		}
 		if p.dev.SDK > 0 {
 			abi += fmt.Sprintf(" · SDK %d", p.dev.SDK)
 		}
-		add(label + abi)
+		deviceLabel := "Device"
+		if p.dev.OS != "android" && !p.dev.ADBConnected {
+			deviceLabel = "Host ABI"
+		}
+		add(label(deviceLabel) + st.Text.Render(safeJobText(abi)))
 		installed := "unknown (package not known)"
 		if p.pkg != "" {
-			installed = "unknown (device not queryable)"
+			installed = "unknown (not queryable)"
 			if p.app.Queryable {
 				installed = "not installed"
 			}
 			if p.found {
-				installed = fmt.Sprintf("%s v%s (%d)", p.pkg, p.app.VersionName, p.app.VersionCode)
+				installed = p.app.VersionName
+				if installed == "" {
+					installed = fmt.Sprint(p.app.VersionCode)
+				}
+				installed += " · " + p.pkg
 			}
 		}
-		add("Installed: " + installed)
+		add(label("Installed") + st.Text.Render(safeJobText(installed)))
 	}
-	add("APK details checked after download")
-	add("Artifact (↑/↓):")
-	rows := max(1, min(4, m.height-13))
+	add(label("Version") + st.Dim.Render("unknown until downloaded"))
+	if m.height >= 24 {
+		add("")
+	}
+	heading := len(out.lines)
+	add(st.PanelTitleFoc.Render("Artifact"))
+	buttons := []string{"Install", "Download only", "Cancel"}
+	horizontal := w >= 32
+	buttonLines := 3
+	if horizontal {
+		buttonLines = 1
+	}
+	maxRows := max(1, min(6, m.height-4-len(out.lines)-buttonLines-1))
+	if len(p.choices) > maxRows {
+		out.lines[heading] = st.PanelTitleFoc.Render("Artifact") + st.Dim.Render(fmt.Sprintf("  %d/%d", p.selected+1, len(p.choices)))
+	}
 	if p.selected < p.offset {
 		p.offset = p.selected
 	}
-	if p.selected >= p.offset+rows {
-		p.offset = p.selected - rows + 1
+	if p.selected >= p.offset+maxRows {
+		p.offset = p.selected - maxRows + 1
 	}
-	if p.offset < 0 {
-		p.offset = 0
-	}
-	var choiceRows []int
-	for i := p.offset; i < len(p.choices) && i < p.offset+rows; i++ {
+	p.offset = max(0, p.offset)
+	for i := p.offset; i < len(p.choices) && i < p.offset+maxRows; i++ {
 		c := p.choices[i]
-		marker := "  "
+		dot := "○"
 		if i == p.selected {
-			marker = "> "
+			dot = "◉"
 		}
-		label := marker
+		if st.G.OK == "+" {
+			dot = "[ ]"
+			if i == p.selected {
+				dot = "[x]"
+			}
+		}
+		name := safeJobText(c.name())
 		if (!c.release && c.art.Rejected) || (c.release && c.asset.Rejected) {
-			label += "(mismatch) "
+			name = "(mismatch) " + name
 		}
-		label += c.name()
-		choiceRows = append(choiceRows, len(lines))
-		add(label)
+		sz := c.art.SizeInBytes
+		if c.release {
+			sz = c.asset.Size
+		}
+		size := ""
+		if sz > 0 {
+			size = humanSize(sz)
+		}
+		prefix := dot + " "
+		space := w - components.VisibleWidth(prefix) - components.VisibleWidth(size)
+		if size != "" {
+			space--
+		}
+		name = components.Clamp(name, max(1, space))
+		padding := max(0, w-components.VisibleWidth(prefix)-components.VisibleWidth(name)-components.VisibleWidth(size))
+		sty := st.Text
+		if i == p.selected {
+			sty = st.Accent
+		}
+		row := sty.Render(prefix+name) + strings.Repeat(" ", padding) + st.Dim.Render(size)
+		out.choices = append(out.choices, rect{x: 0, y: len(out.lines), w: w, h: 1})
+		add(row)
 	}
 	add("")
-	var buttonRows []int
-	for i, b := range []string{"Install", "Download only", "Cancel"} {
-		buttonRows = append(buttonRows, len(lines))
-		label := "  " + b
-		if i == p.button {
-			label = "> " + b
+	if horizontal {
+		var row strings.Builder
+		x := 0
+		for i, b := range buttons {
+			if i > 0 {
+				row.WriteString("  ")
+				x += 2
+			}
+			txt := b
+			if i == p.button {
+				txt = " " + b + " "
+				row.WriteString(st.ButtonFocus.Padding(0, 0).Render(txt))
+			} else {
+				row.WriteString(st.Dim.Render(txt))
+			}
+			bw := components.VisibleWidth(txt)
+			out.buttons = append(out.buttons, rect{x: x, y: len(out.lines), w: bw, h: 1})
+			x += bw
 		}
-		if i < 2 && p.loading {
-			label += " (checking)"
+		add(row.String())
+	} else {
+		for i, b := range buttons {
+			txt := " " + b + " "
+			if i == p.button {
+				add(st.ButtonFocus.Padding(0, 0).Render(txt))
+			} else {
+				add(st.Dim.Render(txt))
+			}
+			out.buttons = append(out.buttons, rect{x: 0, y: len(out.lines) - 1, w: components.VisibleWidth(txt), h: 1})
 		}
-		add(label)
 	}
-	return lines, choiceRows, buttonRows
+	return out
 }
-func (p *installPlan) view(m *Model) string { l, _, _ := p.lines(m); return strings.Join(l, "\n") }
+func (m Model) planBox() string {
+	if m.plan == nil {
+		return ""
+	}
+	layout := m.plan.layout(&m)
+	return components.Panel{Title: "Install this build?", Focused: true, Width: m.planWidth(), Height: len(layout.lines) + 2, Content: strings.Join(layout.lines, "\n")}.Render(m.downloadStyles())
+}
 func (m *Model) acceptPlan() tea.Cmd {
 	p := m.plan
 	if p == nil {
@@ -256,22 +371,19 @@ func (m Model) handlePlanMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	box := m.modalBox()
-	x := (m.width - lipgloss.Width(box)) / 2
+	x := (m.width-lipgloss.Width(box))/2 + 2
 	y := (m.height-lipgloss.Height(box))/2 + 1
-	_, choices, buttons := p.lines(&m)
-	if msg.X < x || msg.X >= x+lipgloss.Width(box) {
-		return m, nil
-	}
-	for i, row := range choices {
-		if msg.Y == y+row {
+	layout := p.layout(&m)
+	for i, hit := range layout.choices {
+		if hit.contains(msg.X-x, msg.Y-y) {
 			p.selected = p.offset + i
 			p.touchActive = true
 			p.touchLastY = msg.Y
 			return m, nil
 		}
 	}
-	for i, row := range buttons {
-		if msg.Y == y+row {
+	for i, hit := range layout.buttons {
+		if hit.contains(msg.X-x, msg.Y-y) {
 			p.button = i
 			return m, m.acceptPlan()
 		}

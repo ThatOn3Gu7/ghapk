@@ -331,6 +331,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.plan.pkg = msg.pkg
 			m.plan.app = msg.app
 			m.plan.found = msg.found
+			if !msg.dev.CanInstall {
+				m.plan.button = 1
+			}
 		}
 		return m, nil
 	case jobEventMsg:

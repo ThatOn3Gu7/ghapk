@@ -47,6 +47,9 @@ func (m Model) compactTabRects() map[PanelID]rect {
 		if padded {
 			w += 2
 		}
+		if p == m.activeTab() {
+			w += 2
+		} // active header style adds padding
 		out[p] = rect{x, 1, w, 1}
 		x += w + 1
 	}
