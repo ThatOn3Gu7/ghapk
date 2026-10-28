@@ -81,6 +81,10 @@ func (m Model) modalBox() string {
 			device_CanInstall = m.dev.CanInstall
 			return m.modalWindow(ellipsisTitle(m.task.Title), m.task.view(&m))
 		}
+	case ModalPlan:
+		if m.plan != nil {
+			return m.modalWindow("Install this build?", m.plan.view(&m))
+		}
 	case ModalDoctor:
 		if m.doctor != nil {
 			device_CanInstall = m.dev.CanInstall
@@ -92,7 +96,7 @@ func (m Model) modalBox() string {
 
 // Never offer an install override when the full warning cannot fit onscreen.
 func (m Model) safetyDialogTooLarge() bool {
-	if m.modal != ModalConfirm || m.confirmKind != confirmSafetyOverride {
+	if m.modal != ModalConfirm || m.confirmKind != confirmSafetyOverride && m.confirmKind != confirmJobSafety {
 		return false
 	}
 	if m.width < minWidth || m.height < minHeight {

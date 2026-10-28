@@ -87,7 +87,7 @@ func TestKeyNavigation(t *testing.T) {
 	}
 	mm, cmd := m.Update(key("d"))
 	m = mm.(Model)
-	if cmd == nil || m.modal != ModalTask || m.pendingInstall || m.task.Artifact != a.Name {
+	if cmd == nil || len(m.jobs) != 1 || m.focus != PanelDownloads || m.jobs[0].spec.install || m.jobs[0].spec.choice.name() != a.Name {
 		t.Fatalf("download didn't start: %+v", m.task)
 	}
 }

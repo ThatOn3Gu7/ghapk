@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -17,8 +18,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// hard-global
 	if key == "ctrl+c" {
-		m.quitting = true
-		return m, tea.Quit
+		return m, m.cancelJobsAndQuit()
 	}
 
 	// ── setup screen ──────────────────────────────────────────────
@@ -43,6 +43,30 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// ── filter mode feeds the focused list ────────────────────────
 	if m.filterMode {
 		return m.handleFilterKey(msg)
+	}
+
+	if m.focus == PanelDownloads {
+		switch key {
+		case "s", "c", "x", "X", "i", "enter", "esc":
+			return m, m.downloadAction(key)
+		case "j", "down", "ctrl+d", "pgdown", "k", "up", "ctrl+u", "pgup":
+			delta := 1
+			if key == "k" || key == "up" || key == "ctrl+u" || key == "pgup" {
+				delta = -1
+			}
+			if strings.HasPrefix(key, "ctrl+") || strings.HasPrefix(key, "pg") {
+				delta *= 6
+			}
+			if m.downloadDetail {
+				m.downloadScroll = max(0, m.downloadScroll+delta)
+			} else if m.downloadFocus == 1 {
+				m.savedList.MoveBy(delta)
+			} else {
+				m.jobList.MoveBy(delta)
+				m.downloadScroll = 0
+			}
+			return m, nil
+		}
 	}
 
 	// ── YAML preview scrolling inside workflow detail box ─────────
@@ -82,6 +106,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch key {
 	case "q":
+		for _, j := range m.jobs {
+			if j.status == "running" || j.status == "asking" || j.status == "cancelling" {
+				m.confirmKind = confirmQuitJobs
+				m.confirm = components.Confirm{Title: "Quit with active jobs?", Body: []string{"Active jobs will be cancelled.", "An open installer cannot be undone."}, Options: []string{"Quit", "Cancel"}, Cursor: 1}
+				m.modal = ModalConfirm
+				return m, nil
+			}
+		}
 		m.quitting = true
 		return m, tea.Quit
 
@@ -503,6 +535,8 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch m.modal {
 
+	case ModalPlan:
+		return m.handlePlanKey(msg)
 	case ModalHelp:
 		switch key {
 		case "w", "W":
@@ -594,7 +628,7 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.confirm.Cursor = (m.confirm.Cursor + 1) % len(m.confirm.Options)
 			}
 		case "y":
-			if m.confirmKind == confirmSafetyOverride {
+			if m.confirmKind == confirmSafetyOverride || m.confirmKind == confirmJobSafety {
 				return m, nil // safety overrides require deliberate selection + Enter
 			}
 			// Default to the first choice when the cursor is on Cancel.
@@ -706,6 +740,9 @@ const (
 	confirmNone confirmAction = iota
 	confirmRemoveRepo
 	confirmSafetyOverride
+	confirmJobSafety
+	confirmDeleteSaved
+	confirmQuitJobs
 )
 
 // openRepoEditor opens the small modal that renames a repo entry.
@@ -771,6 +808,9 @@ func (m *Model) askRemoveRepo(repo string) {
 }
 
 func (m *Model) resetConfirm() {
+	if m.confirmKind == confirmJobSafety {
+		m.answerJobQuestion(false)
+	}
 	m.modal = ModalNone
 	m.confirm = components.Confirm{}
 	m.confirmKind = confirmNone
@@ -782,22 +822,27 @@ func (m *Model) resetConfirm() {
 // requestDownload starts the chosen action immediately. APK safety checks still
 // run before installation, after the download has finished.
 func (m *Model) requestDownload(withInstall bool) tea.Cmd {
+	if withInstall {
+		return m.beginPlan()
+	}
+	spec := jobSpec{repo: m.settings.Repo, settings: m.settings, dev: m.dev}
 	if m.usingReleaseAssets() {
-		if _, ok := m.selectedReleaseAsset(); !ok {
-			if m.activeTab() != PanelRuns && m.haveDownload && withInstall && m.dev.CanInstall {
-				return m.startInstall(m.downloadedAPK.Path)
-			}
+		a, ok := m.selectedReleaseAsset()
+		if !ok {
 			m.toastf("select a release asset in Builds")
 			return nil
 		}
-	} else if _, ok := m.selectedArtifact(); !ok {
-		if m.activeTab() != PanelRuns && m.haveDownload && withInstall && m.dev.CanInstall {
-			return m.startInstall(m.downloadedAPK.Path)
+		spec.choice = planChoice{asset: a.Asset, release: true}
+	} else {
+		a, ok := m.selectedArtifact()
+		if !ok {
+			m.toastf("select an artifact in Builds")
+			return nil
 		}
-		m.toastf("select an artifact in Builds")
-		return nil
+		spec.choice = planChoice{art: a}
+		spec.run, _ = m.selectedRun()
 	}
-	return m.startDownload(withInstall)
+	return m.startJob(spec)
 }
 
 // confirmAccept runs after the user picked a confirm option.
@@ -813,6 +858,36 @@ func (m *Model) confirmAccept() tea.Cmd {
 	m.confirmKind = confirmNone
 	target := m.confirmTarget
 	m.confirmTarget = ""
+	if kind == confirmJobSafety {
+		m.answerJobQuestion(choice == 0)
+		return nil
+	}
+	if kind == confirmDeleteSaved {
+		if choice == 0 && target != "" {
+			busy := false
+			for _, j := range m.jobs {
+				if (j.status == "running" || j.status == "asking" || j.status == "cancelling") && (j.path == target || j.spec.savedPath == target || (j.spec.savedPath == "" && j.path == "")) {
+					busy = true
+				}
+			}
+			if busy {
+				m.toastf("APK is in use by a job")
+			} else if err := os.Remove(target); err != nil {
+				m.toastf("delete: %s", err)
+			} else {
+				m.toastf("APK deleted")
+				_ = os.Remove(target + ".origin")
+				m.refreshSaved()
+			}
+		}
+		return nil
+	}
+	if kind == confirmQuitJobs {
+		if choice == 0 {
+			return m.cancelJobsAndQuit()
+		}
+		return nil
+	}
 	if kind == confirmSafetyOverride {
 		path := m.safetyInstallPath
 		allowDg := m.safetyAllowDowngrade

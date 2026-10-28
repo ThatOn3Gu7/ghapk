@@ -27,7 +27,7 @@ var (
 // FocusOrder is the tab-cycle order. Artifacts are a focus within Builds,
 // not a separate screen.
 var FocusOrder = []PanelID{
-	PanelRepos, PanelWorkflows, PanelRuns, PanelDevice,
+	PanelRepos, PanelWorkflows, PanelRuns, PanelDevice, PanelDownloads,
 }
 
 // PanelID identifies a dashboard panel.
@@ -39,6 +39,7 @@ const (
 	PanelRuns
 	PanelArtifacts
 	PanelDevice
+	PanelDownloads
 	NumPanels
 )
 
@@ -49,4 +50,5 @@ var PanelNames = map[PanelID]string{
 	PanelRuns:      "Builds",
 	PanelArtifacts: "Artifacts",
 	PanelDevice:    "Device",
+	PanelDownloads: "Downloads",
 }

@@ -66,7 +66,10 @@ func detectAndroidEnv() bool {
 
 // Probe inspects the environment once; fast (<200ms) and safe to call from
 // a goroutine at startup.
-func Probe() Info {
+func Probe() Info { return ProbeContext(context.Background()) }
+
+// ProbeContext allows interactive preflights and jobs to stop device probes.
+func ProbeContext(ctx context.Context) Info {
 	in := Info{
 		OS:    runtime.GOOS,
 		Cores: runtime.NumCPU(),
@@ -75,20 +78,20 @@ func Probe() Info {
 	onAndroid := detectOSFn()
 	if onAndroid {
 		in.OS = "android"
-		in.Model = getprop("ro.product.model")
-		in.Manufacturer = getprop("ro.product.manufacturer")
-		in.Release = "Android " + getprop("ro.build.version.release")
-		if v, err := strconv.Atoi(getprop("ro.build.version.sdk")); err == nil {
+		in.Model = getpropContext(ctx, "ro.product.model")
+		in.Manufacturer = getpropContext(ctx, "ro.product.manufacturer")
+		in.Release = "Android " + getpropContext(ctx, "ro.build.version.release")
+		if v, err := strconv.Atoi(getpropContext(ctx, "ro.build.version.sdk")); err == nil {
 			in.SDK = v
 		}
-		if list := getprop("ro.product.cpu.abilist"); list != "" {
+		if list := getpropContext(ctx, "ro.product.cpu.abilist"); list != "" {
 			for _, a := range strings.Split(list, ",") {
 				if a = strings.TrimSpace(a); a != "" {
 					in.ABIs = append(in.ABIs, a)
 				}
 			}
 		}
-		in.HasRish = probeRish()
+		in.HasRish = probeRishContext(ctx)
 	}
 
 	if len(in.ABIs) == 0 {
@@ -101,7 +104,26 @@ func Probe() Info {
 
 	in.InstallVia = pickInstaller(onAndroid)
 	if in.InstallVia == "adb" || hasPath("adb") {
-		in.ADBConnected = probeADBConnected()
+		in.ADBConnected = probeADBConnectedContext(ctx)
+	}
+	if !onAndroid && in.ADBConnected {
+		// Host architecture is not the attached Android device's architecture.
+		in.ABIs = nil
+		if value, err := runShortCmdContext(ctx, 2*time.Second, "adb", "shell", "getprop", "ro.product.cpu.abilist"); err == nil {
+			for _, a := range strings.Split(strings.TrimSpace(value), ",") {
+				a = strings.TrimSpace(a)
+				if a != "" && strings.IndexFunc(a, func(r rune) bool {
+					return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_')
+				}) < 0 {
+					in.ABIs = append(in.ABIs, a)
+				}
+			}
+		}
+		if value, err := runShortCmdContext(ctx, 2*time.Second, "adb", "shell", "getprop", "ro.build.version.sdk"); err == nil {
+			if sdk, e := strconv.Atoi(strings.TrimSpace(value)); e == nil {
+				in.SDK = sdk
+			}
+		}
 	}
 	in.CanInstall = in.InstallVia != ""
 	return in
@@ -130,29 +152,36 @@ func pickInstaller(onAndroid bool) string {
 	return ""
 }
 
-func probeRish() bool {
+func probeRish() bool { return probeRishContext(context.Background()) }
+func probeRishContext(ctx context.Context) bool {
 	if !hasPath("rish") {
 		return false
 	}
-	out, err := runShortCmd(2*time.Second, "rish", "-c", "id")
+	out, err := runShortCmdContext(ctx, 2*time.Second, "rish", "-c", "id")
 	return err == nil && strings.Contains(out, "uid=")
 }
 
-func probeADBConnected() bool {
+func probeADBConnected() bool { return probeADBConnectedContext(context.Background()) }
+func probeADBConnectedContext(ctx context.Context) bool {
 	if !hasPath("adb") {
 		return false
 	}
-	out, err := runShortCmd(2*time.Second, "adb", "get-state")
+	out, err := runShortCmdContext(ctx, 2*time.Second, "adb", "get-state")
 	return err == nil && strings.TrimSpace(out) == "device"
 }
 
 func runShortCmd(timeout time.Duration, name string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	return runShortCmdContext(context.Background(), timeout, name, args...)
+}
+func runShortCmdContext(parent context.Context, timeout time.Duration, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	if probeCmdHook != nil {
 		return probeCmdHook(ctx, name, args...)
 	}
-	b, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = time.Second
+	b, err := cmd.CombinedOutput()
 	return string(b), err
 }
 
@@ -289,10 +318,13 @@ func humanUptime(secs int64) string {
 	}
 }
 
-func getprop(key string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func getprop(key string) string { return getpropContext(context.Background(), key) }
+func getpropContext(parent context.Context, key string) string {
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "getprop", key).Output()
+	cmd := exec.CommandContext(ctx, "getprop", key)
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}

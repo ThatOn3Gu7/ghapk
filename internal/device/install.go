@@ -107,6 +107,12 @@ func DiagnoseFailure(raw string) (code, diagnosis string) {
 //
 // Generic desktop openers such as `xdg-open` are never treated as installers.
 func InstallAPK(apkPath string, allowDowngrade bool, onLine func(string)) (InstallResult, error) {
+	return InstallAPKContext(context.Background(), apkPath, allowDowngrade, onLine)
+}
+
+// InstallAPKContext stops the installer command if the job is cancelled. An
+// already launched Android installer remains under Android's control.
+func InstallAPKContext(parent context.Context, apkPath string, allowDowngrade bool, onLine func(string)) (InstallResult, error) {
 	if onLine == nil {
 		onLine = func(string) {}
 	}
@@ -124,7 +130,7 @@ func InstallAPK(apkPath string, allowDowngrade bool, onLine func(string)) (Insta
 		return InstallResult{Outcome: OutcomeFailed, Detail: err.Error()}, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
 	defer cancel()
 
 	onAndroid := detectOSFn()
@@ -310,6 +316,7 @@ func firstMatchingLine(out, needleLower string) string {
 
 func defaultInstallExec(ctx context.Context, name string, args []string, onLine func(string)) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = time.Second
 	pr, pw := io.Pipe()
 	cmd.Stdout = pw
 	cmd.Stderr = pw

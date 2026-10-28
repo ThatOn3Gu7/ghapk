@@ -45,6 +45,7 @@ const (
 	ModalConfirm
 	ModalTask
 	ModalDoctor
+	ModalPlan
 )
 
 // Options customises a session (flags from the CLI).
@@ -171,7 +172,22 @@ type Model struct {
 
 	confirm components.Confirm
 
-	task *TaskState
+	task                                                      *TaskState
+	plan                                                      *installPlan
+	planSeq                                                   int
+	jobs                                                      []*downloadJob
+	quitAfterJobs                                             bool
+	nextJobID                                                 int
+	jobList                                                   components.List
+	savedList                                                 components.List
+	savedFiles                                                []savedAPK
+	downloadFocus                                             int
+	downloadDetail                                            bool
+	downloadScroll                                            int
+	downloadTouchActive, downloadTouchMoved                   bool
+	downloadTouchLastY, downloadTouchArea, downloadTouchIndex int
+	downloadTouchWasFocused                                   bool
+	jobQuestionID                                             int
 	// task progress channel (kept so we can re-arm waitProgress)
 	progCh chan tea.Msg
 	logCh  chan tea.Msg
@@ -229,6 +245,7 @@ func New(opts Options) Model {
 		progCh:         make(chan tea.Msg, 64),
 		logCh:          make(chan tea.Msg, 64),
 	}
+	m.refreshSaved()
 	m.loadRecents("")
 	m.updateListBounds()
 	return m
@@ -255,6 +272,7 @@ func (m *Model) updateListBounds() {
 	m.arts.MaxShown = max(1, layout.arts.h-2)
 	m.runs.MoveBy(0)
 	m.arts.MoveBy(0)
+	m.downloadListBounds()
 }
 
 func (m *Model) loadRecents(current string) {
@@ -292,9 +310,45 @@ func (m Model) Init() tea.Cmd {
 // ───────────────────────────── UPDATE ─────────────────────────────
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	switch v := next.(type) {
+	case Model:
+		v.showNextJobQuestion()
+		return v, cmd
+	case *Model:
+		v.showNextJobQuestion()
+		return v, cmd
+	}
+	return next, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case planReadyMsg:
+		if m.modal == ModalPlan && m.plan != nil && m.plan.seq == msg.seq {
+			m.plan.loading = false
+			m.plan.dev = msg.dev
+			m.plan.pkg = msg.pkg
+			m.plan.app = msg.app
+			m.plan.found = msg.found
+		}
+		return m, nil
+	case jobEventMsg:
+		return m, m.handleJobEvent(msg)
+	case jobQuestionMsg:
+		return m, m.handleJobQuestion(msg)
+	case jobFinishedMsg:
+		m.handleJobFinished(msg)
+		if m.quitAfterJobs && !m.hasActiveJobs() {
+			m.quitting = true
+			return m, tea.Quit
+		}
+		return m, nil
 
 	case tea.MouseMsg:
+		if m.quitAfterJobs {
+			return m, nil
+		}
 		return m.handleMouse(msg)
 
 	case tea.WindowSizeMsg:
@@ -315,6 +369,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.quitAfterJobs {
+			return m, nil
+		}
 		return m.handleKey(msg)
 
 	case spinner.TickMsg:

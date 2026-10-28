@@ -129,7 +129,8 @@ func TestDashboardUsesTerminalBackgroundAndKeepsHighlights(t *testing.T) {
 					}
 				}
 				for _, label := range []string{"Install", "Download", "Open"} {
-					if bg := backgroundAt(t, view, label); bg == "" {
+					detailView := m.buildDetails(m.buildsLayout().details)
+					if bg := backgroundAt(t, detailView, label); bg == "" {
 						t.Errorf("action %q is not highlighted", label)
 					}
 				}

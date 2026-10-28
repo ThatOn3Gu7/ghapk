@@ -39,6 +39,11 @@ func ValidPackage(pkg string) bool {
 // On Android/Termux it tries Shizuku rish first, then local dumpsys/pm;
 // when adb is available it tries `adb shell dumpsys package <pkg>`.
 func QueryPackage(pkg string) (InstalledApp, bool) {
+	return QueryPackageContext(context.Background(), pkg)
+}
+
+// QueryPackageContext prefers Shizuku and permits interactive jobs to cancel.
+func QueryPackageContext(ctx context.Context, pkg string) (InstalledApp, bool) {
 	if !ValidPackage(pkg) {
 		return InstalledApp{}, false
 	}
@@ -59,10 +64,13 @@ func QueryPackage(pkg string) (InstalledApp, bool) {
 
 	queryable := false
 	for _, c := range cmds {
+		if ctx.Err() != nil {
+			return InstalledApp{}, false
+		}
 		if !hasPath(c.bin) {
 			continue
 		}
-		out, err := runShortCmd(1500*time.Millisecond, c.bin, c.args...)
+		out, err := runShortCmdContext(ctx, 1500*time.Millisecond, c.bin, c.args...)
 		if err != nil || out == "" {
 			continue
 		}

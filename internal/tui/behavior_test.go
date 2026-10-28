@@ -27,7 +27,7 @@ func TestArtifactsInteraction(t *testing.T) {
 	}
 	mm, cmd := m.Update(key("d"))
 	m = mm.(Model)
-	if cmd == nil || m.modal != ModalTask || m.task.Artifact != art.Name || m.pendingInstall {
+	if cmd == nil || len(m.jobs) != 1 || m.jobs[0].spec.choice.name() != art.Name || m.jobs[0].spec.install {
 		t.Fatal("selected artifact did not download directly")
 	}
 }
@@ -87,7 +87,7 @@ func TestMouseCompactTabs(t *testing.T) {
 // The tab cycle must match the visual order of the compact tabs:
 // repos → flows → builds → device. Artifacts live inside Builds.
 func TestFocusRingOrder(t *testing.T) {
-	want := []PanelID{PanelRepos, PanelWorkflows, PanelRuns, PanelDevice}
+	want := []PanelID{PanelRepos, PanelWorkflows, PanelRuns, PanelDevice, PanelDownloads}
 	if len(FocusOrder) != len(want) {
 		t.Fatalf("FocusOrder len = %d", len(FocusOrder))
 	}

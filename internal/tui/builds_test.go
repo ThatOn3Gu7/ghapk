@@ -115,7 +115,7 @@ func TestBuildArtifactSelectionAndActions(t *testing.T) {
 	}
 	mm, cmd := m.Update(key("d"))
 	m = mm.(Model)
-	if cmd == nil || m.modal != ModalTask || m.task.Artifact != a.Name || m.pendingInstall {
+	if cmd == nil || len(m.jobs) != 1 || m.jobs[0].spec.choice.name() != a.Name || m.jobs[0].spec.install {
 		t.Fatalf("download: %+v", m.task)
 	}
 	m = buildModel(t, 120, 40)
@@ -129,7 +129,7 @@ func TestBuildArtifactSelectionAndActions(t *testing.T) {
 	}
 	mm, cmd = m.Update(key("i"))
 	m = mm.(Model)
-	if cmd == nil || m.modal != ModalTask || m.task.Artifact != a.Name || !m.pendingInstall {
+	if cmd == nil || m.modal != ModalPlan || m.plan == nil || m.plan.choices[m.plan.selected].name() != a.Name {
 		t.Fatalf("install: %+v", m.task)
 	}
 }
@@ -148,7 +148,7 @@ func TestBuildTouchAndActionButtons(t *testing.T) {
 	_, hits := m.buildActionChips(r.details.w - 4)
 	mm, cmd := m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: r.details.x + 2 + hits[1].start, Y: r.details.y + r.details.h - 2})
 	m = mm.(Model)
-	if cmd == nil || m.modal != ModalTask || m.task.Artifact != a.Name || m.pendingInstall {
+	if cmd == nil || len(m.jobs) != 1 || m.jobs[0].spec.choice.name() != a.Name || m.jobs[0].spec.install {
 		t.Fatalf("download tap: %+v", m.task)
 	}
 	// On narrow screens tapping a build drills in, and tapping the header goes back.
@@ -250,7 +250,7 @@ func TestBuildReleaseAssetsAndFilteredRefresh(t *testing.T) {
 	}
 	mm, cmd := m.Update(key("d"))
 	m = mm.(Model)
-	if cmd == nil || m.modal != ModalTask || m.task.Artifact != "universal-debug.apk" || m.pendingInstall {
+	if cmd == nil || len(m.jobs) != 1 || m.jobs[0].spec.choice.name() != "universal-debug.apk" || m.jobs[0].spec.install {
 		t.Fatalf("wrong release: %+v", m.task)
 	}
 }

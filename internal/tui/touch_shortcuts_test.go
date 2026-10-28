@@ -169,12 +169,12 @@ func TestFooterTouchesDispatchActions(t *testing.T) {
 			}
 		}},
 		{"download", PanelRuns, "d", func(t *testing.T, m Model, c tea.Cmd) {
-			if m.modal != ModalTask || m.pendingInstall || c == nil {
+			if m.focus != PanelDownloads || len(m.jobs) != 1 || m.jobs[0].spec.install || c == nil {
 				t.Fatal("download did not start")
 			}
 		}},
 		{"install", PanelRuns, "i", func(t *testing.T, m Model, c tea.Cmd) {
-			if m.modal != ModalTask || !m.pendingInstall || c == nil {
+			if m.modal != ModalPlan || m.plan == nil || c == nil {
 				t.Fatal("install did not start")
 			}
 		}},
@@ -449,14 +449,14 @@ func TestPhoneWidthTouchActions(t *testing.T) {
 		t.Run(fmt.Sprint(width), func(t *testing.T) {
 			m := buildModel(t, width, 24)
 			got, cmd := tapHint(t, m, "d")
-			if got.modal != ModalTask || got.pendingInstall || cmd == nil {
+			if got.focus != PanelDownloads || len(got.jobs) != 1 || got.jobs[0].spec.install || cmd == nil {
 				t.Fatal("phone download hint did not start")
 			}
 			m = buildModel(t, width, 24)
 			m.focus, m.buildDetail = PanelArtifacts, true
 			m.updateListBounds()
 			got, cmd = tapHint(t, m, "i")
-			if got.modal != ModalTask || !got.pendingInstall || cmd == nil {
+			if got.modal != ModalPlan || got.plan == nil || cmd == nil {
 				t.Fatal("phone install hint did not start")
 			}
 			m = newTestModel()
