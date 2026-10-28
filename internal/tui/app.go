@@ -85,8 +85,11 @@ type Model struct {
 	// filterMode routes keystrokes into the focused list's filter.
 	filterMode bool
 
-	workflowSel string // "" = any (name from workflow list)
-	branchSel   string
+	workflowSel    string // "" = any (name from workflow list)
+	branchSel      string
+	navRepo        string // repository explicitly selected during this session
+	navWorkflow    string
+	navWorkflowSet bool
 
 	runCache       map[int64][]ghapi.Artifact // scored+sorted artifacts per run
 	fetching       map[int64]bool
@@ -339,6 +342,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case RepoInfoMsg:
+		if msg.RequestedRepo != "" && msg.RequestedRepo != m.settings.Repo {
+			return m, nil
+		}
 		if msg.Err != nil {
 			m.toastf("repo: %s", shortErr(msg.Err))
 			return m, nil
@@ -350,6 +356,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case WorkflowsMsg:
+		if msg.Repo != "" && msg.Repo != m.settings.Repo {
+			return m, nil
+		}
 		if msg.Err != nil {
 			if m.modal == ModalPickWorkflow && m.workflowPicker != nil {
 				m.workflowPicker.setOptions(&m, m.buildWorkflowOptions(), msg.Err)
@@ -384,6 +393,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.fetchWorkflowForSelection()
 
 	case WorkflowFileMsg:
+		if msg.Repo != "" && msg.Repo != m.settings.Repo {
+			return m, nil
+		}
 		delete(m.wfFetching, msg.Path)
 		if msg.Err == nil {
 			m.wfCache[msg.Path] = msg.YAML
@@ -393,6 +405,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case RunsMsg:
+		if msg.Repo != "" && (msg.Repo != m.settings.Repo || msg.Workflow != m.settings.Workflow || msg.Branch != m.branchSel) {
+			return m, nil
+		}
 		m.runsLoaded = true
 		if msg.Err != nil {
 			m.toastf("runs: %s", shortErr(msg.Err))
@@ -427,6 +442,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ReleasesMsg:
+		if msg.Repo != "" && msg.Repo != m.settings.Repo {
+			return m, nil
+		}
 		if msg.Err == nil {
 			m.releases = msg.List
 			if m.usingReleaseAssets() {
@@ -675,6 +693,9 @@ func (m *Model) bootstrapDashboard() tea.Cmd {
 // Per-repo config re-applies on top, but session-live choices
 // (theme, watch) survive.
 func (m *Model) setRepo(repo string, persist bool) {
+	m.navRepo = ""
+	m.navWorkflow = ""
+	m.navWorkflowSet = false
 	theme, watch, limit := m.settings.Theme, m.settings.Watch, m.settings.RunLimit
 	m.settings = config.LoadForRepo(repo)
 	m.settings.Repo = repo

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -181,7 +182,42 @@ func (m Model) buildArtifacts(r rect) string {
 	return components.Panel{Title: title, Badge: badge, Focused: m.focus == PanelArtifacts, Width: r.w, Height: r.h, Content: l.Render(m.st, r.w-4)}.Render(m.st)
 }
 
-const buildActions = "Install Download Open"
+type buildActionHit struct {
+	start, end int
+}
+
+// Each action is drawn as its own contrasting chip, and the very same cell
+// ranges are used for touch hit-testing.
+func (m Model) buildActionChips(width int) (string, []buildActionHit) {
+	labels := []string{"Install", "Download", "Open"}
+	if os.Getenv("NO_COLOR") != "" {
+		// Keep the actions distinct from ordinary details even without color.
+		for i := range labels {
+			labels[i] = strings.ToUpper(labels[i])
+		}
+	}
+	pad := 0
+	if width >= 27 {
+		pad = 1
+	}
+	primary := m.st.ButtonFocus.Padding(0, pad)
+	secondary := lipgloss.NewStyle().Foreground(m.st.P.Text).Background(m.st.P.Selection).Bold(true).Padding(0, pad)
+	var rendered []string
+	var hits []buildActionHit
+	x := 0
+	for i, label := range labels {
+		style := secondary
+		if i == 0 {
+			style = primary
+		}
+		part := style.Render(label)
+		w := components.VisibleWidth(part)
+		hits = append(hits, buildActionHit{x, x + w})
+		rendered = append(rendered, part)
+		x += w + 1
+	}
+	return strings.Join(rendered, " "), hits
+}
 
 func (m Model) buildDetails(r rect) string {
 	ih := r.h - 2
@@ -245,7 +281,8 @@ func (m Model) buildDetails(r rect) string {
 		lines = append(lines, "")
 	}
 	if ih > 0 {
-		lines = append(lines, m.st.Accent.Render(buildActions))
+		chips, _ := m.buildActionChips(r.w - 4)
+		lines = append(lines, chips)
 	}
 	return components.Panel{Title: "Details", Width: r.w, Height: r.h, Content: strings.Join(lines, "\n")}.Render(m.st)
 }
@@ -347,19 +384,25 @@ func (m Model) handleBuildMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		if l.details.contains(msg.X, msg.Y) && msg.Y == l.details.y+l.details.h-2 {
 			x := msg.X - (l.details.x + 2)
-			switch {
-			case x >= 0 && x < 7:
-				return m, m.requestDownload(true)
-			case x >= 8 && x < 16:
-				return m, m.requestDownload(false)
-			case x >= 17 && x < 21:
-				if m.usingReleaseAssets() {
-					if a, ok := m.selectedReleaseAsset(); ok {
-						return m, openURL(a.HTMLURL)
-					}
+			_, hits := m.buildActionChips(l.details.w - 4)
+			for i, hit := range hits {
+				if x < hit.start || x >= hit.end {
+					continue
 				}
-				if run, ok := m.selectedRun(); ok {
-					return m, openURL(run.HTMLURL)
+				switch i {
+				case 0:
+					return m, m.requestDownload(true)
+				case 1:
+					return m, m.requestDownload(false)
+				case 2:
+					if m.usingReleaseAssets() {
+						if a, ok := m.selectedReleaseAsset(); ok {
+							return m, openURL(a.HTMLURL)
+						}
+					}
+					if run, ok := m.selectedRun(); ok {
+						return m, openURL(run.HTMLURL)
+					}
 				}
 			}
 		}

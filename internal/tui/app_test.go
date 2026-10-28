@@ -72,34 +72,23 @@ func TestDashboardRenders(t *testing.T) {
 }
 
 func TestKeyNavigation(t *testing.T) {
-	m := newTestModel()
-	m = seedRuns(m)
-	m = seedArtifacts(m)
-	var mm tea.Model = m
-	// Select Builds, then move into its artifact list.
-	mm, _ = mm.Update(keyOf("tab"))
+	m := seedArtifacts(seedRuns(newTestModel()))
+	mm, _ := m.Update(key("3"))
 	mm, _ = mm.Update(keyOf("enter"))
-	mo := mm.(Model)
-	if mo.focus != PanelArtifacts {
-		t.Errorf("after entering Builds focus = %v, want Artifacts", mo.focus)
+	m = mm.(Model)
+	if m.focus != PanelArtifacts {
+		t.Fatalf("expected artifact focus, got %v", m.focus)
 	}
-	// move down in artifacts
-	mm, _ = mo.Update(key("j"))
-	// open confirm modal with d
-	mm, _ = mm.Update(key("d"))
-	mo = mm.(Model)
-	if mo.modal != ModalConfirm {
-		t.Errorf("d did not open confirm modal (modal=%v)", mo.modal)
+	mm, _ = m.Update(key("j"))
+	m = mm.(Model)
+	a, ok := m.cursorArtifact()
+	if !ok {
+		t.Fatal("no artifact selected")
 	}
-	v := mo.View()
-	if !strings.Contains(v, "Confirm download") && !strings.Contains(v, "Download") {
-		t.Error("confirm modal not rendered")
-	}
-	// cancel with esc
-	mm, _ = mo.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	mo = mm.(Model)
-	if mo.modal != ModalNone {
-		t.Error("esc did not close the modal")
+	mm, cmd := m.Update(key("d"))
+	m = mm.(Model)
+	if cmd == nil || m.modal != ModalTask || m.pendingInstall || m.task.Artifact != a.Name {
+		t.Fatalf("download didn't start: %+v", m.task)
 	}
 }
 

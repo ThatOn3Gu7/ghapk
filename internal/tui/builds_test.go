@@ -111,16 +111,15 @@ func TestBuildArtifactSelectionAndActions(t *testing.T) {
 	m = mm.(Model)
 	a, ok := m.cursorArtifact()
 	if !ok || a.ID != m.selectedArtID {
-		t.Fatalf("cursor and selected differ: %+v, %d", a, m.selectedArtID)
+		t.Fatalf("cursor and selected differ: %+v", a)
 	}
-	mm, _ = m.Update(key("d"))
+	mm, cmd := m.Update(key("d"))
 	m = mm.(Model)
-	if m.modal != ModalConfirm || !strings.Contains(strings.Join(m.confirm.Body, " "), a.Name) {
-		t.Fatalf("download confirmed wrong artifact: %+v", m.confirm)
+	if cmd == nil || m.modal != ModalTask || m.task.Artifact != a.Name || m.pendingInstall {
+		t.Fatalf("download: %+v", m.task)
 	}
-	mm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = mm.(Model)
-	// Filtered artifact index must resolve by ID, not the unfiltered index.
+	m = buildModel(t, 120, 40)
+	m.dev = device.Info{CanInstall: true}
 	m.arts.Filter = "universal"
 	m.arts.Cursor = 0
 	m.syncArtifactSelection()
@@ -128,10 +127,10 @@ func TestBuildArtifactSelectionAndActions(t *testing.T) {
 	if !ok || !strings.Contains(a.Name, "universal") {
 		t.Fatalf("filtered selection: %+v", a)
 	}
-	mm, _ = m.Update(key("i"))
+	mm, cmd = m.Update(key("i"))
 	m = mm.(Model)
-	if m.modal != ModalConfirm || !strings.Contains(strings.Join(m.confirm.Body, " "), "universal") || m.confirm.Cursor != 1 {
-		t.Fatalf("install confirmation: %+v", m.confirm)
+	if cmd == nil || m.modal != ModalTask || m.task.Artifact != a.Name || !m.pendingInstall {
+		t.Fatalf("install: %+v", m.task)
 	}
 }
 
@@ -146,10 +145,11 @@ func TestBuildTouchAndActionButtons(t *testing.T) {
 	if !ok || a.ID != m.selectedArtID {
 		t.Fatalf("tap did not select artifact: %+v", a)
 	}
-	mm, _ = m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: r.details.x + 2 + 8, Y: r.details.y + r.details.h - 2})
+	_, hits := m.buildActionChips(r.details.w - 4)
+	mm, cmd := m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: r.details.x + 2 + hits[1].start, Y: r.details.y + r.details.h - 2})
 	m = mm.(Model)
-	if m.modal != ModalConfirm || !strings.Contains(strings.Join(m.confirm.Body, " "), a.Name) {
-		t.Fatalf("download tap: %+v", m.confirm)
+	if cmd == nil || m.modal != ModalTask || m.task.Artifact != a.Name || m.pendingInstall {
+		t.Fatalf("download tap: %+v", m.task)
 	}
 	// On narrow screens tapping a build drills in, and tapping the header goes back.
 	m = buildModel(t, 40, 24)
@@ -190,11 +190,9 @@ func TestBuildConfirmFitsPhone(t *testing.T) {
 	for _, w := range []int{32, 40, 48, 63, 64, 80} {
 		m := buildModel(t, w, 24)
 		m.dev = device.Info{CanInstall: true}
-		mm, _ := m.Update(key("i"))
-		m = mm.(Model)
-		if m.modal != ModalConfirm {
-			t.Fatal("missing confirm")
-		}
+		m.modal = ModalConfirm
+		m.confirmKind = confirmSafetyOverride
+		m.confirm = components.Confirm{Title: "Safety check before install", Body: []string{"Different signing key"}, Options: []string{"Install anyway", "Cancel"}, Cursor: 1}
 		lines := strings.Split(m.View(), "\n")
 		if len(lines) > 24 {
 			t.Errorf("%d columns: confirm overflows height: %d", w, len(lines))
@@ -208,8 +206,9 @@ func TestPhoneConfirmButtonsHitCorrectly(t *testing.T) {
 		for _, option := range []string{"Download", "Download & Install", "Cancel"} {
 			m := buildModel(t, width, 24)
 			m.dev = device.Info{CanInstall: true}
-			mm, _ := m.Update(key("d"))
-			m = mm.(Model)
+			m.modal = ModalConfirm
+			m.confirmKind = confirmSafetyOverride
+			m.confirm = components.Confirm{Title: "Safety check", Options: []string{"Download", "Download & Install", "Cancel"}}
 			lines := strings.Split(m.View(), "\n")
 			var x, y = -1, -1
 			for i := len(lines) - 1; i >= 0; i-- {
@@ -249,18 +248,19 @@ func TestBuildReleaseAssetsAndFilteredRefresh(t *testing.T) {
 	if !ok || a.Asset.ID != 2 {
 		t.Fatalf("wrong filtered release after refresh: %+v", a)
 	}
-	mm, _ := m.Update(key("d"))
+	mm, cmd := m.Update(key("d"))
 	m = mm.(Model)
-	if m.modal != ModalConfirm || !strings.Contains(strings.Join(m.confirm.Body, " "), "universal-debug.apk") {
-		t.Fatalf("wrong release confirmation: %+v", m.confirm)
+	if cmd == nil || m.modal != ModalTask || m.task.Artifact != "universal-debug.apk" || m.pendingInstall {
+		t.Fatalf("wrong release: %+v", m.task)
 	}
 }
 
 func TestPhoneCancelTouchDoesNotDownload(t *testing.T) {
 	m := buildModel(t, 40, 24)
 	m.dev = device.Info{CanInstall: true}
-	mm, _ := m.Update(key("d"))
-	m = mm.(Model)
+	m.modal = ModalConfirm
+	m.confirmKind = confirmSafetyOverride
+	m.confirm = components.Confirm{Title: "Safety check", Options: []string{"Install anyway", "Cancel"}, Cursor: 1}
 	lines := strings.Split(m.View(), "\n")
 	for y, line := range lines {
 		plain := components.StripANSI(line)

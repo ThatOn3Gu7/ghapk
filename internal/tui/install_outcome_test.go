@@ -154,43 +154,24 @@ func TestStartInstallPromptsOnDowngradeAutoAndBlocksReflexY(t *testing.T) {
 	}
 }
 
-// TestDownloadAndInstallTransitionsDirectlyToInstall verifies that selecting
-// "Download & Install" (via Enter, Space, 'y', or even when NoOpen=true in
-// config) starts installation upon download completion instead of stranding the
-// user on a dead Install/Close menu.
+// Explicit install starts directly and must work even when NoOpen is set.
 func TestDownloadAndInstallTransitionsDirectlyToInstall(t *testing.T) {
 	t.Setenv("GHAPK_HISTORY", filepath.Join(t.TempDir(), "history.json"))
 	apkPath := filepath.Join(t.TempDir(), "app-debug.apk")
 	if err := os.WriteFile(apkPath, []byte("apk"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-
-	for _, confirmKey := range []tea.KeyMsg{
-		{Type: tea.KeyEnter},
-		{Type: tea.KeyRunes, Runes: []rune{' '}},
-		{Type: tea.KeyRunes, Runes: []rune{'y'}},
-	} {
+	for _, confirmKey := range []tea.KeyMsg{key("i"), keyOf("enter")} {
 		m := seedArtifacts(seedRuns(newTestModel()))
 		m.dev = device.Info{OS: "android", CanInstall: true, InstallVia: "termux-open"}
-		m.settings.NoOpen = true // even with no-open=1 in config, explicit Download & Install must work
-
-		// Focus Artifacts panel, open Confirm download, move to "Download & Install" (index 1).
-		mm, _ := m.Update(key("2"))
+		m.settings.NoOpen = true
+		mm, _ := m.Update(key("3"))
 		mm, _ = mm.Update(keyOf("enter"))
 		m = mm.(Model)
-		mm, _ = m.Update(key("d"))
-		m = mm.(Model)
-		mm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
-		m = mm.(Model)
-		if m.confirm.Cursor != 1 || m.confirm.Options[m.confirm.Cursor] != "Download & Install" {
-			t.Fatalf("expected cursor on Download & Install, got idx=%d opts=%v", m.confirm.Cursor, m.confirm.Options)
-		}
-
-		// Confirm "Download & Install"
 		mm, dlCmd := m.Update(confirmKey)
 		m = mm.(Model)
-		if dlCmd == nil || !m.pendingInstall {
-			t.Fatalf("key %q did not arm pendingInstall (pending=%v cmdNil=%v)", confirmKey.String(), m.pendingInstall, dlCmd == nil)
+		if dlCmd == nil || !m.pendingInstall || m.modal != ModalTask {
+			t.Fatalf("key %q did not start direct install: pending=%v cmdNil=%v modal=%v", confirmKey.String(), m.pendingInstall, dlCmd == nil, m.modal)
 		}
 
 		// Complete download: must immediately enter Installing, NOT stop at ["Install", "Close"].
@@ -348,10 +329,9 @@ func (s *syncBuf) String() string {
 	return s.buf.String()
 }
 
-// TestLiveTeaProgramInstallMenuEndToEnd drives an actual tea.NewProgram loop
-// with stubbed `gh` and `adb` binaries to verify live menu interaction from
-// artifact download -> [Install / Close] -> Install -> adb install -> Close.
-func TestLiveTeaProgramInstallMenuEndToEnd(t *testing.T) {
+// Drive an actual Tea program with stubbed gh and adb, from Install straight
+// through download to adb, without a download confirmation.
+func TestLiveTeaProgramDirectInstallEndToEnd(t *testing.T) {
 	tmp := t.TempDir()
 	binDir := filepath.Join(tmp, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
@@ -432,23 +412,15 @@ func TestLiveTeaProgramInstallMenuEndToEnd(t *testing.T) {
 		t.Fatalf("timed out waiting for %q in live TUI output:\n%s", sub, components.StripANSI(out.String()))
 	}
 
-	// Wait for artifact list to load in live TUI, focus Artifacts ('4'), open
-	// Confirm download ('d'), and confirm Download ('\r') so the post-download
-	// ["Install", "Close"] menu appears on screen.
-	_, _ = inW.Write([]byte("2"))
+	// Select Builds and install the selected artifact directly.
+	_, _ = inW.Write([]byte("3"))
 	waitForOut("app-debug")
 	waitForOut("d:download")
-	_, _ = inW.Write([]byte("d"))
-	waitForOut("Confirm download")
-	_, _ = inW.Write([]byte("\r"))
-
-	// Wait for download to finish and display the post-download ["Install", "Close"] menu.
-	waitForOut("done in")
-	waitForOut("Close")
-
-	// Press Enter on "Install" -> must invoke our stub `adb install` and render confirmed install!
-	_, _ = inW.Write([]byte("\r"))
+	_, _ = inW.Write([]byte("i"))
 	waitForOut("installed")
+	if strings.Contains(components.StripANSI(out.String()), "Confirm download") {
+		t.Fatal("unexpected download confirmation")
+	}
 
 	gotADB, err := os.ReadFile(adbMarker)
 	if err != nil || !strings.Contains(string(gotADB), "install -r") {

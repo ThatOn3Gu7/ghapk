@@ -21,7 +21,8 @@ func (m Model) buildHelp() viewport.Model {
 
 	h1("Moving around")
 	row("tab / shift+tab", "cycle panels")
-	row("1 … 4", "jump straight to a panel")
+	row("1 … 4", "jump to Repos, Flows, Builds, Device")
+	row("enter", "select a repo or workflow; enter again to move on")
 	row("j / k · ↑ / ↓", "move in a list")
 	row("ctrl+d / ctrl+u", "page a list")
 	row("g / G", "first / last row")

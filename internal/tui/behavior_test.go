@@ -12,28 +12,24 @@ import (
 )
 
 func TestArtifactsInteraction(t *testing.T) {
-	m := newTestModel()
-	m = seedRuns(m)
-	m = seedArtifacts(m)
-	r, _ := m.selectedRun()
-	t.Logf("selected run id=%d cache=%d", r.ID, len(m.runCache[r.ID]))
-	v := m.artsContent(60, 12, &m)
-	t.Logf("before move:\n%s\n", v)
-	mm, _ := m.Update(key("2"))
+	m := seedArtifacts(seedRuns(newTestModel()))
+	mm, _ := m.Update(key("3"))
 	mm, _ = mm.Update(keyOf("enter"))
 	m = mm.(Model)
-	t.Logf("focus=%v want Artifacts(%v)", m.focus, PanelArtifacts)
+	if m.focus != PanelArtifacts {
+		t.Fatal("Builds did not open artifacts")
+	}
 	mm, _ = m.Update(key("j"))
 	m = mm.(Model)
-	t.Logf("arts items=%d cursor=%d", len(m.arts.Items), m.arts.Cursor)
-	v = m.artsContent(60, 12, &m)
-	t.Logf("after move:\n%s", v)
-	// confirm modal
-	mm, _ = m.Update(key("d"))
+	art, ok := m.cursorArtifact()
+	if !ok {
+		t.Fatal("no artifact selected")
+	}
+	mm, cmd := m.Update(key("d"))
 	m = mm.(Model)
-	t.Logf("modal=%v options=%v", m.modal, m.confirm.Options)
-	cv := m.View()
-	t.Logf("view contains 'Confirm download': %v", strings.Contains(cv, "Confirm download"))
+	if cmd == nil || m.modal != ModalTask || m.task.Artifact != art.Name || m.pendingInstall {
+		t.Fatal("selected artifact did not download directly")
+	}
 }
 
 func TestMouse(t *testing.T) {
@@ -89,9 +85,9 @@ func TestMouseCompactTabs(t *testing.T) {
 }
 
 // The tab cycle must match the visual order of the compact tabs:
-// repos → flows → runs → artifacts → device. Details live inside Runs.
+// repos → flows → builds → device. Artifacts live inside Builds.
 func TestFocusRingOrder(t *testing.T) {
-	want := []PanelID{PanelRepos, PanelRuns, PanelWorkflows, PanelDevice}
+	want := []PanelID{PanelRepos, PanelWorkflows, PanelRuns, PanelDevice}
 	if len(FocusOrder) != len(want) {
 		t.Fatalf("FocusOrder len = %d", len(FocusOrder))
 	}
@@ -123,16 +119,16 @@ func TestCompactTabsShowRealCounts(t *testing.T) {
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 70, Height: 26})
 	m = mm.(Model)
 	got := m.compactTabLabel(PanelRuns)
-	if got != "2 Builds (2)" {
-		t.Errorf("runs tab label = %q, want %q", got, "2 Builds (2)")
+	if got != "3 Builds (2)" {
+		t.Errorf("runs tab label = %q, want %q", got, "3 Builds (2)")
 	}
 	if _, ok := m.compactTabRects()[PanelArtifacts]; ok {
 		t.Fatal("artifacts must not be a separate tab")
 	}
 	m.runs.AddFilterChar('x')
 	got = m.compactTabLabel(PanelRuns)
-	if got != "2 Builds (2)" {
-		t.Errorf("filtered runs tab = %q, want it to still show the total 2, got %s", "2 Builds (2)", got)
+	if got != "3 Builds (2)" {
+		t.Errorf("filtered runs tab = %q, want it to still show the total 2, got %s", "3 Builds (2)", got)
 	}
 }
 

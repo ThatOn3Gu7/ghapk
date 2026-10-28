@@ -119,7 +119,7 @@ func (m Model) renderStatusBar() string {
 	} else {
 		switch m.focus {
 		case PanelRepos:
-			add("enter", "switch")
+			add("enter", "select / next")
 			add("R", "picker")
 			add("e", "edit")
 			add("x", "remove")
@@ -129,7 +129,7 @@ func (m Model) renderStatusBar() string {
 				add("↑/↓", "scroll")
 				add("esc", "list")
 			} else {
-				add("enter", "filter runs")
+				add("enter", "select / next")
 				add("→/v", "view yaml")
 			}
 		case PanelArtifacts:
@@ -218,11 +218,11 @@ func (m Model) tabLabels() (map[PanelID]string, bool) {
 	if total <= m.width {
 		return labels, false
 	}
-	labels = map[PanelID]string{PanelRepos: "1 Repo", PanelRuns: "2 Build", PanelWorkflows: "3 Flow", PanelDevice: "4 Dev"}
+	labels = map[PanelID]string{PanelRepos: "1 Repo", PanelRuns: "3 Build", PanelWorkflows: "2 Flow", PanelDevice: "4 Dev"}
 	return labels, false
 }
 
-// compactTabLabel is the tab caption, e.g. "2 Builds (30)" — hotkey,
+// compactTabLabel is the tab caption, e.g. "3 Builds (30)" — hotkey,
 // short name, and the live item count. Device/Details carry no count.
 func (m Model) compactTabLabel(p PanelID) string {
 	n := ""
