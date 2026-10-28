@@ -85,12 +85,14 @@ type PackageQueryMsg struct {
 }
 
 type SearchResultsMsg struct {
+	Seq   int
 	Query string
 	Hits  []ghapi.SearchHit
 	Err   error
 }
 
 type UserReposMsg struct {
+	Seq  int
 	List []ghapi.Repo
 	Err  error
 }
@@ -243,17 +245,17 @@ func queryPackageCmd(pkg string) tea.Cmd {
 	}
 }
 
-func searchReposCmd(query string) tea.Cmd {
+func searchReposCmd(query string, seq int) tea.Cmd {
 	return func() tea.Msg {
 		hits, err := ghapi.SearchRepos(query, 8)
-		return SearchResultsMsg{Query: query, Hits: hits, Err: err}
+		return SearchResultsMsg{Seq: seq, Query: query, Hits: hits, Err: err}
 	}
 }
 
-func fetchUserReposCmd() tea.Cmd {
+func fetchUserReposCmd(seq int) tea.Cmd {
 	return func() tea.Msg {
-		rs, err := ghapi.ListUserRepos(40)
-		return UserReposMsg{List: rs, Err: err}
+		rs, err := ghapi.ListUserRepos()
+		return UserReposMsg{Seq: seq, List: rs, Err: err}
 	}
 }
 

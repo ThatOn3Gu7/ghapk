@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/ghapk/ghapk/internal/tui/components"
 )
 
@@ -380,6 +381,9 @@ func (m Model) handleModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.modal == ModalHelp {
 		return m.handleHelpMouse(msg), nil
 	}
+	if m.modal == ModalPickRepo && m.repoPicker != nil {
+		return m.handleRepoPickerMouse(msg)
+	}
 	if msg.Type != tea.MouseLeft {
 		return m, nil
 	}
@@ -421,6 +425,74 @@ func (m Model) handleModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.task.btnIdx = idx
 		cmd := m.task.activateFocused(&m)
 		return m, cmd
+	}
+	return m, nil
+}
+
+// repoPickerBounds matches the centered overlay and its input, divider and list.
+func (m Model) repoPickerBounds() (rect, rect) {
+	box := m.modalBox()
+	x := max(0, (m.width-lipgloss.Width(box))/2) + 3
+	y := max(0, (m.height-lipgloss.Height(box))/2) + 3
+	w := max(1, m.modalWindowWidth()-4)
+	rows := m.repoPicker.list.MaxShown
+	return rect{x: x, y: y, w: w, h: rows}, rect{x: x, y: y + rows, w: w, h: 1}
+}
+
+func (m Model) handleRepoPickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	rp := m.repoPicker
+	if m.width < minWidth || m.height < minHeight {
+		rp.touchActive = false
+		return m, nil
+	}
+	bounds, status := m.repoPickerBounds()
+	if msg.Action == tea.MouseActionRelease || msg.Type == tea.MouseRelease {
+		active := rp.touchActive
+		rp.touchActive = false
+		if active && !rp.touchMoved && bounds.contains(msg.X, msg.Y) {
+			idx := rp.list.Offset + msg.Y - bounds.y
+			items := rp.list.Filtered()
+			if idx >= 0 && idx < len(items) && items[idx].ID == rp.touchValue {
+				rp.list.Cursor = idx
+				return rp.handleKey(tea.KeyMsg{Type: tea.KeyEnter}, &m)
+			}
+		}
+		return m, nil
+	}
+	if rp.touchActive && msg.Action == tea.MouseActionMotion && msg.Button == tea.MouseButtonLeft {
+		delta := rp.touchLastY - msg.Y
+		if delta != 0 {
+			rp.touchMoved = true
+			rp.list.MoveBy(delta)
+		}
+		rp.touchLastY = msg.Y
+		return m, nil
+	}
+	if (msg.Type == tea.MouseWheelUp || msg.Button == tea.MouseButtonWheelUp) && bounds.contains(msg.X, msg.Y) {
+		rp.list.MoveBy(-3)
+		return m, nil
+	}
+	if (msg.Type == tea.MouseWheelDown || msg.Button == tea.MouseButtonWheelDown) && bounds.contains(msg.X, msg.Y) {
+		rp.list.MoveBy(3)
+		return m, nil
+	}
+	if msg.Type == tea.MouseLeft && msg.Action == tea.MouseActionPress {
+		if status.contains(msg.X, msg.Y) && rp.errMsg != "" {
+			return m, m.fetchUserRepos()
+		}
+		if bounds.contains(msg.X, msg.Y) {
+			idx := rp.list.Offset + msg.Y - bounds.y
+			items := rp.list.Filtered()
+			if idx >= 0 && idx < len(items) {
+				if value, ok := items[idx].ID.(string); ok {
+					rp.list.Cursor = idx
+					rp.touchActive = true
+					rp.touchMoved = false
+					rp.touchLastY = msg.Y
+					rp.touchValue = value
+				}
+			}
+		}
 	}
 	return m, nil
 }

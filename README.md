@@ -140,7 +140,7 @@ go install github.com/ThatOn3Gu7/ghapk@latest
 | **Mouse / Touch** | Tap to select; tap the repo name for the picker or a bottom hint to run it; swipe or drag the scroll bar in Help |
 | `d` | Download selected artifact to local cache |
 | `i` | Download and immediately launch installer on device |
-| `R` | Quick repository switcher (recent repos, git remote detection, search) |
+| `R` | Repository picker (accessible GitHub repos, recents, git remote, search) |
 | `B` | Switch the Actions branch filter (release assets are not branch-filtered) |
 | `r` | Refresh current view from GitHub API |
 | `w` | Toggle watch mode (live polling for running CI workflows) |
@@ -151,6 +151,8 @@ go install github.com/ThatOn3Gu7/ghapk@latest
 | `D` | Run diagnostic Doctor tool |
 | `?` | Toggle help overlay |
 | `q` / `Ctrl+C` | Clean exit (restores terminal state) |
+
+On a fresh start, the repository picker loads all repositories accessible to the authenticated `gh` account, including private and organization repositories where authorized. No local clone is required. Tap a repository to choose it, swipe to scroll, or type to filter or enter `owner/repo`. If loading fails, tap retry or press `Ctrl+R`.
 
 On Repos, select a repository and then a branch; choose “all branches” to leave Actions runs unfiltered. Branches come from GitHub and, when the current working tree has a matching GitHub origin, its local branches. A local-only branch needs a pushed Actions run to have downloadable artifacts.
 

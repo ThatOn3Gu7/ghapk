@@ -32,12 +32,17 @@ func matchAllTokens(hay, query string) bool {
 
 // RepoPicker is the modal for choosing or searching a GitHub repository.
 type RepoPicker struct {
-	input     textinput.Model
-	list      components.List
-	lastQ     string
-	hits      []ghapi.SearchHit
-	userRepos []ghapi.Repo
-	loading   bool
+	input       textinput.Model
+	list        components.List
+	lastQ       string
+	hits        []ghapi.SearchHit
+	userRepos   []ghapi.Repo
+	loading     bool
+	errMsg      string
+	touchActive bool
+	touchMoved  bool
+	touchLastY  int
+	touchValue  string
 }
 
 type repoSearchDebounced struct {
@@ -47,26 +52,45 @@ type repoSearchDebounced struct {
 
 func (m *Model) openRepoPicker() tea.Cmd {
 	ti := textinput.New()
-	ti.Placeholder = "type to filter or owner/repo"
-	if m.settings.Repo != "" {
-		ti.Placeholder = m.settings.Repo + " (type to filter or owner/repo)"
-	}
+	ti.Placeholder = "Filter or enter owner/repo"
 	ti.Focus()
 	ti.CharLimit = 100
-	ti.Width = 44
-	rp := &RepoPicker{
-		input:     ti,
-		userRepos: m.cachedUserRepos,
-		loading:   len(m.cachedUserRepos) == 0,
-	}
-	rp.list.Empty = "  nothing matches — enter owner/repository"
-	rp.rebuild(m)
+	rp := &RepoPicker{input: ti, userRepos: m.cachedUserRepos}
+	rp.list.Empty = "  No repositories found"
 	m.repoPicker = rp
 	m.modal = ModalPickRepo
-	if len(m.cachedUserRepos) == 0 {
-		return fetchUserReposCmd()
+	m.searchSeq++ // invalidate searches from an earlier picker
+	rp.resize(m)
+	rp.rebuild(m)
+	if !m.userReposLoaded && len(m.cachedUserRepos) == 0 {
+		if m.userReposLoading {
+			rp.loading = true
+			return m.spin.Tick
+		}
+		return m.fetchUserRepos()
 	}
 	return nil
+}
+
+func (m *Model) fetchUserRepos() tea.Cmd {
+	if m.userReposLoading {
+		return nil
+	}
+	m.userReposLoading = true
+	m.userReposSeq++
+	if m.repoPicker != nil {
+		m.repoPicker.loading = true
+		m.repoPicker.errMsg = ""
+	}
+	return tea.Batch(fetchUserReposCmd(m.userReposSeq), m.spin.Tick)
+}
+
+// Keep the modal and its hit targets inside even the smallest supported screen.
+func (rp *RepoPicker) resize(m *Model) {
+	rp.input.Width = max(1, m.modalWindowWidth()-4-components.VisibleWidth(rp.input.Prompt))
+	rp.list.MaxShown = min(10, max(1, m.height-7))
+	rp.list.CachedClamp()
+	rp.touchActive = false
 }
 
 func (rp *RepoPicker) rebuild(m *Model) {
@@ -134,8 +158,8 @@ func (rp *RepoPicker) rebuild(m *Model) {
 	} else if q == "" && m.settings.Repo != "" {
 		rp.list.SelectByID(m.settings.Repo)
 	}
-	rp.list.MaxShown = 10
 	rp.list.Focused = true
+	rp.list.CachedClamp()
 }
 
 func (rp *RepoPicker) setSearch(m *Model, query string, hits []ghapi.SearchHit) {
@@ -146,19 +170,14 @@ func (rp *RepoPicker) setSearch(m *Model, query string, hits []ghapi.SearchHit) 
 	rp.rebuild(m)
 }
 
-func (rp *RepoPicker) setUserRepos(m *Model, repos []ghapi.Repo) {
+func (rp *RepoPicker) setUserRepos(m *Model, repos []ghapi.Repo, err error) {
 	rp.loading = false
+	rp.errMsg = shortErr(err)
 	rp.userRepos = repos
 	rp.rebuild(m)
 }
 
 func (rp *RepoPicker) update(m *Model, msg tea.Msg) tea.Cmd {
-	if d, ok := msg.(repoSearchDebounced); ok {
-		if d.seq == m.searchSeq && d.query == strings.TrimSpace(rp.input.Value()) {
-			return searchReposCmd(d.query)
-		}
-		return nil
-	}
 	var cmd tea.Cmd
 	rp.input, cmd = rp.input.Update(msg)
 	return cmd
@@ -170,6 +189,11 @@ func (rp *RepoPicker) handleKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.modal = ModalNone
 		m.repoPicker = nil
+		return *m, nil
+	case "ctrl+r":
+		if rp.errMsg != "" {
+			return *m, m.fetchUserRepos()
+		}
 		return *m, nil
 	case "down", "ctrl+n", "tab":
 		rp.list.MoveBy(1)
@@ -213,43 +237,72 @@ func (rp *RepoPicker) handleKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 	prev := rp.input.Value()
 	rp.input, cmd = rp.input.Update(msg)
 	if rp.input.Value() != prev {
-		rp.rebuild(m)
 		q := strings.TrimSpace(rp.input.Value())
-		if q != rp.lastQ && len(q) >= 3 && !strings.Contains(q, "/") {
+		if q != rp.lastQ {
 			rp.lastQ = q
+			rp.hits = nil
 			m.searchSeq++
 			seq := m.searchSeq
-			return *m, tea.Batch(cmd, tea.Tick(350*time.Millisecond, func(t time.Time) tea.Msg {
-				return repoSearchDebounced{seq: seq, query: q}
-			}))
-		}
-		if strings.Contains(q, "/") && q != rp.lastQ {
-			rp.lastQ = q
-			return *m, tea.Batch(cmd, searchReposCmd(q))
+			rp.rebuild(m)
+			if strings.Contains(q, "/") {
+				return *m, tea.Batch(cmd, searchReposCmd(q, seq))
+			}
+			if len(q) >= 3 {
+				return *m, tea.Batch(cmd, tea.Tick(350*time.Millisecond, func(t time.Time) tea.Msg { return repoSearchDebounced{seq: seq, query: q} }))
+			}
+		} else {
+			rp.rebuild(m)
 		}
 	}
 	return *m, cmd
 }
 
 func (rp *RepoPicker) view(m *Model) string {
-	st := m.st
-	var b strings.Builder
-	sub := "Filter recents & your GitHub repos, or type owner/repo:"
+	width := max(1, m.modalWindowWidth()-4)
+	rows := rp.list.MaxShown
+	if rows < 1 {
+		rows = 1
+	}
+	var lines []string
+	lines = append(lines, components.Clamp(rp.input.View(), width))
+	lines = append(lines, m.st.Dim.Render(strings.Repeat("─", width)))
+	l := rp.list
+	listWidth := width
+	scroll := len(l.Filtered()) > rows && width > 2
+	if scroll {
+		listWidth -= 2
+	}
+	rendered := strings.Split(l.Render(m.st, listWidth), "\n")
+	thumbStart, thumbEnd := 0, 0
+	if scroll {
+		n := len(l.Filtered())
+		thumbSize := max(1, rows*rows/n)
+		thumbStart = (rows - thumbSize) * l.Offset / (n - rows)
+		thumbEnd = thumbStart + thumbSize
+	}
+	for i := 0; i < rows; i++ {
+		line := ""
+		if i < len(rendered) {
+			line = rendered[i]
+		}
+		line = components.Fit(line, listWidth)
+		if scroll {
+			mark := "│"
+			if i >= thumbStart && i < thumbEnd {
+				mark = "┃"
+			}
+			line += " " + m.st.Dim.Render(mark)
+		}
+		lines = append(lines, line)
+	}
+	status := ""
 	if rp.loading {
-		sub += "  " + m.spin.View()
+		status = m.spin.View() + " Loading repositories…"
+	} else if rp.errMsg != "" {
+		status = "Load failed · tap retry: " + rp.errMsg
 	}
-	b.WriteString(st.Muted.Render(sub) + "\n\n")
-	b.WriteString(rp.input.View() + "\n\n")
-	b.WriteString(st.Dim.Render("↑/↓ select · type to filter/search · enter choose · esc close") + "\n")
-	w := 58
-	if m.width-16 < w {
-		w = m.width - 16
-	}
-	if w < 30 {
-		w = 30
-	}
-	b.WriteString(rp.list.Render(st, w))
-	return b.String()
+	lines = append(lines, m.st.Dim.Render(components.Clamp(status, width)))
+	return strings.Join(lines, "\n")
 }
 
 // ───────────────────── Filter Picker (Branch B / Workflow W) ─────────────────

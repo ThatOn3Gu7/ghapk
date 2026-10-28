@@ -147,20 +147,7 @@ func ListBranches(repo string) ([]Branch, error) {
 	if err != nil {
 		return nil, err
 	}
-	dec := json.NewDecoder(strings.NewReader(out))
-	var branches []Branch
-	for {
-		var page []Branch
-		err = dec.Decode(&page)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("decoding branches for %s: %w", repo, err)
-		}
-		branches = append(branches, page...)
-	}
-	return branches, nil
+	return decodePages[Branch](out, "branches for "+repo)
 }
 
 // ListReleases fetches recent releases (for the releases fallback source).
@@ -175,17 +162,39 @@ func ListReleases(repo string, limit int) ([]Release, error) {
 	return r, nil
 }
 
-// ListUserRepos fetches repositories recently pushed by or accessible to the
-// authenticated user to seed the repository picker.
-func ListUserRepos(limit int) ([]Repo, error) {
-	if limit <= 0 {
-		limit = 40
-	}
-	var rs []Repo
-	if err := api(&rs, defaultTimeout, fmt.Sprintf("user/repos?sort=pushed&per_page=%d", limit)); err != nil {
+// ListUserRepos returns all repositories accessible to the authenticated user,
+// including owned, collaborator, and organization repositories.
+func ListUserRepos() ([]Repo, error) {
+	const endpoint = "user/repos?sort=pushed&direction=desc&per_page=100&affiliation=owner,collaborator,organization_member"
+	out, err := rawAPI(2*time.Minute, endpoint, "--paginate")
+	if err != nil {
 		return nil, err
 	}
-	return rs, nil
+	return decodePages[Repo](out, "authenticated repositories")
+}
+
+// gh --paginate emits consecutive JSON arrays; decode all of them without
+// requiring --slurp, which is absent on older versions of gh.
+func decodePages[T any](out, what string) ([]T, error) {
+	dec := json.NewDecoder(strings.NewReader(out))
+	var result []T
+	pages := 0
+	for {
+		var page []T
+		err := dec.Decode(&page)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("decoding %s: %w", what, err)
+		}
+		result = append(result, page...)
+		pages++
+	}
+	if pages == 0 {
+		return nil, fmt.Errorf("decoding %s: empty response", what)
+	}
+	return result, nil
 }
 
 // SearchRepos powers the repo picker's suggestions.

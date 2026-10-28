@@ -152,11 +152,14 @@ type Model struct {
 
 	settingsUI *SettingsUI
 
-	repoPicker      *RepoPicker
-	branchPicker    *FilterPicker
-	workflowPicker  *FilterPicker
-	cachedUserRepos []ghapi.Repo
-	wfCatalog       []ghapi.Workflow
+	repoPicker       *RepoPicker
+	branchPicker     *FilterPicker
+	workflowPicker   *FilterPicker
+	cachedUserRepos  []ghapi.Repo
+	userReposLoaded  bool
+	userReposLoading bool
+	userReposSeq     int
+	wfCatalog        []ghapi.Workflow
 
 	branchList components.List
 
@@ -300,6 +303,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.compact = m.width < 64
 		m.updateListBounds()
+		if m.modal == ModalPickRepo && m.repoPicker != nil {
+			m.repoPicker.resize(&m)
+		}
 		if m.modal == ModalHelp {
 			m.resizeHelp()
 		}
@@ -317,7 +323,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Only repaint for the spinner when something is visibly moving.
 		// Idle dashboards used to redraw ten times a second for no reason,
 		// which made every repo switch on a phone feel jerky.
-		if m.busy || len(m.fetching) > 0 || m.modal == ModalTask || m.watchActive() {
+		if m.busy || len(m.fetching) > 0 || m.modal == ModalTask || (m.modal == ModalPickRepo && m.repoPicker != nil && m.repoPicker.loading) || m.watchActive() {
 			return m, cmd
 		}
 		return m, nil
@@ -333,12 +339,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Tick(300*time.Millisecond, func(t time.Time) tea.Msg { return ShimmerTickMsg{At: t} })
 
 	case AuthCheckedMsg:
+		oldPicker := m.repoPicker
+		changedAccount := msg.Err == nil && m.authUser != "" && m.authUser != msg.User
+		if changedAccount {
+			m.cachedUserRepos = nil
+			m.userReposLoaded = false
+			m.userReposLoading = false
+			m.userReposSeq++
+		}
 		m.ghVersion = msg.Version
 		m.authUser = msg.User
 		m.authErr = msg.Err
 		if msg.Err == nil {
 			m.screen = ScreenDashboard
-			return m, m.bootstrapDashboard()
+			cmd := m.bootstrapDashboard()
+			if changedAccount && m.modal == ModalPickRepo && m.repoPicker == oldPicker {
+				cmd = tea.Batch(cmd, m.openRepoPicker())
+			}
+			return m, cmd
 		}
 		if ghapiErr(msg.Err) == ghapi.ErrNoGH || m.ghVersion == "" && msg.Err != nil && !ghapi.Available() {
 			m.screen = ScreenSetup
@@ -363,6 +381,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Repo != "" {
 			m.gitDetected = msg.Repo
 			m.loadRecents(m.settings.Repo)
+			if m.modal == ModalPickRepo && m.repoPicker != nil {
+				m.repoPicker.rebuild(&m)
+			}
 		}
 		return m, nil
 
@@ -518,17 +539,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case SearchResultsMsg:
-		if m.modal == ModalPickRepo && m.repoPicker != nil {
+		if m.modal == ModalPickRepo && m.repoPicker != nil && (msg.Seq == 0 || msg.Seq == m.searchSeq) {
 			m.repoPicker.setSearch(&m, msg.Query, msg.Hits)
 		}
 		return m, nil
 
 	case UserReposMsg:
+		if msg.Seq != 0 && msg.Seq != m.userReposSeq {
+			return m, nil
+		}
+		m.userReposLoading = false
 		if msg.Err == nil {
 			m.cachedUserRepos = msg.List
+			m.userReposLoaded = true
 		}
 		if m.modal == ModalPickRepo && m.repoPicker != nil {
-			m.repoPicker.setUserRepos(&m, m.cachedUserRepos)
+			m.repoPicker.setUserRepos(&m, m.cachedUserRepos, msg.Err)
 		}
 		return m, nil
 
@@ -632,7 +658,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case repoSearchDebounced:
 		if m.modal == ModalPickRepo && m.repoPicker != nil && msg.seq == m.searchSeq {
-			return m, searchReposCmd(msg.query)
+			return m, searchReposCmd(msg.query, msg.seq)
 		}
 		return m, nil
 
@@ -725,7 +751,7 @@ func (m *Model) bootstrapDashboard() tea.Cmd {
 	}
 	if repo == "" {
 		// nothing to load — open the repo picker right away
-		m.openRepoPicker()
+		cmds = append(cmds, m.openRepoPicker())
 	}
 	if m.instPkg == "" && m.dev.OS == "android" {
 		// leave empty; user can set package in settings
