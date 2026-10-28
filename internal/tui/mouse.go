@@ -299,8 +299,11 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleModalMouse supports clicking action buttons in ModalConfirm and ModalTask.
+// handleModalMouse captures input before it can reach the dashboard.
 func (m Model) handleModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.modal == ModalHelp {
+		return m.handleHelpMouse(msg), nil
+	}
 	if msg.Type != tea.MouseLeft {
 		return m, nil
 	}
@@ -413,4 +416,68 @@ func (m Model) modalButtonHit(px, py int, buttons []string) int {
 		curX += bw + 2 // "  " join separator
 	}
 	return -1
+}
+
+// Help accepts both terminal wheel events and press/drag/release gestures.
+func (m Model) handleHelpMouse(msg tea.MouseMsg) Model {
+	if m.width < minWidth || m.height < minHeight {
+		m.helpDragging = false
+		return m
+	}
+	bounds := m.helpBounds()
+	if msg.Action == tea.MouseActionRelease || msg.Type == tea.MouseRelease {
+		m.helpDragging = false
+		return m
+	}
+	if msg.Type == tea.MouseWheelUp || msg.Button == tea.MouseButtonWheelUp {
+		if bounds.contains(msg.X, msg.Y) {
+			m.helpVP.LineUp(3)
+		}
+		return m
+	}
+	if msg.Type == tea.MouseWheelDown || msg.Button == tea.MouseButtonWheelDown {
+		if bounds.contains(msg.X, msg.Y) {
+			m.helpVP.LineDown(3)
+		}
+		return m
+	}
+	if msg.Action == tea.MouseActionPress && (msg.Type == tea.MouseLeft || msg.Button == tea.MouseButtonLeft) {
+		m.helpDragging = bounds.contains(msg.X, msg.Y)
+		m.helpDragLastY = msg.Y
+		start, size := m.helpThumb()
+		m.helpDragScrollbar = m.helpDragging && size > 0 && msg.X == bounds.x+bounds.w-1
+		if m.helpDragScrollbar {
+			row := msg.Y - bounds.y
+			if row >= start && row < start+size {
+				// Grabbing the thumb must not make it jump.
+				m.helpDragThumbOffset = row - start
+			} else {
+				m.helpDragThumbOffset = size / 2
+				m.helpScrollToBar(msg.Y, bounds, size)
+			}
+		}
+		return m
+	}
+	if msg.Action == tea.MouseActionMotion && m.helpDragging && msg.Button == tea.MouseButtonLeft {
+		if m.helpDragScrollbar {
+			_, size := m.helpThumb()
+			if size > 0 {
+				m.helpScrollToBar(msg.Y, bounds, size)
+			}
+		} else {
+			m.helpVP.SetYOffset(m.helpVP.YOffset + m.helpDragLastY - msg.Y)
+		}
+		m.helpDragLastY = msg.Y
+	}
+	return m
+}
+
+func (m *Model) helpScrollToBar(y int, bounds rect, thumbHeight int) {
+	travel := bounds.h - thumbHeight
+	if travel <= 0 {
+		return
+	}
+	thumbY := min(travel, max(0, y-bounds.y-m.helpDragThumbOffset))
+	scrollMax := max(0, m.helpVP.TotalLineCount()-m.helpVP.Height)
+	m.helpVP.SetYOffset((thumbY*scrollMax + travel/2) / travel)
 }

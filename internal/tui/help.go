@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/ghapk/ghapk/internal/tui/components"
 )
 
 func (m Model) buildHelp() viewport.Model {
@@ -29,7 +31,7 @@ func (m Model) buildHelp() viewport.Model {
 	row("enter / →", "open a build’s artifacts; enter installs the selected artifact")
 	row("← / esc", "return to the build list")
 	row("mouse", "click focuses & selects, click again opens, wheel scrolls")
-	row("touch", "tap the repo name or any visible bottom hint")
+	row("touch", "tap the repo name or bottom hints; swipe to scroll help")
 
 	h1("Doing things")
 	row("d", "download the selected artifact")
@@ -62,7 +64,59 @@ func (m Model) buildHelp() viewport.Model {
   + android-N API hints, minus symbols/mapping/reports.
   The best score gets a ★ — exactly the script's algorithm.`))
 
-	vp := viewport.New(60, 20)
-	vp.SetContent(b.String())
+	// Leave a gap and a column for the indicator so it remains visible on
+	// phones, and wrap rather than clipping long help lines at narrow widths.
+	width := max(1, m.modalWindowWidth()-6)
+	height := max(1, m.height-10)
+	if m.height <= 20 {
+		height = max(1, m.height-6)
+	}
+	vp := viewport.New(width, height)
+	vp.SetContent(ansi.Wrap(b.String(), width, ""))
 	return vp
+}
+
+// Reflow for the new width and retain relative scroll position on rotation.
+func (m *Model) resizeHelp() {
+	progress := m.helpVP.ScrollPercent()
+	atTop := m.helpVP.AtTop()
+	m.helpVP = m.buildHelp()
+	if !atTop {
+		m.helpVP.SetYOffset(int(progress*float64(max(0, m.helpVP.TotalLineCount()-m.helpVP.Height)) + 0.5))
+	}
+	m.helpDragging = false
+}
+
+// helpThumb uses the same proportional thumb and track as the YAML preview.
+func (m Model) helpThumb() (start, size int) {
+	h, total := m.helpVP.Height, m.helpVP.TotalLineCount()
+	if h <= 0 || total <= h {
+		return 0, 0
+	}
+	size = max(1, h*h/total)
+	start = (h - size) * m.helpVP.YOffset / (total - h)
+	return start, size
+}
+
+func (m Model) renderHelp() string {
+	lines := strings.Split(m.helpVP.View(), "\n")
+	start, size := m.helpThumb()
+	if size == 0 {
+		return strings.Join(lines, "\n")
+	}
+	for i := range lines {
+		marker := m.st.Dim.Render("│")
+		if i >= start && i < start+size {
+			marker = m.st.Accent.Render("█")
+		}
+		lines[i] = components.Fit(lines[i], m.helpVP.Width) + " " + marker
+	}
+	return strings.Join(lines, "\n")
+}
+
+// helpBounds matches the centered modal's padded content, including the bar.
+func (m Model) helpBounds() rect {
+	boxWidth := m.modalWindowWidth() + 2
+	boxHeight := m.helpVP.Height + 2
+	return rect{x: max(0, (m.width-boxWidth)/2) + 3, y: max(0, (m.height-boxHeight)/2) + 1, w: max(1, boxWidth-6), h: m.helpVP.Height}
 }

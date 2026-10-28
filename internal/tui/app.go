@@ -130,7 +130,11 @@ type Model struct {
 	// modal state
 	modal ModalKind
 
-	helpVP viewport.Model
+	helpVP              viewport.Model
+	helpDragging        bool
+	helpDragScrollbar   bool
+	helpDragLastY       int
+	helpDragThumbOffset int
 
 	settingsUI *SettingsUI
 
@@ -278,6 +282,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.compact = m.width < 64
 		m.updateListBounds()
+		if m.modal == ModalHelp {
+			m.resizeHelp()
+		}
 		if m.screen == ScreenBoot && m.authErr == nil && m.ghVersion != "" {
 			m.screen = ScreenDashboard
 		}
