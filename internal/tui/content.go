@@ -930,6 +930,56 @@ func (m Model) artsContent(w, h int, mm *Model) string {
 	if m.settings.Repo == "" {
 		return m.emptyState("📁", "No repository chosen", "Pick a repository to see artifacts", "press 'R' to choose", w, h)
 	}
+	if m.usingReleaseAssets() {
+		rels := m.rankedReleases()
+		l := m.arts
+		if len(l.Items) != len(rels) {
+			var syncItems []components.Item
+			for _, ra := range rels {
+				syncItems = append(syncItems, components.Item{ID: -ra.Asset.ID, Label: ra.Asset.Name})
+			}
+			l.Items = syncItems
+		}
+		if len(l.Filtered()) == 0 {
+			return m.emptyState("🔍 ∅", "No matching release assets", fmt.Sprintf("No assets match %q", l.Filter), "press Esc to clear filter", w, h)
+		}
+		listH, subH := artSplit(h, len(rels))
+		if listH < 3 {
+			listH = 3
+		}
+		l.MaxShown = listH - 2
+		l.Focused = m.focus == PanelArtifacts
+		var items []components.Item
+		bestScore := rels[0].Asset.Score
+		for _, ra := range rels {
+			a := ra.Asset
+			star := "  "
+			if !a.Rejected && a.Score == bestScore {
+				star = st.Accent.Render(st.G.Star + " ")
+			}
+			style := st.Text
+			if a.Rejected {
+				style = st.Dim
+			}
+			line := star + style.Render(components.Clamp(a.Name, w-22))
+			items = append(items, components.Item{
+				ID:       -a.ID,
+				Label:    a.Name,
+				Rendered: line,
+				Detail:   humanSize(a.Size),
+			})
+		}
+		l.Items = items
+		list := renderBoxedList(l, st, w-4, listH, m.focus == PanelArtifacts, func(it components.Item) bool {
+			id, ok := it.ID.(int64)
+			return ok && id == m.selectedArtID
+		})
+		if subH < 3 {
+			return list
+		}
+		return list + "\n" + m.artifactDetailBox(w-4, subH)
+	}
+
 	r, ok := m.selectedRun()
 	if !ok {
 		return m.emptyState("📦 ⊘", "No run selected", "Select a workflow run in the Runs tab\nto view downloadable APKs", "press '3' or Tab to switch to Runs", w, h)
@@ -990,6 +1040,42 @@ func (m Model) artifactDetailBox(w, h int) string {
 	st := m.st
 	title := "artifact"
 	body := st.Dim.Render("  select an artifact")
+	if m.usingReleaseAssets() {
+		if ra, ok := m.selectedReleaseAsset(); ok {
+			a := ra.Asset
+			rels := m.rankedReleases()
+			best := len(rels) > 0 && !a.Rejected && a.Score == rels[0].Asset.Score
+			if best {
+				title = components.Clamp(st.G.Star+" "+a.Name, w-14)
+			} else {
+				title = components.Clamp(a.Name, w-14)
+			}
+			var b strings.Builder
+			kv := func(k, v string) {
+				if v == "" {
+					return
+				}
+				b.WriteString(fmt.Sprintf("%s %s\n", st.Dim.Render(fmt.Sprintf("%-8s", k)), components.Clamp(v, w-12)))
+			}
+			kv("source", "release "+ra.ReleaseTag)
+			kv("size", humanSize(a.Size))
+			kv("score", fmt.Sprint(a.Score)+"  "+st.Dim.Render("("+m.scoreWhy(a.Name)+")"))
+			if a.Rejected {
+				kv("policy", st.Warn.Render("rejected by arch/variant prefs"))
+			} else {
+				kv("policy", st.OK.Render("matches this device"))
+			}
+			if a.Digest != "" {
+				kv("digest", st.OK.Render("sha256 published"))
+			}
+			if !ra.PublishedAt.IsZero() {
+				kv("built", ra.PublishedAt.Format("2006-01-02 15:04"))
+			}
+			kv("", st.Dim.Render("d download · i download & install"))
+			body = strings.TrimSuffix(b.String(), "\n")
+		}
+		return components.Panel{Title: title, Width: w, Height: h, Content: body}.Render(st)
+	}
 	if a, ok := m.selectedArtifact(); ok {
 		best := false
 		if r, ok2 := m.selectedRun(); ok2 {

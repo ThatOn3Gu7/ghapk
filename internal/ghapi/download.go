@@ -16,7 +16,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/ghapk/ghapk/internal/apk"
@@ -34,7 +36,27 @@ const (
 
 	// defaultMaxDownloadBytes caps streamed artifact/release asset downloads.
 	defaultMaxDownloadBytes = int64(4) << 30 // 4 GiB
+
+	// defaultMaxNestedDepth bounds nested .zip archives inspected in memory.
+	defaultMaxNestedDepth = 2
+
+	// defaultMaxNestedZipBytes caps a single nested .zip entry and total nested
+	// bytes buffered in memory during nested archive inspection.
+	defaultMaxNestedZipBytes = int64(256) << 20 // 256 MiB
 )
+
+// ErrDownloadStalled is returned when a download stream receives no bytes for
+// longer than the configured stall timeout.
+var ErrDownloadStalled = errors.New("download stalled")
+
+func defaultStallTimeout() time.Duration {
+	if s := strings.TrimSpace(os.Getenv("STALL_TIMEOUT")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return 180 * time.Second
+}
 
 // Progress is called periodically during DownloadArtifact / DownloadReleaseAsset.
 // total may be 0 if unknown.
@@ -64,6 +86,7 @@ func defaultAtomicFS() atomicFS {
 
 type streamOpts struct {
 	maxBytes       int64
+	stallTimeout   time.Duration
 	ghBin          string
 	fs             atomicFS
 	expectedDigest string
@@ -72,24 +95,114 @@ type streamOpts struct {
 
 func defaultStreamOpts() streamOpts {
 	return streamOpts{
-		maxBytes: defaultMaxDownloadBytes,
-		ghBin:    "gh",
-		fs:       defaultAtomicFS(),
+		maxBytes:     defaultMaxDownloadBytes,
+		stallTimeout: defaultStallTimeout(),
+		ghBin:        "gh",
+		fs:           defaultAtomicFS(),
 	}
 }
 
 type extractOpts struct {
-	maxEntries  int
-	maxAPKBytes int64
-	fs          atomicFS
+	maxEntries       int
+	maxAPKBytes      int64
+	maxNestedDepth   int
+	maxNestedBytes   int64
+	excludePattern   string
+	fs               atomicFS
 }
 
 func defaultExtractOpts() extractOpts {
 	return extractOpts{
-		maxEntries:  defaultMaxZipEntries,
-		maxAPKBytes: defaultMaxExtractedBytes,
-		fs:          defaultAtomicFS(),
+		maxEntries:     defaultMaxZipEntries,
+		maxAPKBytes:    defaultMaxExtractedBytes,
+		maxNestedDepth: defaultMaxNestedDepth,
+		maxNestedBytes: defaultMaxNestedZipBytes,
+		fs:             defaultAtomicFS(),
 	}
+}
+
+// DownloadArtifactCached reuses destZip when allowCache is true and destZip
+// passes path, regular-file, ZIP-integrity, and published SHA-256 digest checks;
+// otherwise it downloads atomically.
+func DownloadArtifactCached(repo string, art Artifact, destZip string, allowCache bool, prog Progress) (cached bool, err error) {
+	if allowCache && CanReuseArtifactZip(destZip, art) {
+		if fi, statErr := os.Lstat(destZip); statErr == nil && prog != nil {
+			prog(fi.Size(), fi.Size())
+		}
+		return true, nil
+	}
+	return false, DownloadArtifact(repo, art, destZip, prog)
+}
+
+// CanReuseArtifactZip reports whether destZip is an existing, safe regular ZIP
+// file whose SHA-256 matches art.Digest (when GitHub published a digest).
+func CanReuseArtifactZip(destZip string, art Artifact) bool {
+	if _, _, err := validateDestFilePath(destZip); err != nil {
+		return false
+	}
+	fi, err := os.Lstat(destZip)
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() <= 0 {
+		return false
+	}
+	if _, present, derr := apk.NormalizeExpectedSHA256(art.Digest); derr != nil {
+		return false
+	} else if present {
+		st, _, verr := apk.VerifyExpectedSHA256(destZip, art.Digest)
+		if verr != nil || st != apk.DigestVerified {
+			return false
+		}
+	}
+	zr, err := openZipReader(destZip)
+	if err != nil {
+		return false
+	}
+	count := len(zr.File)
+	_ = zr.Close()
+	return count > 0 && count <= defaultMaxZipEntries
+}
+
+// DownloadReleaseAssetCached reuses the resolved destination file when
+// allowCache is true and the file passes regular-file, size, and published
+// SHA-256 digest checks; otherwise it streams atomically.
+func DownloadReleaseAssetCached(repo string, asset ReleaseAsset, dest string, allowCache bool, prog Progress) (resolved string, cached bool, err error) {
+	resolved, err = ResolveReleaseAssetDest(dest, asset.Name)
+	if err != nil {
+		return "", false, err
+	}
+	if allowCache && CanReuseReleaseAsset(resolved, asset) {
+		if fi, statErr := os.Lstat(resolved); statErr == nil && prog != nil {
+			prog(fi.Size(), fi.Size())
+		}
+		return resolved, true, nil
+	}
+	if err := DownloadReleaseAsset(repo, asset, resolved, prog); err != nil {
+		return "", false, err
+	}
+	return resolved, false, nil
+}
+
+// CanReuseReleaseAsset reports whether targetPath is an existing regular file
+// matching asset.Size and asset.Digest (when published).
+func CanReuseReleaseAsset(targetPath string, asset ReleaseAsset) bool {
+	if _, _, err := validateDestFilePath(targetPath); err != nil {
+		return false
+	}
+	fi, err := os.Lstat(targetPath)
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() <= 0 {
+		return false
+	}
+	if asset.Size > 0 && fi.Size() != asset.Size {
+		return false
+	}
+	if _, present, derr := apk.NormalizeExpectedSHA256(asset.Digest); derr != nil {
+		return false
+	} else if present {
+		st, _, verr := apk.VerifyExpectedSHA256(targetPath, asset.Digest)
+		if verr != nil || st != apk.DigestVerified {
+			return false
+		}
+	}
+	return true
 }
 
 // DownloadArtifact streams the zip for an actions artifact to destZip atomically.
@@ -202,12 +315,46 @@ func streamWithOpts(opts streamOpts, endpoint, dest string, expected int64, prog
 		defer killAndWait()
 
 		hasher := sha256.New()
+		var lastByteNano atomic.Int64
+		lastByteNano.Store(time.Now().UnixNano())
+		var didStall atomic.Bool
+		stallDone := make(chan struct{})
+		defer close(stallDone)
+		if opts.stallTimeout > 0 {
+			pollDur := 500 * time.Millisecond
+			if opts.stallTimeout/4 > 0 && opts.stallTimeout/4 < pollDur {
+				pollDur = opts.stallTimeout / 4
+			}
+			if pollDur < 10*time.Millisecond {
+				pollDur = 10 * time.Millisecond
+			}
+			go func() {
+				tk := time.NewTicker(pollDur)
+				defer tk.Stop()
+				for {
+					select {
+					case <-stallDone:
+						return
+					case <-ctx.Done():
+						return
+					case <-tk.C:
+						if time.Since(time.Unix(0, lastByteNano.Load())) > opts.stallTimeout {
+							didStall.Store(true)
+							cancel()
+							return
+						}
+					}
+				}
+			}()
+		}
+
 		buf := make([]byte, 128*1024)
 		var got int64
 		tick := time.Now()
 		for {
 			n, rerr := stdout.Read(buf)
 			if n > 0 {
+				lastByteNano.Store(time.Now().UnixNano())
 				if int64(n) > opts.maxBytes-got {
 					killAndWait()
 					return fmt.Errorf("gh %s: download exceeds maximum allowed size (%d bytes)", endpoint, opts.maxBytes)
@@ -233,12 +380,18 @@ func streamWithOpts(opts streamOpts, endpoint, dest string, expected int64, prog
 					break
 				}
 				killAndWait()
+				if didStall.Load() {
+					return fmt.Errorf("gh %s: %w (no bytes for %s)", endpoint, ErrDownloadStalled, opts.stallTimeout)
+				}
 				return fmt.Errorf("gh %s: reading stream: %w", endpoint, rerr)
 			}
 		}
 
 		reaped = true
 		if err := cmd.Wait(); err != nil {
+			if didStall.Load() {
+				return fmt.Errorf("gh %s: %w (no bytes for %s)", endpoint, ErrDownloadStalled, opts.stallTimeout)
+			}
 			msg := firstLine(stderr.String())
 			if msg != "" {
 				return fmt.Errorf("gh %s: %s: %w", endpoint, msg, err)
@@ -329,11 +482,33 @@ func inspectZipWithMax(zipPath string, maxEntries int) ([]string, error) {
 	return names, nil
 }
 
+func openZipBytesReader(data []byte) (*zip.Reader, error) {
+	r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil && !errors.Is(err, zip.ErrInsecurePath) {
+		return nil, err
+	}
+	return r, nil
+}
+
 // ExtractBestAPK mirrors step_download + the in-zip ranking: validate archive
 // entries, enforce architecture/variant policy, rank allowed .apk files (plus
 // files matching filePattern), and atomically publish the winner in outDir.
 func ExtractBestAPK(zipPath, outDir, filePattern string, p score.Prefs, dev score.Device) (ExtractedAPK, error) {
 	return extractBestAPKWithOpts(zipPath, outDir, filePattern, p, dev, defaultExtractOpts())
+}
+
+// ExtractBestAPKFiltered behaves like ExtractBestAPK while also applying an
+// optional comma-separated excludePattern glob list.
+func ExtractBestAPKFiltered(zipPath, outDir, filePattern, excludePattern string, p score.Prefs, dev score.Device) (ExtractedAPK, error) {
+	opts := defaultExtractOpts()
+	opts.excludePattern = excludePattern
+	return extractBestAPKWithOpts(zipPath, outDir, filePattern, p, dev, opts)
+}
+
+type zipCandidate struct {
+	f     *zip.File
+	leaf  string
+	score int
 }
 
 func extractBestAPKWithOpts(zipPath, outDir, filePattern string, p score.Prefs, dev score.Device, opts extractOpts) (ExtractedAPK, error) {
@@ -342,6 +517,12 @@ func extractBestAPKWithOpts(zipPath, outDir, filePattern string, p score.Prefs, 
 	}
 	if opts.maxAPKBytes <= 0 {
 		opts.maxAPKBytes = defaultMaxExtractedBytes
+	}
+	if opts.maxNestedDepth < 0 {
+		opts.maxNestedDepth = 0
+	}
+	if opts.maxNestedBytes <= 0 {
+		opts.maxNestedBytes = defaultMaxNestedZipBytes
 	}
 	if opts.fs.createTemp == nil {
 		opts.fs = defaultAtomicFS()
@@ -356,47 +537,95 @@ func extractBestAPKWithOpts(zipPath, outDir, filePattern string, p score.Prefs, 
 	}
 	defer r.Close()
 
-	if len(r.File) > opts.maxEntries {
-		return ExtractedAPK{}, fmt.Errorf("zip archive has %d entries (exceeds limit of %d)", len(r.File), opts.maxEntries)
-	}
-
-	type cand struct {
-		f     *zip.File
-		leaf  string
-		score int
-	}
+	entriesLeft := opts.maxEntries
+	nestedBytesLeft := opts.maxNestedBytes
 	var (
-		cands          []cand
+		cands          []zipCandidate
 		rejectedPolicy int
 	)
-	for _, f := range r.File {
-		isDir, err := validateZipEntryMode(f)
-		if err != nil {
-			return ExtractedAPK{}, err
-		}
-		leaf, err := validateZipEntryPath(f.Name, isDir)
-		if err != nil {
-			return ExtractedAPK{}, err
-		}
-		if isDir {
-			continue
-		}
 
-		lower := strings.ToLower(leaf)
-		isAPK := strings.HasSuffix(lower, ".apk")
-		matchesPattern := !isAPK && filePattern != "" && matchGlobFold(filePattern, leaf)
-		if !isAPK && !matchesPattern {
-			continue
+	var scanEntries func(files []*zip.File, depth int) error
+	scanEntries = func(files []*zip.File, depth int) error {
+		if len(files) > entriesLeft {
+			return fmt.Errorf("zip archive has more than %d entries (exceeds limit of %d)", opts.maxEntries, opts.maxEntries)
 		}
-		if !score.AllowedByPolicy(leaf, p, dev) {
-			rejectedPolicy++
-			continue
+		entriesLeft -= len(files)
+
+		for _, f := range files {
+			isDir, err := validateZipEntryMode(f)
+			if err != nil {
+				return err
+			}
+			leaf, err := validateZipEntryPath(f.Name, isDir)
+			if err != nil {
+				return err
+			}
+			if isDir {
+				continue
+			}
+
+			lower := strings.ToLower(leaf)
+			if opts.excludePattern != "" && matchAnyGlobFold(opts.excludePattern, leaf) {
+				continue
+			}
+
+			// Nested .zip archive inspection through the same hardened pipeline.
+			if strings.HasSuffix(lower, ".zip") && depth < opts.maxNestedDepth {
+				capBytes := opts.maxNestedBytes
+				if nestedBytesLeft < capBytes {
+					capBytes = nestedBytesLeft
+				}
+				if capBytes <= 0 || f.UncompressedSize64 > uint64(capBytes) {
+					return fmt.Errorf("nested zip %q exceeds size limit (%d bytes)", sanitizeDisplayPath(f.Name), opts.maxNestedBytes)
+				}
+				rc, oerr := f.Open()
+				if oerr != nil {
+					return fmt.Errorf("opening nested zip %q: %w", sanitizeDisplayPath(f.Name), oerr)
+				}
+				var nbuf bytes.Buffer
+				n, cerr := copyBounded(&nbuf, rc, capBytes)
+				_ = rc.Close()
+				if cerr != nil {
+					return fmt.Errorf("reading nested zip %q: %w", sanitizeDisplayPath(f.Name), cerr)
+				}
+				if uint64(n) != f.UncompressedSize64 {
+					return fmt.Errorf("nested zip %q size mismatch (read %d bytes, header declared %d)",
+						sanitizeDisplayPath(f.Name), n, f.UncompressedSize64)
+				}
+				nestedBytesLeft -= n
+				nr, zerr := openZipBytesReader(nbuf.Bytes())
+				if zerr != nil {
+					return fmt.Errorf("corrupt nested zip %q: %w", sanitizeDisplayPath(f.Name), zerr)
+				}
+				if err := scanEntries(nr.File, depth+1); err != nil {
+					return err
+				}
+				continue
+			}
+
+			isAPK := strings.HasSuffix(lower, ".apk")
+			matchesPattern := !isAPK && filePattern != "" && matchAnyGlobFold(filePattern, leaf)
+			if isAPK && filePattern != "" && !strings.EqualFold(strings.TrimSpace(filePattern), "*.apk") && !matchAnyGlobFold(filePattern, leaf) {
+				continue
+			}
+			if !isAPK && !matchesPattern {
+				continue
+			}
+			if !score.AllowedByPolicy(leaf, p, dev) {
+				rejectedPolicy++
+				continue
+			}
+			sc := score.APKRank(leaf, p, dev)
+			if !isAPK {
+				sc -= 20 // slight penalty for non-.apk files matched by pattern
+			}
+			cands = append(cands, zipCandidate{f: f, leaf: leaf, score: sc})
 		}
-		sc := score.APKRank(leaf, p, dev)
-		if !isAPK {
-			sc -= 20 // slight penalty for non-.apk files matched by pattern
-		}
-		cands = append(cands, cand{f: f, leaf: leaf, score: sc})
+		return nil
+	}
+
+	if err := scanEntries(r.File, 0); err != nil {
+		return ExtractedAPK{}, err
 	}
 
 	if len(cands) == 0 {
@@ -918,7 +1147,10 @@ func evalSymlinksAllowMissing(absPath string) (string, error) {
 // matchGlobFold is path.Match against a lowercased leaf name and pattern,
 // falling back to substring match only when pattern has invalid glob syntax.
 func matchGlobFold(pattern, name string) bool {
-	p := strings.ToLower(pattern)
+	p := strings.ToLower(strings.TrimSpace(pattern))
+	if p == "" {
+		return false
+	}
 	n := strings.ToLower(name)
 	ok, err := path.Match(p, n)
 	if err != nil {
@@ -926,6 +1158,169 @@ func matchGlobFold(pattern, name string) bool {
 		return sub != "" && strings.Contains(n, sub)
 	}
 	return ok
+}
+
+// matchAnyGlobFold matches name against a comma-separated list of globs.
+func matchAnyGlobFold(patterns, name string) bool {
+	for _, part := range strings.Split(patterns, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" && matchGlobFold(part, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// RankedReleaseAsset pairs a ReleaseAsset with its parent Release metadata and
+// computed score/policy flags.
+type RankedReleaseAsset struct {
+	ReleaseTag  string
+	ReleaseName string
+	PublishedAt time.Time
+	Prerelease  bool
+	HTMLURL     string
+	Asset       ReleaseAsset
+}
+
+// RankReleaseAssets scores .apk and .zip assets across recent GitHub Releases
+// using the exact same architecture/variant policy as workflow artifacts.
+func RankReleaseAssets(rels []Release, artifactPattern, filePattern, excludePattern string, p score.Prefs, dev score.Device) []RankedReleaseAsset {
+	var out []RankedReleaseAsset
+	for _, rel := range rels {
+		for _, a := range rel.Assets {
+			if validateSafeLeafName(a.Name) != nil {
+				continue
+			}
+			low := strings.ToLower(a.Name)
+			isAPK := strings.HasSuffix(low, ".apk")
+			isZip := strings.HasSuffix(low, ".zip")
+			matchesFile := filePattern != "" && matchAnyGlobFold(filePattern, a.Name)
+			if !isAPK && !isZip && !matchesFile {
+				continue
+			}
+			if artifactPattern != "" && !matchAnyGlobFold(artifactPattern, a.Name) {
+				continue
+			}
+			if excludePattern != "" && matchAnyGlobFold(excludePattern, a.Name) {
+				continue
+			}
+			a.Score = score.APKRank(a.Name, p, dev)
+			if isZip {
+				a.Score -= 5 // direct .apk beats a .zip of equal rank
+			}
+			a.Rejected = !score.AllowedByPolicy(a.Name, p, dev)
+			out = append(out, RankedReleaseAsset{
+				ReleaseTag:  rel.TagName,
+				ReleaseName: rel.Name,
+				PublishedAt: rel.PublishedAt,
+				Prerelease:  rel.Prerelease,
+				HTMLURL:     rel.HTMLURL,
+				Asset:       a,
+			})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Asset.Rejected != out[j].Asset.Rejected {
+			return !out[i].Asset.Rejected
+		}
+		if out[i].PublishedAt.Equal(out[j].PublishedAt) {
+			return out[i].Asset.Score > out[j].Asset.Score
+		}
+		if out[i].Asset.Score != out[j].Asset.Score {
+			return out[i].Asset.Score > out[j].Asset.Score
+		}
+		return out[i].PublishedAt.After(out[j].PublishedAt)
+	})
+	return out
+}
+
+// FetchReleaseAPK downloads (or reuses cached) a GitHub Release asset, verifies
+// any published SHA-256 digest, and if the asset is a .zip archive extracts the
+// best matching APK through the single hardened extraction pipeline.
+func FetchReleaseAPK(repo string, asset ReleaseAsset, outDir, filePattern, excludePattern string, allowCache bool, p score.Prefs, dev score.Device, prog Progress) (ExtractedAPK, error) {
+	resolved, _, err := DownloadReleaseAssetCached(repo, asset, outDir, allowCache, prog)
+	if err != nil {
+		return ExtractedAPK{}, err
+	}
+	ds := DigestStatusFor(asset.Digest)
+	if strings.HasSuffix(strings.ToLower(asset.Name), ".zip") {
+		apkOut, xerr := ExtractBestAPKFiltered(resolved, outDir, filePattern, excludePattern, p, dev)
+		if !allowCache {
+			_ = os.Remove(resolved)
+		}
+		if xerr != nil {
+			return ExtractedAPK{}, xerr
+		}
+		apkOut.DigestStatus = ds
+		apkOut.Meta.DigestStatus = ds
+		return apkOut, nil
+	}
+
+	fi, statErr := os.Lstat(resolved)
+	if statErr != nil || !fi.Mode().IsRegular() {
+		return ExtractedAPK{}, fmt.Errorf("downloaded release asset %q is not a regular file", resolved)
+	}
+	meta, _ := apk.Inspect(resolved)
+	meta.DigestStatus = ds
+	return ExtractedAPK{
+		Path:         resolved,
+		Name:         filepath.Base(resolved),
+		Size:         fi.Size(),
+		Score:        asset.Score,
+		Candidate:    true,
+		Meta:         meta,
+		DigestStatus: ds,
+	}, nil
+}
+
+// PruneAPKCache keeps at most keepCount older regular .apk/.zip files in apkDir
+// (newest mtime first), never touching symlinks, directories, or any path listed
+// in protect. A negative keepCount disables pruning.
+func PruneAPKCache(apkDir string, keepCount int, protect ...string) {
+	if keepCount < 0 {
+		return
+	}
+	entries, err := os.ReadDir(apkDir)
+	if err != nil {
+		return
+	}
+	protected := make(map[string]bool, len(protect))
+	for _, p := range protect {
+		if p != "" {
+			if abs, aerr := filepath.Abs(p); aerr == nil {
+				protected[abs] = true
+			}
+			protected[filepath.Clean(p)] = true
+		}
+	}
+
+	type cachedEntry struct {
+		path  string
+		mtime time.Time
+	}
+	var candidates []cachedEntry
+	for _, de := range entries {
+		full := filepath.Join(apkDir, de.Name())
+		abs, _ := filepath.Abs(full)
+		if protected[full] || (abs != "" && protected[abs]) {
+			continue
+		}
+		low := strings.ToLower(de.Name())
+		if !strings.HasSuffix(low, ".apk") && !strings.HasSuffix(low, ".zip") {
+			continue
+		}
+		fi, lerr := os.Lstat(full)
+		if lerr != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		candidates = append(candidates, cachedEntry{path: full, mtime: fi.ModTime()})
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].mtime.After(candidates[j].mtime)
+	})
+	for i := keepCount; i < len(candidates); i++ {
+		_ = os.Remove(candidates[i].path)
+	}
 }
 
 // HumanBytes is exported for the UI.

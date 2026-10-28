@@ -189,14 +189,22 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "d":
 		if m.focus == PanelArtifacts {
-			if a, ok := m.cursorArtifact(); ok {
+			if m.usingReleaseAssets() {
+				if ra, ok := m.cursorReleaseAsset(); ok {
+					m.selectedArtID = -ra.Asset.ID
+				}
+			} else if a, ok := m.cursorArtifact(); ok {
 				m.selectedArtID = a.ID
 			}
 		}
 		return m, m.requestDownload(false)
 	case "i":
 		if m.focus == PanelArtifacts {
-			if a, ok := m.cursorArtifact(); ok {
+			if m.usingReleaseAssets() {
+				if ra, ok := m.cursorReleaseAsset(); ok {
+					m.selectedArtID = -ra.Asset.ID
+				}
+			} else if a, ok := m.cursorArtifact(); ok {
 				m.selectedArtID = a.ID
 			}
 		}
@@ -632,8 +640,41 @@ func (m *Model) askRemoveRepo(repo string) {
 	m.modal = ModalConfirm
 }
 
-// requestDownload asks what to do with the selected artifact.
+// requestDownload asks what to do with the selected artifact or release asset.
 func (m *Model) requestDownload(withInstall bool) tea.Cmd {
+	if m.usingReleaseAssets() {
+		ra, ok := m.selectedReleaseAsset()
+		if !ok {
+			if m.haveDownload && withInstall {
+				return m.startInstall(m.downloadedAPK.Path)
+			}
+			m.toastf("select a release asset first (Tab to Artifacts)")
+			return nil
+		}
+		opts := []string{"Download", "Cancel"}
+		body := []string{
+			fmt.Sprintf("Download  %s", m.st.Bold.Render(ra.Asset.Name)),
+			fmt.Sprintf("release   %s", ra.ReleaseTag),
+			fmt.Sprintf("size      %s", humanSize(ra.Asset.Size)),
+		}
+		if ra.Asset.Rejected {
+			body = append(body, m.st.Warn.Render("warning: this does not match your arch/variant policy"))
+		}
+		if m.dev.CanInstall {
+			opts = []string{"Download", "Download & Install", "Cancel"}
+		}
+		m.confirm = components.Confirm{
+			Title:   "Confirm download",
+			Body:    body,
+			Options: opts,
+		}
+		if withInstall {
+			m.confirm.Cursor = 1
+		}
+		m.modal = ModalConfirm
+		return nil
+	}
+
 	art, ok := m.selectedArtifact()
 	if !ok {
 		if m.haveDownload && withInstall {
