@@ -54,8 +54,9 @@ func TestDashboardRenders(t *testing.T) {
 	m := newTestModel()
 	m = seedRuns(m)
 	m = seedArtifacts(m)
+	m.focus = PanelRuns
 	v := m.View()
-	for _, want := range []string{"ghapk", "acme/rocket", "Repositories", "Runs", "fix login", "Artifacts", "Device", "@tester"} {
+	for _, want := range []string{"ghapk", "acme/rocket", "Builds", "fix login", "Artifacts", "Details", "Device", "@tester"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("view missing %q", want)
 		}
@@ -75,13 +76,12 @@ func TestKeyNavigation(t *testing.T) {
 	m = seedRuns(m)
 	m = seedArtifacts(m)
 	var mm tea.Model = m
-	// tab through panels
-	for range 3 {
-		mm, _ = mm.Update(keyOf("tab"))
-	}
+	// Select Builds, then move into its artifact list.
+	mm, _ = mm.Update(keyOf("tab"))
+	mm, _ = mm.Update(keyOf("enter"))
 	mo := mm.(Model)
 	if mo.focus != PanelArtifacts {
-		t.Errorf("after 3 tabs focus = %v, want Artifacts", mo.focus)
+		t.Errorf("after entering Builds focus = %v, want Artifacts", mo.focus)
 	}
 	// move down in artifacts
 	mm, _ = mo.Update(key("j"))
@@ -145,10 +145,10 @@ func TestHelpAndSettings(t *testing.T) {
 
 func TestCompactLayout(t *testing.T) {
 	m := newTestModel()
-	mm, _ := m.Update(tea.WindowSizeMsg{Width: 70, Height: 26})
+	mm, _ := m.Update(tea.WindowSizeMsg{Width: 48, Height: 26})
 	m = mm.(Model)
 	if !m.compact {
-		t.Fatal("width 70 should switch to compact layout")
+		t.Fatal("width 48 should switch to compact layout")
 	}
 	m = seedRuns(m)
 	v := m.View()

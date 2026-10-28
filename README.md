@@ -112,26 +112,30 @@ go install github.com/ThatOn3Gu7/ghapk@latest
 `ghapk` is built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) and supports both **keyboard navigation** and **mouse / touch gestures**:
 
 ```
-╭─ Repositories ────────╮╭─ Runs  (main) ────────────────╮╭─ Artifacts ────────────────────────╮
-│ ▶ ThatOn3Gu7/Nazo     ││  ✓ #42  feat: block+pipe logo ││ ★ app-arm64-v8a-debug.apk   14.2 MB │
-│   ThatOn3Gu7/ghapk    ││  ✓ #41  refactor: centering   ││   app-universal-debug.apk   20.1 MB │
-│   acme/mobile-app     ││  ✗ #40  fix build script      ││   mapping-release.txt        1.1 MB │
-╰───────────────────────╯╰───────────────────────────────╯╰────────────────────────────────────╯
-╭─ Workflows ───────────╮╭─ Device Info ─────────────────╮╭─ Artifact Details ─────────────────╮
-│ ▶ ◆ All Workflows     ││ Model:   Pixel 7 Pro          ││ Name:   app-arm64-v8a-debug.apk     │
-│   Build APK (CI)      ││ ABI:     arm64-v8a            ││ Score:  150 (optimal device match)  │
-│   Nightly Release     ││ SDK:     34 (Android 14)      ││ Action: [d] Download  [i] Install   │
-╰───────────────────────╯╰───────────────────────────────╯╰────────────────────────────────────╯
+ 1 Repos   2 Builds   3 Flows   4 Device
+╭─ Builds ────────────────────╮╭─ Artifacts ────────────────────────────╮
+│ ✓ #42 feat: block+pipe logo ││ ✓ app-arm64-v8a-debug       14.2 MB  │
+│ ✓ #41 fix: centering        ││ · app-universal-debug       20.1 MB  │
+│ ✗ #40 refactor: split       │╰───────────────────────────────────────╯
+│                             │╭─ Details ──────────────────────────────╮
+│                             ││ feat: block+pipe logo                 │
+│                             ││ Result    ✓ success                   │
+│                             ││ Build     #42                         │
+│                             ││ Branch    main                        │
+│                             ││ Workflow  Build APK                   │
+│                             ││                                       │
+│                             ││ Install Download Open                 │
+╰─────────────────────────────╯╰───────────────────────────────────────╯
 ```
 
 | Key | Action |
 | :--- | :--- |
-| `Tab` / `Shift+Tab` | Cycle through panels |
-| `1` – `6` | Jump directly to a panel |
+| `Tab` / `Shift+Tab` | Cycle through screens |
+| `1` – `4` | Jump to Repos, Builds, Flows, or Device |
 | `↑` `↓` / `j` `k` | Move cursor in the current list |
 | `g` / `G` | Jump to top / bottom |
 | `Ctrl+D` / `Ctrl+U` | Half-page down / up |
-| `Enter` | Select repository, filter workflow, view details |
+| `Enter` / `→` | Open a build’s artifacts; Enter on an artifact offers installation |
 | **Mouse / Touch** | Tap to focus & select item; scroll wheel or drag to scroll |
 | `d` | Download selected artifact to local cache |
 | `i` | Download and immediately launch installer on device |
@@ -147,7 +151,7 @@ go install github.com/ThatOn3Gu7/ghapk@latest
 | `?` | Toggle help overlay |
 | `q` / `Ctrl+C` | Clean exit (restores terminal state) |
 
-*Note for mobile users:* On narrow screens (< 96 columns), `ghapk` automatically switches to a compact tabbed view designed specifically for portrait phones.
+*Note for mobile users:* Below 64 columns, Builds shows the list first. Tap a build or press `→` to see its artifacts and details; tap the top border or press `←` to go back.
 
 ---
 

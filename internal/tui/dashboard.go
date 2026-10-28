@@ -16,11 +16,7 @@ func (m Model) renderDashboard() string {
 	bodyH := m.height - 2 // header + status
 
 	var body string
-	if m.compact {
-		body = m.renderCompact(bodyH)
-	} else {
-		body = m.renderGrid(bodyH)
-	}
+	body = m.renderCompact(bodyH)
 	return header + "\n" + body + "\n" + status
 }
 
@@ -140,6 +136,9 @@ func (m Model) renderStatusBar() string {
 			add("d", "download")
 			add("i", "install")
 		case PanelRuns:
+			add("→", "artifacts")
+			add("d", "download")
+			add("i", "install")
 			add("o", "open")
 		}
 		add("tab", "panels")
@@ -168,59 +167,24 @@ func (m Model) toastIfFresh() string {
 
 // ───────────────────────────── layouts ─────────────────────────────
 
-func (m Model) renderGrid(h int) string {
-	// geometry comes from panelRects so mouse hit-testing stays in sync
-	rs := m.panelRects()
-	pl := []string{
-		m.panel(PanelRepos, rs[PanelRepos].w, rs[PanelRepos].h,
-			m.reposContent(rs[PanelRepos].w, rs[PanelRepos].h, &m)),
-		m.panel(PanelWorkflows, rs[PanelWorkflows].w, rs[PanelWorkflows].h,
-			m.workflowsContent(rs[PanelWorkflows].w, rs[PanelWorkflows].h, &m)),
-	}
-	pm := []string{
-		m.panel(PanelRuns, rs[PanelRuns].w, rs[PanelRuns].h,
-			m.runsContent(rs[PanelRuns].w, rs[PanelRuns].h, &m)),
-		m.panel(PanelDevice, rs[PanelDevice].w, rs[PanelDevice].h,
-			m.deviceContent(rs[PanelDevice].w, rs[PanelDevice].h, &m)),
-	}
-	pr := []string{
-		m.panel(PanelArtifacts, rs[PanelArtifacts].w, rs[PanelArtifacts].h,
-			m.artsContent(rs[PanelArtifacts].w, rs[PanelArtifacts].h, &m)),
-	}
-	left := lipgloss.JoinVertical(lipgloss.Left, pl...)
-	mid := lipgloss.JoinVertical(lipgloss.Left, pm...)
-	right := lipgloss.JoinVertical(lipgloss.Left, pr...)
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, mid, right)
-}
-
-// compact layout for narrow terminals (phones in portrait): tab bar + one
-// full-width panel + a slim details strip.
+// renderCompact displays one screen beneath the tab bar. Builds has its own
+// responsive three-box layout; the other screens retain their existing content.
 func (m Model) renderCompact(h int) string {
 	st := m.st
-	// tab bar: "N Name count" — the count is the REAL item count so the
-	// tab number and the border badge always agree with each other.
-	// padded tabs; if the bar would overflow, fall back to tight tabs so
-	// every panel stays reachable on narrow phones.
-	padAll := func(pad bool) string {
-		var ts []string
-		for _, p := range FocusOrder {
-			lbl := m.compactTabLabel(p)
-			if pad {
-				lbl = " " + lbl + " "
-			}
-			if p == m.focus {
-				ts = append(ts, st.Header.Render(lbl))
-			} else {
-				ts = append(ts, st.Muted.Render(lbl))
-			}
+	labels, pad := m.tabLabels()
+	var tabs []string
+	for _, p := range FocusOrder {
+		lbl := labels[p]
+		if pad {
+			lbl = " " + lbl + " "
 		}
-		return strings.Join(ts, " ")
+		if p == m.activeTab() {
+			tabs = append(tabs, st.Header.Render(lbl))
+		} else {
+			tabs = append(tabs, st.Muted.Render(lbl))
+		}
 	}
-	tabBar := padAll(true)
-	if components.VisibleWidth(tabBar) > m.width {
-		tabBar = padAll(false)
-	}
-	tabBar = components.Clamp(tabBar, m.width)
+	tabBar := components.Clamp(strings.Join(tabs, " "), m.width)
 
 	bodyH := h - 1
 	var content string
@@ -230,9 +194,9 @@ func (m Model) renderCompact(h int) string {
 	case PanelWorkflows:
 		content = m.workflowsContent(m.width, bodyH, &m)
 	case PanelRuns:
-		content = m.runsContent(m.width, bodyH, &m)
+		return tabBar + "\n" + m.renderBuilds()
 	case PanelArtifacts:
-		content = m.artsContent(m.width, bodyH, &m)
+		return tabBar + "\n" + m.renderBuilds()
 	default:
 		content = m.deviceContent(m.width, bodyH, &m)
 	}
@@ -240,7 +204,25 @@ func (m Model) renderCompact(h int) string {
 	return tabBar + "\n" + p
 }
 
-// compactTabLabel is the compact tab caption, e.g. "3 Runs 30" — hotkey,
+// tabLabels keeps all tabs reachable even on a narrow portrait phone.
+func (m Model) tabLabels() (map[PanelID]string, bool) {
+	labels := map[PanelID]string{}
+	total := len(FocusOrder) - 1
+	for _, p := range FocusOrder {
+		labels[p] = m.compactTabLabel(p)
+		total += components.VisibleWidth(labels[p])
+	}
+	if total+2*len(FocusOrder) <= m.width {
+		return labels, true
+	}
+	if total <= m.width {
+		return labels, false
+	}
+	labels = map[PanelID]string{PanelRepos: "1 Repo", PanelRuns: "2 Build", PanelWorkflows: "3 Flow", PanelDevice: "4 Dev"}
+	return labels, false
+}
+
+// compactTabLabel is the tab caption, e.g. "2 Builds (30)" — hotkey,
 // short name, and the live item count. Device/Details carry no count.
 func (m Model) compactTabLabel(p PanelID) string {
 	n := ""
@@ -282,7 +264,7 @@ func panelShort(p PanelID) string {
 	case PanelWorkflows:
 		return "Flows"
 	case PanelRuns:
-		return "Runs"
+		return "Builds"
 	case PanelArtifacts:
 		return "Artif"
 	default:

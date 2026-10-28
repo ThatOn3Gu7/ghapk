@@ -18,37 +18,20 @@ func (r rect) contains(px, py int) bool {
 
 // panelRects computes the exact geometry the dashboard renders with, so
 // mouse hit-testing can never drift from what is on screen. The layout
-// formulas here are the single source of truth — renderGrid uses them too.
+// Builds uses the same geometry for rendering and hit-testing.
 func (m Model) panelRects() map[PanelID]rect {
-	if m.compact {
-		bodyH := m.height - 2 - 1 // header + status + tab bar
-		return map[PanelID]rect{
-			m.focus: {0, 2, m.width, bodyH},
+	if m.activeTab() == PanelRuns {
+		l := m.buildsLayout()
+		out := map[PanelID]rect{}
+		if l.runs.w > 0 {
+			out[PanelRuns] = l.runs
 		}
+		if l.arts.w > 0 {
+			out[PanelArtifacts] = l.arts
+		}
+		return out
 	}
-	h := m.height - 2 // header + status
-	leftW := 26
-	if m.width > 130 {
-		leftW = 32
-	}
-	midW := (m.width - leftW) * 2 / 5
-	rightW := m.width - leftW - midW
-
-	lTop := h * 1 / 2
-	if lTop < 6 {
-		lTop = 6
-	}
-	lBot := h - lTop
-	mTop := runsPanelH(h)
-	mBot := h - mTop
-
-	return map[PanelID]rect{
-		PanelRepos:     {0, 1, leftW, lTop},
-		PanelWorkflows: {0, 1 + lTop, leftW, lBot},
-		PanelRuns:      {leftW, 1, midW, mTop},
-		PanelDevice:    {leftW, 1 + mTop, midW, mBot},
-		PanelArtifacts: {leftW + midW, 1, rightW, h},
-	}
+	return map[PanelID]rect{m.focus: {0, 2, m.width, m.height - 3}}
 }
 
 // compactTabRects gives the clickable spans of the compact tab bar.
@@ -56,45 +39,17 @@ func (m Model) panelRects() map[PanelID]rect {
 // where label comes from compactTabLabel (hotkey + name + live count).
 func (m Model) compactTabRects() map[PanelID]rect {
 	out := map[PanelID]rect{}
+	labels, padded := m.tabLabels()
 	x := 0
 	for _, p := range FocusOrder {
-		w := len(m.compactTabLabel(p)) + 2 // one space padding on each side
+		w := components.VisibleWidth(labels[p])
+		if padded {
+			w += 2
+		}
 		out[p] = rect{x, 1, w, 1}
-		x += w + 1 // join space
+		x += w + 1
 	}
 	return out
-}
-
-// splitFor returns the list/sub-box heights of a split panel (outer h).
-func (m Model) splitFor(p PanelID, r rect) (listH, subH int) {
-	switch p {
-	case PanelRepos:
-		bannerH, lH := reposSplit(r.h, len(m.repos.Items), r.w)
-		return lH, bannerH
-	case PanelWorkflows:
-		return flowsSplit(r.h, len(m.workflows.Items))
-	case PanelRuns:
-		return runsSplit(r.h, len(m.runs.Items))
-	case PanelArtifacts:
-		count := 0
-		if rRun, ok := m.selectedRun(); ok {
-			count = len(m.runCache[rRun.ID])
-		}
-		return artSplit(r.h, count)
-	}
-	return r.h - 2, 0
-}
-
-// panelCenterTop is the vertical offset of the list inside its panel.
-func panelCenterTop(p PanelID, r rect, l *components.List) int { return 0 }
-
-// panelListShown mirrors the visible lines of the list half of a panel.
-func (m Model) panelListShown(p PanelID, r rect, l *components.List) int {
-	listH, subH := m.splitFor(p, r)
-	if subH > 1 && listH > 0 {
-		return listH
-	}
-	return r.h - 2
 }
 
 // listOf returns the model's list for a panel, or nil for non-list panels.
@@ -120,6 +75,21 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.modal != ModalNone {
 		return m.handleModalMouse(msg)
+	}
+
+	if msg.Type == tea.MouseLeft {
+		for p, r := range m.compactTabRects() {
+			if r.contains(msg.X, msg.Y) {
+				m.focus = p
+				m.wfYAMLFocused = false
+				m.buildDetail = false
+				m.updateListBounds()
+				return m, nil
+			}
+		}
+	}
+	if m.activeTab() == PanelRuns {
+		return m.handleBuildMouse(msg)
 	}
 
 	switch msg.Type {
@@ -311,7 +281,12 @@ func (m Model) handleModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if len(buttons) == 0 {
 		return m, nil
 	}
-	idx := m.modalButtonHit(msg.X, msg.Y, buttons)
+	idx := -1
+	if m.modal == ModalConfirm {
+		idx = m.confirmButtonHit(msg.X, msg.Y, buttons)
+	} else {
+		idx = m.modalButtonHit(msg.X, msg.Y, buttons)
+	}
 	if idx < 0 {
 		return m, nil
 	}
@@ -326,6 +301,37 @@ func (m Model) handleModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	return m, nil
+}
+
+// Confirm buttons can wrap onto multiple lines on phones. Hit-test the
+// rendered labels rather than assuming every action is on the bottom row.
+func (m Model) confirmButtonHit(px, py int, buttons []string) int {
+	lines := strings.Split(m.View(), "\n")
+	bottom := -1
+	for y := len(lines) - 1; y >= 0; y-- {
+		p := components.StripANSI(lines[y])
+		if strings.Contains(p, "╰─") || strings.Contains(p, "+-") {
+			bottom = y
+			break
+		}
+	}
+	if py < bottom-len(buttons) || py >= bottom || py < 0 || py >= len(lines) {
+		return -1
+	}
+	line := components.StripANSI(lines[py])
+	best, bestLen := -1, 0
+	for i, label := range buttons {
+		start := strings.Index(line, label)
+		if start < 0 {
+			continue
+		}
+		x := components.VisibleWidth(line[:start])
+		w := components.VisibleWidth(label)
+		if px >= x && px < x+w && w > bestLen {
+			best, bestLen = i, w
+		}
+	}
+	return best
 }
 
 // modalButtonHit returns the 0-based index of the modal button at screen cell
@@ -365,4 +371,3 @@ func (m Model) modalButtonHit(px, py int, buttons []string) int {
 	}
 	return -1
 }
-

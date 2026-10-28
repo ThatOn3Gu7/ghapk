@@ -24,10 +24,10 @@ var (
 	KeySuspend     = "ctrl+z"
 )
 
-// FocusOrder is the tab-cycle order of dashboard panels. Runs carries its
-// own detail sub-pane, so the old separate Details panel is gone.
+// FocusOrder is the tab-cycle order. Artifacts are a focus within Builds,
+// not a separate screen.
 var FocusOrder = []PanelID{
-	PanelRepos, PanelWorkflows, PanelRuns, PanelArtifacts, PanelDevice,
+	PanelRepos, PanelRuns, PanelWorkflows, PanelDevice,
 }
 
 // PanelID identifies a dashboard panel.
@@ -46,7 +46,7 @@ const (
 var PanelNames = map[PanelID]string{
 	PanelRepos:     "Repositories",
 	PanelWorkflows: "Workflows",
-	PanelRuns:      "Runs",
+	PanelRuns:      "Builds",
 	PanelArtifacts: "Artifacts",
 	PanelDevice:    "Device",
 }
