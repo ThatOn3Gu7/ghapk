@@ -1166,18 +1166,20 @@ func (m Model) deviceContent(w, h int, mm *Model) string {
 		route := "unavailable"
 		switch d.InstallVia {
 		case "termux-open":
-			route = "termux-open"
+			route = "termux-open (prompt)"
 		case "am":
-			route = "am start (system viewer)"
+			route = "am start (prompt)"
 		case "adb":
-			route = "adb install"
-		case "xdg-open":
-			route = "xdg-open"
+			if d.ADBConnected {
+				route = "adb install (connected)"
+			} else {
+				route = "adb install (no device)"
+			}
 		}
-		if d.CanInstall || route != "unavailable" {
+		if d.CanInstall && route != "unavailable" {
 			kv("method", route)
 		} else {
-			kv("method", st.Warn.Render("none — desktop host"))
+			kv("method", st.Warn.Render("none — install adb or transfer APK"))
 		}
 		if m.instPkg != "" {
 			if m.instFound {

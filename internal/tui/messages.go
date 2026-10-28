@@ -87,7 +87,10 @@ type DownloadDoneMsg struct {
 }
 
 type InstallLogMsg struct{ Line string }
-type InstallDoneMsg struct{ Err error }
+type InstallDoneMsg struct {
+	Result device.InstallResult
+	Err    error
+}
 
 type ZipInspectedMsg struct {
 	Lines []string
@@ -264,8 +267,8 @@ func installApkCmd(path string, allowDowngrade bool, logCh chan tea.Msg) tea.Cmd
 			default:
 			}
 		}
-		err := device.Install(path, allowDowngrade, logf)
-		logCh <- InstallDoneMsg{Err: err}
+		res, err := device.InstallAPK(path, allowDowngrade, logf)
+		logCh <- InstallDoneMsg{Result: res, Err: err}
 		return nil
 	}
 }

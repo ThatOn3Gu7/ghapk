@@ -497,12 +497,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case InstallDoneMsg:
 		if m.task != nil {
-			m.task.installDone(msg.Err)
+			m.task.installDone(msg.Result, msg.Err)
 		}
-		if msg.Err != nil {
-			m.toastf("installer: %s", shortErr(msg.Err))
-		} else {
-			m.toastf("handed to the installer")
+		switch {
+		case msg.Err != nil || msg.Result.Outcome == device.OutcomeFailed:
+			if msg.Err != nil {
+				m.toastf("install failed: %s", shortErr(msg.Err))
+			} else {
+				m.toastf("install failed")
+			}
+		case msg.Result.Outcome == device.OutcomeLaunched:
+			m.toastf("installer launched (%s) — confirm on device", msg.Result.Via)
+		default:
+			m.toastf("installed via %s ✓", msg.Result.Via)
 		}
 		if m.instPkg != "" {
 			return m, queryPackageCmd(m.instPkg)

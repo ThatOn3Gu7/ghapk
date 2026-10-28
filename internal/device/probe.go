@@ -1,290 +1,332 @@
+// Package device probes the local system and talks to an Android installer.
+//
+// ghapk runs in two habitats:
+//   - on the Android phone itself inside Termux (the primary target)
+//   - on a desktop Linux/macOS/Windows machine, downloading only or
+//     pushing over adb
+//
+// Every probe degrades quietly when a tool is missing: on a desktop we
+// still know our arch and leave SDK=0 so scoring falls back cleanly.
+// Desktop file openers such as xdg-open are NEVER treated as APK installers.
 package device
 
 import (
-	"bufio"
-	"encoding/json"
-	"fmt"
+	"context"
 	"os"
-	"path/filepath"
+	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// ───────────────── general probes (no external tools needed) ─────────────────
-
-func unameLine() string {
-	if runtime.GOOS == "windows" {
-		return "windows " + runtime.GOARCH
-	}
-	out, err := run(3*time.Second, "uname", "-sr")
-	if err != nil || out == "" {
-		return ""
-	}
-	return strings.TrimSpace(out)
+// Info describes the target device as well as we can tell.
+type Info struct {
+	OS           string   // "android" or runtime.GOOS
+	Model        string   // e.g. "Pixel 7", or hostname/kernel on desktop
+	Manufacturer string   // e.g. "Google", or vendor on desktop
+	Release      string   // Android release ("14") or distro/OS version
+	Kernel       string   // kernel release, e.g. "6.6.87"
+	CPUModel     string   // CPU model name
+	Cores        int      // logical CPU count
+	MemTotalMB   int64    // total RAM in MiB
+	MemFreeMB    int64    // available RAM in MiB
+	DiskTotalGB  float64  // storage total in GiB (cache filesystem)
+	DiskFreeGB   float64  // storage free in GiB
+	Uptime       string   // human uptime ("3d 4h")
+	Shell        string   // user's shell basename
+	Terminal     string   // TERM / TERM_PROGRAM
+	ABIs         []string // ordered preference, Android names ("arm64-v8a", ...)
+	SDK          int      // Android API level, 0 if unknown
+	CanInstall   bool     // at least one real Android installer path is available
+	InstallVia   string   // "termux-open", "am", "adb", or ""
+	HasRish      bool     // Shizuku rish shell is available and responsive
+	ADBConnected bool     // adb is present and at least one device is in "device" state
 }
 
-func uptimeLine() string {
-	data, err := os.ReadFile("/proc/uptime")
-	if err == nil {
-		f := strings.Fields(string(data))
-		if len(f) >= 1 {
-			secs, err := strconv.ParseFloat(f[0], 64)
-			if err == nil {
-				return humanUptime(time.Duration(secs) * time.Second)
+// Injectable hooks for deterministic unit testing in package device.
+var (
+	lookPathFn   = exec.LookPath
+	detectOSFn   = detectAndroidEnv
+	probeCmdHook func(ctx context.Context, name string, args ...string) (string, error)
+)
+
+func detectAndroidEnv() bool {
+	if runtime.GOOS == "android" {
+		return true
+	}
+	if p := os.Getenv("PREFIX"); p != "" && strings.Contains(p, "com.termux") {
+		return true
+	}
+	if os.Getenv("TERMUX_VERSION") != "" {
+		return true
+	}
+	return false
+}
+
+// Probe inspects the environment once; fast (<200ms) and safe to call from
+// a goroutine at startup.
+func Probe() Info {
+	in := Info{
+		OS:    runtime.GOOS,
+		Cores: runtime.NumCPU(),
+	}
+
+	onAndroid := detectOSFn()
+	if onAndroid {
+		in.OS = "android"
+		in.Model = getprop("ro.product.model")
+		in.Manufacturer = getprop("ro.product.manufacturer")
+		in.Release = "Android " + getprop("ro.build.version.release")
+		if v, err := strconv.Atoi(getprop("ro.build.version.sdk")); err == nil {
+			in.SDK = v
+		}
+		if list := getprop("ro.product.cpu.abilist"); list != "" {
+			for _, a := range strings.Split(list, ",") {
+				if a = strings.TrimSpace(a); a != "" {
+					in.ABIs = append(in.ABIs, a)
+				}
 			}
 		}
+		in.HasRish = probeRish()
 	}
-	out, err := run(3*time.Second, "uptime")
-	if err != nil {
-		return ""
-	}
-	if i := strings.Index(out, " up "); i >= 0 {
-		s := out[i+4:]
-		if j := strings.Index(s, ","); j > 0 {
-			return strings.TrimSpace(s[:j])
+
+	if len(in.ABIs) == 0 {
+		if a := goarchToABI(runtime.GOARCH); a != "" {
+			in.ABIs = []string{a}
 		}
+	}
+
+	probeHost(&in)
+
+	in.InstallVia = pickInstaller(onAndroid)
+	if in.InstallVia == "adb" || hasPath("adb") {
+		in.ADBConnected = probeADBConnected()
+	}
+	in.CanInstall = in.InstallVia != ""
+	return in
+}
+
+func hasPath(bin string) bool {
+	_, err := lookPathFn(bin)
+	return err == nil
+}
+
+// pickInstaller selects a genuine Android installation or package-installer
+// intent mechanism. Generic desktop openers (such as xdg-open or open) are
+// never treated as APK installers.
+func pickInstaller(onAndroid bool) string {
+	if onAndroid {
+		if hasPath("termux-open") {
+			return "termux-open"
+		}
+		if hasPath("am") {
+			return "am"
+		}
+	}
+	if hasPath("adb") {
+		return "adb"
 	}
 	return ""
 }
 
-func humanUptime(d time.Duration) string {
-	days := int(d.Hours()) / 24
-	hours := int(d.Hours()) % 24
-	mins := int(d.Minutes()) % 60
-	switch {
-	case days > 0:
-		return fmt.Sprintf("%dd %dh", days, hours)
-	case hours > 0:
-		return fmt.Sprintf("%dh %dm", hours, mins)
-	default:
-		return fmt.Sprintf("%dm", mins)
+func probeRish() bool {
+	if !hasPath("rish") {
+		return false
 	}
+	out, err := runShortCmd(2*time.Second, "rish", "-c", "id")
+	return err == nil && strings.Contains(out, "uid=")
 }
 
-func memInfoLine() (totalMB, freeMB int64) {
-	f, err := os.Open("/proc/meminfo")
-	if err != nil {
-		return 0, 0
+func probeADBConnected() bool {
+	if !hasPath("adb") {
+		return false
 	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		fields := strings.Fields(sc.Text())
-		if len(fields) < 2 {
-			continue
-		}
-		kb, err := strconv.ParseInt(fields[1], 10, 64)
-		if err != nil {
-			continue
-		}
-		switch fields[0] {
-		case "MemTotal:":
-			totalMB = kb / 1024
-		case "MemAvailable:":
-			freeMB = kb / 1024
-		}
-		if totalMB > 0 && freeMB > 0 {
-			break
-		}
-	}
-	return
+	out, err := runShortCmd(2*time.Second, "adb", "get-state")
+	return err == nil && strings.TrimSpace(out) == "device"
 }
 
-func cpuModelLine() string {
-	f, err := os.Open("/proc/cpuinfo")
-	if err != nil {
-		return ""
+func runShortCmd(timeout time.Duration, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if probeCmdHook != nil {
+		return probeCmdHook(ctx, name, args...)
 	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := sc.Text()
-		for _, key := range []string{"model name", "Hardware", "Processor"} {
-			if strings.HasPrefix(line, key) {
-				if i := strings.Index(line, ":"); i >= 0 {
-					return strings.TrimSpace(line[i+1:])
+	b, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	return string(b), err
+}
+
+// probeHost fills the cross-platform hardware/OS fields from /proc and env.
+func probeHost(in *Info) {
+	// kernel release
+	if b, err := os.ReadFile("/proc/sys/kernel/osrelease"); err == nil {
+		in.Kernel = strings.TrimSpace(string(b))
+	}
+	// distro name on Linux (when not Android)
+	if in.OS != "android" {
+		if name := readOSRelease(); name != "" {
+			in.Release = name
+		}
+		if in.Model == "" {
+			if b, err := os.ReadFile("/sys/devices/virtual/dmi/id/product_name"); err == nil {
+				m := strings.TrimSpace(string(b))
+				if m != "" && m != "System Product Name" {
+					in.Model = m
 				}
 			}
 		}
-	}
-	return ""
-}
-
-func shellLine() string {
-	sh := os.Getenv("SHELL")
-	if sh == "" {
-		return ""
-	}
-	return filepath.Base(sh)
-}
-
-func termLine() string {
-	if tp := os.Getenv("TERM_PROGRAM"); tp != "" {
-		return tp
-	}
-	if strings.Contains(os.Getenv("PREFIX"), "com.termux") {
-		return "Termux"
-	}
-	if t := os.Getenv("TERM"); t != "" {
-		return t
-	}
-	return ""
-}
-
-func osReleaseLine() string {
-	switch runtime.GOOS {
-	case "windows":
-		return "Windows"
-	case "darwin":
-		out, err := run(3*time.Second, "sw_vers", "-productVersion")
-		if err == nil && out != "" {
-			return "macOS " + out
-		}
-		return "macOS"
-	}
-	// linux-ish: try /etc/os-release
-	data, err := os.ReadFile("/etc/os-release")
-	if err == nil {
-		for _, line := range strings.Split(string(data), "\n") {
-			if strings.HasPrefix(line, "PRETTY_NAME=") {
-				v := strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), "\"")
-				if strings.Contains(os.Getenv("PREFIX"), "com.termux") && !strings.Contains(v, "Termux") {
-					return "Termux / " + v
-				}
-				return v
+		if in.Model == "" {
+			if h, err := os.Hostname(); err == nil {
+				in.Model = h
 			}
 		}
 	}
-	return runtime.GOOS
-}
-
-// diskLine reads total/free bytes of the volume holding $HOME.
-// Returns GiB; zeros when unavailable (windows, odd mounts).
-func diskLine() (totalGB, freeGB float64) {
-	t, f := diskBytes()
-	if t <= 0 {
-		return 0, 0
-	}
-	const gi = 1024.0 * 1024.0 * 1024.0
-	return float64(t) / gi, float64(f) / gi
-}
-
-// ───────────────── fastfetch upgrade ─────────────────
-
-type ffEntry struct {
-	Type   string          `json:"type"`
-	Result json.RawMessage `json:"result"`
-}
-
-func fastfetchJSON() ([]ffEntry, bool) {
-	if !have("fastfetch") {
-		return nil, false
-	}
-	out, err := run(4*time.Second, "fastfetch", "--format", "json")
-	if err != nil || !strings.HasPrefix(out, "[") {
-		return nil, false
-	}
-	var entries []ffEntry
-	if err := json.Unmarshal([]byte(out), &entries); err != nil {
-		return nil, false
-	}
-	return entries, true
-}
-
-// applyFastfetch overlays nicer values fastfetch knows (CPU model, disk…).
-func applyFastfetch(in *Info, entries []ffEntry) {
-	in.Fastfetch = true
-	for _, e := range entries {
-		switch e.Type {
-		case "Host":
-			var r struct {
-				Name string `json:"name"`
-			}
-			if json.Unmarshal(e.Result, &r) == nil && r.Name != "" && in.Model == "" {
-				in.Model = r.Name
-			}
-		case "CPU":
-			var r struct {
-				CPU   string `json:"cpu"`
-				Cores struct {
-					Online int `json:"online"`
-				} `json:"cores"`
-				Temperature any `json:"temperature"`
-			}
-			if json.Unmarshal(e.Result, &r) == nil {
-				if r.CPU != "" {
-					in.CPUModel = r.CPU
-				}
-				if r.Cores.Online > 0 {
-					in.Cores = r.Cores.Online
-				}
-			}
-		case "Kernel":
-			var r struct {
-				Release string `json:"release"`
-			}
-			if json.Unmarshal(e.Result, &r) == nil && r.Release != "" {
-				in.Kernel = r.Release
-			}
-		case "Uptime":
-			// fastfetch json reports an object; format loosely
-			var r struct {
-				Days    int `json:"days"`
-				Hours   int `json:"hours"`
-				Minutes int `json:"minutes"`
-			}
-			if json.Unmarshal(e.Result, &r) == nil && (r.Days|r.Hours|r.Minutes) != 0 {
-				switch {
-				case r.Days > 0:
-					in.Uptime = fmt.Sprintf("%dd %dh", r.Days, r.Hours)
-				case r.Hours > 0:
-					in.Uptime = fmt.Sprintf("%dh %dm", r.Hours, r.Minutes)
-				default:
-					in.Uptime = fmt.Sprintf("%dm", r.Minutes)
-				}
-			}
-		case "Memory":
-			var r struct {
-				Total int64 `json:"total"`
-				Used  int64 `json:"used"`
-			}
-			if json.Unmarshal(e.Result, &r) == nil && r.Total > 0 {
-				in.MemTotalMB = r.Total / 1024 / 1024
-				in.MemFreeMB = r.Total/1024/1024 - r.Used/1024/1024
-			}
-		case "Disk":
-			// result is an array of mounts; take the root one
-			var rs []struct {
-				Bytes struct {
-					Total int64 `json:"total"`
-					Free  int64 `json:"free"`
-				} `json:"bytes"`
-			}
-			if json.Unmarshal(e.Result, &rs) == nil {
-				for _, d := range rs {
-					if d.Bytes.Total > 0 {
-						in.DiskTotalGB = float64(d.Bytes.Total) / 1024 / 1024 / 1024
-						in.DiskFreeGB = float64(d.Bytes.Free) / 1024 / 1024 / 1024
-						break
+	// CPU model
+	if b, err := os.ReadFile("/proc/cpuinfo"); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			for _, key := range []string{"Hardware", "model name", "Processor"} {
+				if strings.HasPrefix(line, key) {
+					if _, v, ok := strings.Cut(line, ":"); ok {
+						if v = strings.TrimSpace(v); v != "" {
+							in.CPUModel = v
+							break
+						}
 					}
 				}
 			}
-		case "Shell":
-			var r struct {
-				PrettyName string `json:"prettyName"`
-			}
-			if json.Unmarshal(e.Result, &r) == nil && r.PrettyName != "" {
-				in.Shell = r.PrettyName
-			}
-		case "Terminal":
-			var r struct {
-				PrettyName string `json:"prettyName"`
-			}
-			if json.Unmarshal(e.Result, &r) == nil && r.PrettyName != "" {
-				in.Terminal = r.PrettyName
+			if in.CPUModel != "" {
+				break
 			}
 		}
 	}
+	// RAM from /proc/meminfo
+	if b, err := os.ReadFile("/proc/meminfo"); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			switch {
+			case strings.HasPrefix(line, "MemTotal:"):
+				in.MemTotalMB = parseMemKB(line) / 1024
+			case strings.HasPrefix(line, "MemAvailable:"):
+				in.MemFreeMB = parseMemKB(line) / 1024
+			}
+		}
+	}
+	// uptime
+	if b, err := os.ReadFile("/proc/uptime"); err == nil {
+		fields := strings.Fields(string(b))
+		if len(fields) > 0 {
+			if secs, err := strconv.ParseFloat(fields[0], 64); err == nil {
+				in.Uptime = humanUptime(int64(secs))
+			}
+		}
+	}
+	// disk space on home/cache via df -k (portable, avoids syscall differences)
+	target := os.Getenv("HOME")
+	if target == "" {
+		target = "."
+	}
+	if out, err := exec.Command("df", "-Pk", target).Output(); err == nil {
+		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+		if len(lines) >= 2 {
+			f := strings.Fields(lines[len(lines)-1])
+			if len(f) >= 4 {
+				tot, _ := strconv.ParseFloat(f[1], 64)
+				avail, _ := strconv.ParseFloat(f[3], 64)
+				in.DiskTotalGB = tot / (1024 * 1024)
+				in.DiskFreeGB = avail / (1024 * 1024)
+			}
+		}
+	}
+	// shell & terminal
+	if sh := os.Getenv("SHELL"); sh != "" {
+		if i := strings.LastIndex(sh, "/"); i >= 0 {
+			sh = sh[i+1:]
+		}
+		in.Shell = sh
+	}
+	term := os.Getenv("TERM_PROGRAM")
+	if term == "" && os.Getenv("TERMUX_VERSION") != "" {
+		term = "termux " + os.Getenv("TERMUX_VERSION")
+	}
+	if term == "" {
+		term = os.Getenv("TERM")
+	}
+	in.Terminal = term
+}
+
+func readOSRelease() string {
+	b, err := os.ReadFile("/etc/os-release")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if v, ok := strings.CutPrefix(line, "PRETTY_NAME="); ok {
+			return strings.Trim(strings.TrimSpace(v), `"'`)
+		}
+	}
+	return ""
+}
+
+func parseMemKB(line string) int64 {
+	for _, f := range strings.Fields(line) {
+		if n, err := strconv.ParseInt(f, 10, 64); err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
+func humanUptime(secs int64) string {
+	d := secs / 86400
+	h := (secs % 86400) / 3600
+	m := (secs % 3600) / 60
+	switch {
+	case d > 0:
+		return strconv.FormatInt(d, 10) + "d " + strconv.FormatInt(h, 10) + "h"
+	case h > 0:
+		return strconv.FormatInt(h, 10) + "h " + strconv.FormatInt(m, 10) + "m"
+	default:
+		return strconv.FormatInt(m, 10) + "m"
+	}
+}
+
+func getprop(key string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "getprop", key).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func goarchToABI(arch string) string {
+	switch arch {
+	case "arm64":
+		return "arm64-v8a"
+	case "arm":
+		return "armeabi-v7a"
+	case "amd64":
+		return "x86_64"
+	case "386":
+		return "x86"
+	}
+	return ""
+}
+
+// Word returns a short human label for the device panel.
+func (in Info) Word() string {
+	if in.OS == "android" {
+		m := in.Model
+		if m == "" {
+			m = "Android"
+		}
+		if len(in.ABIs) > 0 {
+			return m + " · " + in.ABIs[0]
+		}
+		return m
+	}
+	if len(in.ABIs) > 0 {
+		return in.OS + " · " + in.ABIs[0]
+	}
+	return in.OS
 }
