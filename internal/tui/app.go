@@ -40,6 +40,7 @@ const (
 	ModalSettings
 	ModalPickRepo
 	ModalPickBranch
+	ModalPickWorkflow
 	ModalEditRepo
 	ModalConfirm
 	ModalTask
@@ -128,7 +129,11 @@ type Model struct {
 
 	settingsUI *SettingsUI
 
-	repoPicker *RepoPicker
+	repoPicker     *RepoPicker
+	branchPicker   *FilterPicker
+	workflowPicker *FilterPicker
+	cachedUserRepos []ghapi.Repo
+	wfCatalog       []ghapi.Workflow
 
 	branchList components.List
 
@@ -378,9 +383,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case WorkflowsMsg:
 		if msg.Err != nil {
+			if m.modal == ModalPickWorkflow && m.workflowPicker != nil {
+				m.workflowPicker.setOptions(&m, m.buildWorkflowOptions(), msg.Err)
+			}
 			m.toastf("workflows: %s", shortErr(msg.Err))
 			return m, nil
 		}
+		m.wfCatalog = msg.List
 		items := []components.Item{{ID: "", Label: "Any workflow", Rendered: m.st.AccentAlt.Render("◆ Any workflow")}}
 		for _, w := range msg.List {
 			items = append(items, components.Item{ID: w.Name, Label: w.Name})
@@ -388,6 +397,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.workflows.SetItems(items)
 		m.workflows.SelectByID(m.settings.Workflow)
+		if m.modal == ModalPickWorkflow && m.workflowPicker != nil {
+			m.workflowPicker.setOptions(&m, m.buildWorkflowOptions(), nil)
+		}
 		if wf := m.settings.Workflow; wf != "" {
 			found := false
 			for _, it := range m.workflows.Filtered() {
@@ -451,6 +463,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case BranchesMsg:
 		if msg.Err != nil {
+			if m.modal == ModalPickBranch && m.branchPicker != nil {
+				m.branchPicker.setOptions(&m, m.buildBranchOptions(nil), msg.Err)
+			}
 			m.toastf("branches: %s", shortErr(msg.Err))
 			return m, nil
 		}
@@ -461,11 +476,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.branchList.SetItems(items)
 		m.branchList.SelectByID(m.branchSel)
+		if m.modal == ModalPickBranch && m.branchPicker != nil {
+			m.branchPicker.setOptions(&m, m.buildBranchOptions(msg.List), nil)
+		}
 		return m, nil
 
 	case SearchResultsMsg:
 		if m.modal == ModalPickRepo && m.repoPicker != nil {
-			m.repoPicker.setSearch(msg.Query, msg.Hits)
+			m.repoPicker.setSearch(&m, msg.Query, msg.Hits)
+		}
+		return m, nil
+
+	case UserReposMsg:
+		if msg.Err == nil {
+			m.cachedUserRepos = msg.List
+		}
+		if m.modal == ModalPickRepo && m.repoPicker != nil {
+			m.repoPicker.setUserRepos(&m, m.cachedUserRepos)
 		}
 		return m, nil
 
@@ -595,8 +622,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	if m.modal == ModalPickRepo && m.repoPicker != nil {
-		cmd := m.repoPicker.update(msg)
+		cmd := m.repoPicker.update(&m, msg)
 		return m, cmd
+	}
+	if m.modal == ModalPickBranch && m.branchPicker != nil {
+		return m, m.branchPicker.update(msg)
+	}
+	if m.modal == ModalPickWorkflow && m.workflowPicker != nil {
+		return m, m.workflowPicker.update(msg)
 	}
 	if m.modal == ModalTask && m.task != nil {
 		return m, m.task.update(msg)
@@ -670,6 +703,7 @@ func (m *Model) setRepo(repo string, persist bool) {
 	m.wfPaths = map[string]string{}
 	m.wfCache = map[string]string{}
 	m.wfFetching = map[string]bool{}
+	m.wfCatalog = nil
 	m.wfMissToasted = false
 	m.wfScroll = 0
 	m.wfYAMLFocused = false
