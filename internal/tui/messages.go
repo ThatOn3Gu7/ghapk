@@ -22,22 +22,26 @@ type AuthCheckedMsg struct {
 }
 
 type RepoInfoMsg struct {
-	Repo ghapi.Repo
-	Err  error
+	RequestedRepo string
+	Repo          ghapi.Repo
+	Err           error
 }
 
 type WorkflowsMsg struct {
+	Repo string
 	List []ghapi.Workflow
 	Err  error
 }
 
 type RunsMsg struct {
-	List []ghapi.Run
-	Err  error
+	Repo, Workflow, Branch string
+	List                   []ghapi.Run
+	Err                    error
 }
 
 // WorkflowFileMsg carries a workflow YAML preview.
 type WorkflowFileMsg struct {
+	Repo string
 	Path string
 	YAML string
 	Err  error
@@ -56,6 +60,7 @@ type BranchesMsg struct {
 }
 
 type ReleasesMsg struct {
+	Repo string
 	List []ghapi.Release
 	Err  error
 }
@@ -141,21 +146,21 @@ func checkAuthCmd() tea.Cmd {
 func fetchRepoCmd(repo string) tea.Cmd {
 	return func() tea.Msg {
 		r, err := ghapi.GetRepo(repo)
-		return RepoInfoMsg{Repo: r, Err: err}
+		return RepoInfoMsg{RequestedRepo: repo, Repo: r, Err: err}
 	}
 }
 
 func fetchWorkflowsCmd(repo string) tea.Cmd {
 	return func() tea.Msg {
 		ws, err := ghapi.ListWorkflows(repo)
-		return WorkflowsMsg{List: ws, Err: err}
+		return WorkflowsMsg{Repo: repo, List: ws, Err: err}
 	}
 }
 
 func fetchRunsCmd(repo, workflow, branch string, limit int) tea.Cmd {
 	return func() tea.Msg {
 		rs, err := ghapi.ListRuns(repo, workflow, branch, limit)
-		return RunsMsg{List: rs, Err: err}
+		return RunsMsg{Repo: repo, Workflow: workflow, Branch: branch, List: rs, Err: err}
 	}
 }
 
@@ -167,7 +172,7 @@ func fetchWorkflowFileCmd(repo, path string) tea.Cmd {
 		if len(out) > maxYAML {
 			out = out[:maxYAML]
 		}
-		return WorkflowFileMsg{Path: path, YAML: out, Err: err}
+		return WorkflowFileMsg{Repo: repo, Path: path, YAML: out, Err: err}
 	}
 }
 
@@ -188,7 +193,7 @@ func fetchBranchesCmd(repo string) tea.Cmd {
 func fetchReleasesCmd(repo string) tea.Cmd {
 	return func() tea.Msg {
 		rs, err := ghapi.ListReleases(repo, 5)
-		return ReleasesMsg{List: rs, Err: err}
+		return ReleasesMsg{Repo: repo, List: rs, Err: err}
 	}
 }
 

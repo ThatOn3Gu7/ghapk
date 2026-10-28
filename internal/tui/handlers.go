@@ -376,8 +376,18 @@ func (m *Model) activate() tea.Cmd {
 	switch m.focus {
 	case PanelRepos:
 		if sel, ok := m.repos.Selected(); ok {
-			if repo, _ := sel.ID.(string); repo != "" && repo != m.settings.Repo {
-				m.setRepo(repo, true)
+			if repo, ok := sel.ID.(string); ok && repo != "" {
+				if m.navRepo == repo && m.settings.Repo == repo {
+					m.focus = PanelWorkflows
+					m.updateListBounds()
+					return m.fetchWorkflowForSelection()
+				}
+				if repo != m.settings.Repo {
+					m.setRepo(repo, true)
+				}
+				m.repos.SelectByID(repo)
+				m.navRepo = repo
+				m.navWorkflowSet = false
 				m.toastf("repo: %s", repo)
 				return tea.Batch(m.refreshAll()...)
 			}
@@ -386,11 +396,22 @@ func (m *Model) activate() tea.Cmd {
 		m.wfYAMLFocused = false
 		m.wfScroll = 0
 		if sel, ok := m.workflows.Selected(); ok {
-			name, _ := sel.ID.(string)
+			name, ok := sel.ID.(string)
+			if !ok {
+				return nil
+			}
+			if m.navWorkflowSet && m.navWorkflow == name && m.settings.Workflow == name {
+				m.focus = PanelRuns
+				m.buildDetail = false
+				m.updateListBounds()
+				return m.fetchArtifactsForSelection()
+			}
+			m.navWorkflow, m.navWorkflowSet = name, true
 			m.settings.Workflow = name
 			m.runsLoaded = false
 			m.runs.SetItems(nil)
 			m.arts.SetItems(nil)
+			m.selectedRunID, m.selectedArtID = 0, 0
 			if name == "" {
 				m.toastf("workflow: any")
 			} else {
@@ -551,8 +572,7 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.confirmKind == confirmSafetyOverride {
 				return m, nil // safety overrides require deliberate selection + Enter
 			}
-			// Preserve an already-highlighted non-Cancel choice (e.g. "Download & Install");
-			// only default to option 0 if the cursor was sitting on Cancel.
+			// Default to the first choice when the cursor is on Cancel.
 			if m.confirm.Cursor < 0 || m.confirm.Cursor >= len(m.confirm.Options)-1 {
 				m.confirm.Cursor = 0
 			}
@@ -658,9 +678,7 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 type confirmAction int
 
 const (
-	confirmDownload confirmAction = iota
-	confirmDownloadInstall
-	confirmInstallExisting
+	confirmNone confirmAction = iota
 	confirmRemoveRepo
 	confirmSafetyOverride
 )
@@ -730,89 +748,31 @@ func (m *Model) askRemoveRepo(repo string) {
 func (m *Model) resetConfirm() {
 	m.modal = ModalNone
 	m.confirm = components.Confirm{}
-	m.confirmKind = confirmDownload
+	m.confirmKind = confirmNone
 	m.confirmTarget = ""
 	m.safetyInstallPath = ""
 	m.safetyAllowDowngrade = false
 }
 
-// requestDownload asks what to do with the selected artifact or release asset.
+// requestDownload starts the chosen action immediately. APK safety checks still
+// run before installation, after the download has finished.
 func (m *Model) requestDownload(withInstall bool) tea.Cmd {
 	if m.usingReleaseAssets() {
-		ra, ok := m.selectedReleaseAsset()
-		if !ok {
+		if _, ok := m.selectedReleaseAsset(); !ok {
 			if m.activeTab() != PanelRuns && m.haveDownload && withInstall && m.dev.CanInstall {
 				return m.startInstall(m.downloadedAPK.Path)
 			}
 			m.toastf("select a release asset in Builds")
 			return nil
 		}
-		opts := []string{"Download", "Cancel"}
-		body := []string{
-			fmt.Sprintf("Download  %s", m.st.Bold.Render(ra.Asset.Name)),
-			fmt.Sprintf("release   %s", ra.ReleaseTag),
-			fmt.Sprintf("size      %s", humanSize(ra.Asset.Size)),
-		}
-		if ra.Asset.Rejected {
-			body = append(body, m.st.Warn.Render("warning: this does not match your arch/variant policy"))
-		}
-		if m.dev.CanInstall {
-			opts = []string{"Download", "Download & Install", "Cancel"}
-		}
-		m.confirmKind = confirmDownload
-		m.confirmTarget = ""
-		m.confirm = components.Confirm{
-			Title:   "Confirm download",
-			Body:    body,
-			Options: opts,
-		}
-		if withInstall && m.dev.CanInstall && !m.settings.NoOpen {
-			m.confirm.Cursor = 1
-		}
-		m.modal = ModalConfirm
-		return nil
-	}
-
-	art, ok := m.selectedArtifact()
-	if !ok {
+	} else if _, ok := m.selectedArtifact(); !ok {
 		if m.activeTab() != PanelRuns && m.haveDownload && withInstall && m.dev.CanInstall {
-			// install the last download again
 			return m.startInstall(m.downloadedAPK.Path)
 		}
 		m.toastf("select an artifact in Builds")
 		return nil
 	}
-	opts := []string{"Download", "Cancel"}
-	body := []string{
-		fmt.Sprintf("Download  %s", m.st.Bold.Render(art.Name)),
-		fmt.Sprintf("from run  %s", m.selectedRunLabel()),
-		fmt.Sprintf("size      %s (zipped)", humanSize(art.SizeInBytes)),
-	}
-	if art.Rejected {
-		body = append(body, m.st.Warn.Render("warning: this does not match your arch/variant policy"))
-	}
-	if m.dev.CanInstall {
-		opts = []string{"Download", "Download & Install", "Cancel"}
-	}
-	m.confirmKind = confirmDownload
-	m.confirmTarget = ""
-	m.confirm = components.Confirm{
-		Title:   "Confirm download",
-		Body:    body,
-		Options: opts,
-	}
-	if withInstall && m.dev.CanInstall && !m.settings.NoOpen {
-		m.confirm.Cursor = 1
-	}
-	m.modal = ModalConfirm
-	return nil
-}
-
-func (m *Model) selectedRunLabel() string {
-	if r, ok := m.selectedRun(); ok {
-		return fmt.Sprintf("#%d (%s)", r.RunNumber, r.HeadBranch)
-	}
-	return "?"
+	return m.startDownload(withInstall)
 }
 
 // confirmAccept runs after the user picked a confirm option.
@@ -821,7 +781,7 @@ func (m *Model) confirmAccept() tea.Cmd {
 	m.modal = ModalNone
 	m.confirm = components.Confirm{}
 	kind := m.confirmKind
-	m.confirmKind = confirmDownload
+	m.confirmKind = confirmNone
 	target := m.confirmTarget
 	m.confirmTarget = ""
 	if kind == confirmSafetyOverride {
@@ -842,15 +802,6 @@ func (m *Model) confirmAccept() tea.Cmd {
 			m.toastf("removed %s from recents", target)
 		}
 		return nil
-	}
-	switch choice {
-	case 0:
-		return m.startDownload(false)
-	case 1:
-		if m.dev.CanInstall {
-			return m.startDownload(true)
-		}
-		// second option is Cancel when install is unavailable
 	}
 	return nil
 }

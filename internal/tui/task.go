@@ -250,6 +250,9 @@ func (m *Model) startDownload(withInstall bool) tea.Cmd {
 		m.progCh = make(chan tea.Msg, 64)
 		device_CanInstall = m.dev.CanInstall
 		m.task = newTask("Downloading release asset", ra.Asset.Name, progressColor{m.st.P.Accent, m.st.P.AccentAlt})
+		if ra.Asset.Rejected {
+			m.task.addLog("warning: asset does not match your arch/variant policy")
+		}
 		m.busy = true
 		m.busyMsg = "downloading"
 		m.modal = ModalTask
@@ -271,6 +274,9 @@ func (m *Model) startDownload(withInstall bool) tea.Cmd {
 	m.progCh = make(chan tea.Msg, 64)
 	device_CanInstall = m.dev.CanInstall
 	m.task = newTask("Downloading artifact", art.Name, progressColor{m.st.P.Accent, m.st.P.AccentAlt})
+	if art.Rejected {
+		m.task.addLog("warning: artifact does not match your arch/variant policy")
+	}
 	_ = run
 	m.busy = true
 	m.busyMsg = "downloading"
