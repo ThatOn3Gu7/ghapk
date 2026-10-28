@@ -5,11 +5,14 @@
 package flow
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/ghapk/ghapk/internal/apk"
 	"github.com/ghapk/ghapk/internal/config"
 	"github.com/ghapk/ghapk/internal/device"
 	"github.com/ghapk/ghapk/internal/ghapi"
@@ -151,23 +154,82 @@ func Run(o GetOptions) int {
 		out("\nghapk: download failed: %v", err)
 		return 8
 	}
-	out("\rghapk: downloaded %s   ", ghapi.HumanBytes(art.SizeInBytes))
+	ds := ghapi.DigestStatusFor(art.Digest)
+	if ds == apk.DigestVerified {
+		out("\rghapk: downloaded %s (sha256 verified against GitHub digest)   ", ghapi.HumanBytes(art.SizeInBytes))
+	} else {
+		out("\rghapk: downloaded %s (digest unverified — GitHub published none)   ", ghapi.HumanBytes(art.SizeInBytes))
+	}
 
-	apk, err := ghapi.ExtractBestAPK(zipPath, dir, s.FilePattern, prefs, sd)
+	apkOut, err := ghapi.ExtractBestAPK(zipPath, dir, s.FilePattern, prefs, sd)
 	if err != nil {
 		out("ghapk: unpacking: %v", err)
 		return 9
 	}
-	out("ghapk: apk %s (%s)", apk.Path, ghapi.HumanBytes(apk.Size))
+	apkOut.DigestStatus = ds
+	apkOut.Meta.DigestStatus = ds
+	out("ghapk: apk %s (%s)", apkOut.Path, ghapi.HumanBytes(apkOut.Size))
+	if apkOut.Meta.HaveInfo {
+		out("ghapk: manifest %s · v%s (%d)",
+			apkOut.Meta.Info.Package, apkOut.Meta.Info.VersionName, apkOut.Meta.Info.VersionCode)
+	}
+	if apkOut.Meta.Cert.SHA256 != "" {
+		out("ghapk: signer %.12s… (%s)", apkOut.Meta.Cert.SHA256, apkOut.Meta.Cert.Scheme)
+	}
 
 	// [6/6] hand off / install
 	if o.Install {
 		if s.NoOpen {
-			out("ghapk: --no-open is set — skipping installer (APK saved at %s)", apk.Path)
+			out("ghapk: --no-open is set — skipping installer (APK saved at %s)", apkOut.Path)
 			return 0
 		}
-		allowDowngrade := s.Downgrade == "allow"
-		res, err := device.InstallAPK(apk.Path, allowDowngrade, func(line string) {
+		hist, _ := config.History(repo)
+		expectPkg := s.PackageName
+		if expectPkg == "" {
+			expectPkg = hist.Pkg
+		}
+		queryPkg := expectPkg
+		if queryPkg == "" && apkOut.Meta.HaveInfo {
+			queryPkg = apkOut.Meta.Info.Package
+		}
+		var instApp device.InstalledApp
+		var instFound bool
+		if queryPkg != "" {
+			instApp, instFound = device.QueryPackage(queryPkg)
+		}
+
+		safety := apk.EvaluateSafety(apkOut.Meta, apk.SafetyInput{
+			ExpectedPackage: expectPkg,
+			InstalledFound:  instFound,
+			InstalledVCode:  instApp.VersionCode,
+			InstalledVName:  instApp.VersionName,
+			InstalledCert:   instApp.CertSHA256,
+			HistoryCert:     hist.Sig,
+			DeviceSDK:       dev.SDK,
+			DowngradeMode:   s.Downgrade,
+			CheckPackage:    true,
+			CheckSignature:  true,
+		})
+		for _, n := range safety.Notes {
+			out("ghapk: check: %s", n)
+		}
+		if safety.BlockedReason != "" {
+			out("ghapk: refused: %s", safety.BlockedReason)
+			return 11
+		}
+		for _, w := range safety.Warnings {
+			out("ghapk: warning (%s): %s", w.Kind, w.Message)
+			if w.Kind == apk.WarnDowngrade && strings.ToLower(s.Downgrade) != "allow" {
+				out("ghapk: refusing automatic downgrade under downgrade=%s — pass --downgrade=allow to confirm downgrade", s.Downgrade)
+				return 11
+			}
+			if !o.Yes {
+				out("ghapk: refusing unconfirmed %s in non-interactive mode (inspect or pass --yes for non-downgrade warnings)", w.Kind)
+				return 11
+			}
+		}
+
+		res, err := device.InstallAPK(apkOut.Path, safety.AllowDowngrade, func(line string) {
 			out("ghapk: installer: %s", line)
 		})
 		if err != nil || res.Outcome == device.OutcomeFailed {
@@ -175,9 +237,24 @@ func Run(o GetOptions) int {
 			return 10
 		}
 		if res.Outcome == device.OutcomeLaunched {
-			out("ghapk: installer launched via %s — accept the prompt on your Android device (installation not yet confirmed)", res.Via)
+			out("ghapk: installer launched via %s — accept the prompt on your Android device", res.Via)
+			if queryPkg != "" && apkOut.Meta.HaveInfo {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				vr := device.VerifyInstall(ctx, queryPkg, apkOut.Meta.Info.VersionCode, 25*time.Second)
+				cancel()
+				switch vr.Outcome {
+				case device.VerifyConfirmed:
+					out("ghapk: verified installed on device (%s)", vr.Detail)
+					recordFlowHistory(repo, art, run, apkOut.Meta)
+				case device.VerifyUnchanged:
+					out("ghapk: post-install check: %s (installation not confirmed)", vr.Detail)
+				default:
+					out("ghapk: installation remains unconfirmed (%s)", vr.Detail)
+				}
+			}
 		} else {
 			out("ghapk: installed via %s (confirmed)", res.Via)
+			recordFlowHistory(repo, art, run, apkOut.Meta)
 		}
 	} else {
 		out("ghapk: pass --install to hand off to the package installer")
@@ -196,4 +273,20 @@ func containsFold(name, pattern string) bool {
 	return strings.Contains(
 		strings.ToLower(name),
 		strings.ToLower(strings.Trim(pattern, "*")))
+}
+
+func recordFlowHistory(repo string, art ghapi.Artifact, run ghapi.Run, meta apk.Inspection) {
+	entry := config.HistoryEntry{
+		Run:      run.ID,
+		Artifact: art.Name,
+		Digest:   art.Digest,
+		SHA:      meta.LocalSHA256,
+		Sig:      meta.Cert.SHA256,
+	}
+	if meta.HaveInfo {
+		entry.Pkg = meta.Info.Package
+		entry.VCode = meta.Info.VersionCode
+		entry.VName = meta.Info.VersionName
+	}
+	_ = config.RecordInstall(repo, entry)
 }

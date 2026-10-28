@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/ghapk/ghapk/internal/apk"
 	"github.com/ghapk/ghapk/internal/config"
 	"github.com/ghapk/ghapk/internal/device"
 	"github.com/ghapk/ghapk/internal/ghapi"
@@ -158,9 +159,11 @@ type Model struct {
 	shimmerPos int
 
 	// remembered artifacts to install after download completes
-	pendingInstall bool
-	downloadedAPK  ghapi.ExtractedAPK
-	haveDownload   bool
+	pendingInstall       bool
+	downloadedAPK        ghapi.ExtractedAPK
+	haveDownload         bool
+	safetyInstallPath    string
+	safetyAllowDowngrade bool
 
 	quitting bool
 }
@@ -499,6 +502,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.task != nil {
 			m.task.installDone(msg.Result, msg.Err)
 		}
+		var cmds []tea.Cmd
+		meta := m.downloadedAPK.Meta
+		pkg := m.instPkg
+		if pkg == "" && meta.HaveInfo {
+			pkg = meta.Info.Package
+			m.instPkg = pkg
+		}
 		switch {
 		case msg.Err != nil || msg.Result.Outcome == device.OutcomeFailed:
 			if msg.Err != nil {
@@ -508,11 +518,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case msg.Result.Outcome == device.OutcomeLaunched:
 			m.toastf("installer launched (%s) — confirm on device", msg.Result.Via)
+			if pkg != "" && meta.HaveInfo {
+				cmds = append(cmds, verifyInstallCmd(pkg, meta.Info.VersionCode, 30*time.Second))
+			}
 		default:
 			m.toastf("installed via %s ✓", msg.Result.Via)
+			m.recordAPKHistory(meta)
 		}
-		if m.instPkg != "" {
-			return m, queryPackageCmd(m.instPkg)
+		if pkg != "" {
+			cmds = append(cmds, queryPackageCmd(pkg))
+		}
+		return m, tea.Batch(cmds...)
+
+	case InstallVerifyMsg:
+		if msg.Result.Outcome == device.VerifyConfirmed {
+			m.instPkg = msg.Pkg
+			m.instApp = msg.Result.App
+			m.instFound = true
+			m.recordAPKHistory(m.downloadedAPK.Meta)
+			if m.task != nil && m.task.phase == "launched" {
+				m.task.installRes.Outcome = device.OutcomeInstalled
+				m.task.phase = "done"
+				m.task.addLog(msg.Result.Detail)
+			}
+			m.toastf("verified %s on device ✓", msg.Pkg)
+		} else if m.task != nil && m.task.phase == "launched" && msg.Result.Detail != "" {
+			m.task.addLog(msg.Result.Detail)
 		}
 		return m, nil
 
@@ -1029,4 +1060,20 @@ func (m *Model) applyTheme(name string) {
 	m.settings.Theme = name
 	m.st = theme.New(theme.Get(name))
 	m.spin.Style = m.st.Accent
+}
+
+func (m *Model) recordAPKHistory(meta apk.Inspection) {
+	if m.settings.Repo == "" || (!meta.HaveInfo && meta.Cert.SHA256 == "") {
+		return
+	}
+	entry := config.HistoryEntry{
+		SHA: meta.LocalSHA256,
+		Sig: meta.Cert.SHA256,
+	}
+	if meta.HaveInfo {
+		entry.Pkg = meta.Info.Package
+		entry.VCode = meta.Info.VersionCode
+		entry.VName = meta.Info.VersionName
+	}
+	_ = config.RecordInstall(m.settings.Repo, entry)
 }
