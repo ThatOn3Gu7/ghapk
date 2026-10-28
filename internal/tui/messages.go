@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -215,14 +217,29 @@ func downloadApkCmd(repo string, art ghapi.Artifact, zipPath, outDir, filePatter
 
 func downloadReleaseApkCmd(repo string, asset ghapi.ReleaseAsset, dest, filePattern string, progCh chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
+		target, err := ghapi.ResolveReleaseAssetDest(dest, asset.Name)
+		if err != nil {
+			progCh <- DownloadDoneMsg{Err: err}
+			return nil
+		}
 		prog := func(got, total int64) {
 			select {
 			case progCh <- DownloadProgressMsg{Received: got, Total: total}:
 			default:
 			}
 		}
-		err := ghapi.DownloadReleaseAsset(repo, asset, dest, prog)
-		progCh <- DownloadDoneMsg{ZipPath: "", APK: ghapi.ExtractedAPK{Path: dest, Name: asset.Name, Size: asset.Size}, Err: err}
+		if err := ghapi.DownloadReleaseAsset(repo, asset, target, prog); err != nil {
+			progCh <- DownloadDoneMsg{Err: err}
+			return nil
+		}
+		size := asset.Size
+		if fi, statErr := os.Stat(target); statErr == nil {
+			size = fi.Size()
+		}
+		progCh <- DownloadDoneMsg{
+			ZipPath: "",
+			APK:     ghapi.ExtractedAPK{Path: target, Name: filepath.Base(target), Size: size, Candidate: true},
+		}
 		return nil
 	}
 }
