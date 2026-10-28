@@ -227,6 +227,9 @@ func (m Model) buildDetails(r rect) string {
 			lines = append(lines, s)
 		}
 	}
+	if m.branchSel != "" && m.usingReleaseAssets() {
+		add(m.st.Warn.Render("Releases: all branches"))
+	}
 	if run, ok := m.selectedRun(); ok {
 		title := firstLineS(run.DisplayTitle)
 		if title == "" {

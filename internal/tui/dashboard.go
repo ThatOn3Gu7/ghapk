@@ -168,10 +168,15 @@ func (m Model) statusBar() components.StatusBar {
 		switch m.focus {
 		case PanelRepos:
 			add("enter", "select / next", "enter")
-			add("R", "picker", "R")
-			add("e", "edit", "e")
-			add("x", "remove", "x")
-			add("f", "star", "f")
+			if m.repoBranchFocused {
+				add("←", "repos", "left")
+				add("B", "picker", "B")
+			} else {
+				add("R", "picker", "R")
+				add("e", "edit", "e")
+				add("x", "remove", "x")
+				add("f", "star", "f")
+			}
 		case PanelWorkflows:
 			if m.wfYAMLFocused {
 				add("↑", "up", "up")

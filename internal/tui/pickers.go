@@ -262,15 +262,15 @@ type pickerOption struct {
 
 // FilterPicker is a reusable live-filtered modal picker for branches and workflows.
 type FilterPicker struct {
-	title       string
-	hint        string
-	customVerb  string // e.g. "Use branch" or "Use workflow"
-	current     string
-	loading     bool
-	errMsg      string
-	options     []pickerOption
-	input       textinput.Model
-	list        components.List
+	title      string
+	hint       string
+	customVerb string // e.g. "Use branch" or "Use workflow"
+	current    string
+	loading    bool
+	errMsg     string
+	options    []pickerOption
+	input      textinput.Model
+	list       components.List
 }
 
 func newFilterPicker(title, hint, placeholder, customVerb, current string, loading bool) *FilterPicker {
@@ -430,9 +430,10 @@ func (m *Model) openBranchPicker() tea.Cmd {
 		m.branchSel,
 		true,
 	)
-	fp.setOptions(m, m.buildBranchOptions(nil), nil)
+	fp.setOptions(m, m.buildBranchOptions(m.apiBranches), nil)
 	fp.loading = true
 	m.branchPicker = fp
+	m.branchLoading = true
 	m.modal = ModalPickBranch
 	return fetchBranchesCmd(m.settings.Repo)
 }
@@ -454,16 +455,25 @@ func (m *Model) buildBranchOptions(apiBranches []ghapi.Branch) []pickerOption {
 		}
 		opts = append(opts, pickerOption{Value: b.Name, Label: b.Name, Detail: det})
 	}
-	// Include branches from loaded runs (e.g. PR branches beyond page 1 of /branches).
-	for _, it := range m.runs.Items {
-		if rr, ok := it.ID.(runRow); ok && rr.run.HeadBranch != "" && !seen[rr.run.HeadBranch] {
-			seen[rr.run.HeadBranch] = true
+	for _, name := range m.localBranches {
+		if name != "" && !seen[name] {
+			seen[name] = true
+			opts = append(opts, pickerOption{Value: name, Label: name, Detail: "local"})
+		}
+	}
+	// Keep branches seen on runs even after a different filter clears the list.
+	for _, name := range m.recentBranches {
+		if name != "" && !seen[name] {
+			seen[name] = true
 			det := "recent run"
-			if def != "" && rr.run.HeadBranch == def {
+			if name == def && def != "" {
 				det = "default"
 			}
-			opts = append(opts, pickerOption{Value: rr.run.HeadBranch, Label: rr.run.HeadBranch, Detail: det})
+			opts = append(opts, pickerOption{Value: name, Label: name, Detail: det})
 		}
+	}
+	if m.branchSel != "" && !seen[m.branchSel] {
+		opts = append(opts, pickerOption{Value: m.branchSel, Label: m.branchSel, Detail: "current"})
 	}
 	return opts
 }
@@ -504,4 +514,33 @@ func (m *Model) buildWorkflowOptions() []pickerOption {
 		})
 	}
 	return opts
+}
+
+// Rebuild without moving a user's cursor when asynchronous results arrive.
+func (m *Model) rebuildBranchList() {
+	var keep any = m.branchSel
+	if item, ok := m.branchList.Selected(); ok {
+		keep = item.ID
+	}
+	options := m.buildBranchOptions(m.apiBranches)
+	items := make([]components.Item, 0, len(options))
+	for _, opt := range options {
+		items = append(items, components.Item{ID: opt.Value, Label: opt.Label, Detail: opt.Detail})
+	}
+	m.branchList.SetItems(items)
+	m.branchList.SelectByID(keep)
+	m.updateListBounds()
+}
+
+func (m *Model) rememberRunBranches(runs []ghapi.Run) {
+	seen := make(map[string]bool, len(m.recentBranches))
+	for _, name := range m.recentBranches {
+		seen[name] = true
+	}
+	for _, run := range runs {
+		if run.HeadBranch != "" && !seen[run.HeadBranch] {
+			m.recentBranches = append(m.recentBranches, run.HeadBranch)
+			seen[run.HeadBranch] = true
+		}
+	}
 }

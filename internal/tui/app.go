@@ -85,11 +85,23 @@ type Model struct {
 	// filterMode routes keystrokes into the focused list's filter.
 	filterMode bool
 
-	workflowSel    string // "" = any (name from workflow list)
-	branchSel      string
-	navRepo        string // repository explicitly selected during this session
-	navWorkflow    string
-	navWorkflowSet bool
+	workflowSel       string // "" = any (name from workflow list)
+	branchSel         string
+	navRepo           string // repository explicitly selected during this session
+	repoBranchFocused bool
+	navBranch         string
+	navBranchSet      bool
+	apiBranches       []ghapi.Branch
+	localBranches     []string
+	recentBranches    []string
+	branchLoading     bool
+	branchTouchActive bool
+	branchTouchMoved  bool
+	branchTouchLastY  int
+	branchTouchValue  string
+	branchTouchRepo   string
+	navWorkflow       string
+	navWorkflowSet    bool
 
 	runCache       map[int64][]ghapi.Artifact // scored+sorted artifacts per run
 	fetching       map[int64]bool
@@ -229,14 +241,17 @@ func (m *Model) updateListBounds() {
 		return
 	}
 	h := m.height - 3
-	m.repos.MaxShown = max(1, h-4)
+	_, repoH, branchH := reposBranchSplit(h, len(m.repos.Items), len(m.branchList.Items), m.width)
+	m.repos.MaxShown = max(1, repoH-2)
+	m.branchList.MaxShown = max(1, branchH-2)
+	m.repos.MoveBy(0)
+	m.branchList.MoveBy(0)
 	m.workflows.MaxShown = max(1, h-4)
 	layout := m.buildsLayout()
 	m.runs.MaxShown = max(1, layout.runs.h-2)
 	m.arts.MaxShown = max(1, layout.arts.h-2)
 	m.runs.MoveBy(0)
 	m.arts.MoveBy(0)
-	m.branchList.MaxShown = 12
 }
 
 func (m *Model) loadRecents(current string) {
@@ -280,6 +295,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMouse(msg)
 
 	case tea.WindowSizeMsg:
+		m.branchTouchActive = false
 		m.width = msg.Width
 		m.height = msg.Height
 		m.compact = m.width < 64
@@ -359,6 +375,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.repo = msg.Repo
+		m.rebuildBranchList()
 		// NOTE: an empty branchSel means ALL branches (the script's
 		// behaviour) — never silently restrict to the default branch,
 		// it hides nearly every run on repos that build from others.
@@ -421,9 +438,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil {
 			m.toastf("runs: %s", shortErr(msg.Err))
 			m.runs.SetItems(nil)
+			m.busy = false
+			m.busyMsg = ""
+			if m.usingReleaseAssets() {
+				m.syncReleaseArtifactItems()
+			}
 			return m, nil
 		}
 		m.setRuns(msg.List)
+		m.rememberRunBranches(msg.List)
+		m.rebuildBranchList()
 		m.syncBuildSelection()
 		return m, m.fetchArtifactsForSelection()
 
@@ -463,22 +487,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case BranchesMsg:
+		if msg.Repo != "" && !strings.EqualFold(msg.Repo, m.settings.Repo) {
+			return m, nil
+		}
+		m.branchLoading = false
 		if msg.Err != nil {
 			if m.modal == ModalPickBranch && m.branchPicker != nil {
-				m.branchPicker.setOptions(&m, m.buildBranchOptions(nil), msg.Err)
+				m.branchPicker.setOptions(&m, m.buildBranchOptions(m.apiBranches), msg.Err)
 			}
 			m.toastf("branches: %s", shortErr(msg.Err))
 			return m, nil
 		}
-		var items []components.Item
-		items = append(items, components.Item{ID: "", Label: "(all branches)"})
-		for _, b := range msg.List {
-			items = append(items, components.Item{ID: b.Name, Label: b.Name})
-		}
-		m.branchList.SetItems(items)
-		m.branchList.SelectByID(m.branchSel)
+		m.apiBranches = msg.List
+		m.rebuildBranchList()
 		if m.modal == ModalPickBranch && m.branchPicker != nil {
 			m.branchPicker.setOptions(&m, m.buildBranchOptions(msg.List), nil)
+		}
+		return m, nil
+
+	case LocalBranchesMsg:
+		if !strings.EqualFold(msg.Repo, m.settings.Repo) {
+			return m, nil
+		}
+		m.localBranches = msg.Names
+		m.rebuildBranchList()
+		if m.modal == ModalPickBranch && m.branchPicker != nil {
+			m.branchPicker.setOptions(&m, m.buildBranchOptions(m.apiBranches), nil)
+			m.branchPicker.loading = m.branchLoading
 		}
 		return m, nil
 
@@ -703,6 +738,16 @@ func (m *Model) bootstrapDashboard() tea.Cmd {
 // (theme, watch) survive.
 func (m *Model) setRepo(repo string, persist bool) {
 	m.navRepo = ""
+	m.repoBranchFocused = false
+	m.branchTouchActive = false
+	m.navBranch = ""
+	m.navBranchSet = false
+	m.apiBranches = nil
+	m.localBranches = nil
+	m.recentBranches = nil
+	m.branchList.Filter = ""
+	m.branchList.SetItems(nil)
+	m.repo = ghapi.Repo{}
 	m.navWorkflow = ""
 	m.navWorkflowSet = false
 	theme, watch, limit := m.settings.Theme, m.settings.Watch, m.settings.RunLimit
@@ -716,6 +761,8 @@ func (m *Model) setRepo(repo string, persist bool) {
 		m.settings.RunLimit = limit
 	}
 	m.branchSel = pickNonEmpty(m.opts.Settings.Branch, m.settings.Branch)
+	m.settings.Branch = m.branchSel
+	m.branchLoading = true
 	m.runCache = map[int64][]ghapi.Artifact{}
 	m.wfPaths = map[string]string{}
 	m.wfCache = map[string]string{}
@@ -734,6 +781,7 @@ func (m *Model) setRepo(repo string, persist bool) {
 	m.arts.SetItems(nil)
 	m.workflows.SetItems(nil)
 	m.releases = nil
+	m.rebuildBranchList()
 	m.loadRecents(repo)
 	if persist {
 		config.TouchRecent(repo)
@@ -754,11 +802,14 @@ func (m *Model) refreshAll() []tea.Cmd {
 		return nil
 	}
 	m.busy = true
+	m.branchLoading = true
 	m.busyMsg = "loading " + repo
 	cfg := m.settings
 	return []tea.Cmd{
 		m.spin.Tick, // re-arm the gated spinner chain while work streams in
 		fetchRepoCmd(repo),
+		fetchBranchesCmd(repo),
+		fetchLocalBranchesCmd(repo),
 		fetchWorkflowsCmd(repo),
 		fetchRunsCmd(repo, cfg.Workflow, m.branchSel, cfg.RunLimit),
 		fetchReleasesCmd(repo),

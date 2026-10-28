@@ -1,7 +1,9 @@
 package ghapi
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"strings"
 	"time"
@@ -139,11 +141,26 @@ func ListArtifacts(repo string, runID int64) ([]Artifact, error) {
 
 // ListBranches mirrors the --branch list path.
 func ListBranches(repo string) ([]Branch, error) {
-	var b []Branch
-	if err := api(&b, defaultTimeout, "repos/"+repo+"/branches"); err != nil {
+	// Older gh versions lack --slurp; --paginate emits one JSON array per
+	// page, so decode the concatenated arrays as a stream.
+	out, err := rawAPI(defaultTimeout, "repos/"+repo+"/branches?per_page=100", "--paginate")
+	if err != nil {
 		return nil, err
 	}
-	return b, nil
+	dec := json.NewDecoder(strings.NewReader(out))
+	var branches []Branch
+	for {
+		var page []Branch
+		err = dec.Decode(&page)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("decoding branches for %s: %w", repo, err)
+		}
+		branches = append(branches, page...)
+	}
+	return branches, nil
 }
 
 // ListReleases fetches recent releases (for the releases fallback source).
