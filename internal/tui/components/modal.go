@@ -17,34 +17,66 @@ type StatusBar struct {
 	Spinner string // current spinner frame, if busy
 }
 
-// Hint is one "key: action" pair.
-type Hint struct{ Key, Desc string }
+// Hint is one "key: action" pair. Action is the keyboard action to dispatch
+// when its visible label is tapped; it need not match the displayed glyph.
+type Hint struct{ Key, Desc, Action string }
 
-// Render draws the bar.
-func (sb StatusBar) Render(st theme.Styles) string {
-	var left strings.Builder
-	if sb.Busy {
-		left.WriteString(st.StatusKey.Render(sb.Spinner + " " + sb.BusyMsg))
-		left.WriteString(st.StatusText.Render("   "))
+// HintSpan is a visible, complete hint's half-open cell range on the status bar.
+type HintSpan struct{ Index, Start, End int }
+
+// Layout draws the bar and returns the exact clickable ranges it rendered.
+// Never draw a partial hint: a truncated label can suggest the wrong action.
+func (sb StatusBar) Layout(st theme.Styles) (string, []HintSpan) {
+	if sb.Width <= 0 {
+		return "", nil
 	}
-	for i, h := range sb.Hints {
-		left.WriteString(st.StatusKey.Render(h.Key))
-		left.WriteString(st.StatusText.Render(":" + h.Desc))
-		if i < len(sb.Hints)-1 {
-			left.WriteString(st.StatusText.Render("  "))
+	var left strings.Builder
+	x := 0
+	if sb.Busy {
+		busy := st.StatusKey.Render(sb.Spinner + " " + sb.BusyMsg)
+		// On phones, keep the spinner but leave the line for tappable actions.
+		if sb.Width < 48 {
+			busy = st.StatusKey.Render(strings.TrimSpace(StripANSI(sb.Spinner)))
+		} else {
+			busy = Clamp(busy, max(1, sb.Width/3))
 		}
+		left.WriteString(busy)
+		x = VisibleWidth(busy)
+	}
+	var spans []HintSpan
+	for i, h := range sb.Hints {
+		label := st.StatusKey.Render(h.Key) + st.StatusText.Render(":"+h.Desc)
+		w := VisibleWidth(label)
+		gap := 0
+		if x > 0 {
+			gap = 2
+		}
+		if x+gap+w > sb.Width {
+			continue
+		}
+		left.WriteString(strings.Repeat(" ", gap))
+		x += gap
+		spans = append(spans, HintSpan{Index: i, Start: x, End: x + w})
+		left.WriteString(label)
+		x += w
 	}
 	msg := ""
 	if sb.Message != "" {
 		msg = st.Toast.Render(" " + sb.Message + " ")
 	}
-	gap := sb.Width - VisibleWidth(left.String()) - VisibleWidth(msg)
-	if gap < 1 {
-		gap = 1
+	msgWidth := VisibleWidth(msg)
+	gap := sb.Width - x - msgWidth
+	if msg != "" && gap >= 1 {
+		left.WriteString(strings.Repeat(" ", gap))
+		left.WriteString(msg)
 	}
-	bar := left.String() + strings.Repeat(" ", gap) + msg
-	bar = Clamp(bar, sb.Width)
-	return Pad(bar, sb.Width)
+	return Pad(left.String(), sb.Width), spans
+}
+
+// Render draws the bar.
+func (sb StatusBar) Render(st theme.Styles) string {
+	line, _ := sb.Layout(st)
+	return line
 }
 
 // Confirm is a yes/no style dialog.

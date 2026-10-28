@@ -22,6 +22,12 @@ func (m Model) renderDashboard() string {
 // ───────────────────────────── header/status ─────────────────────────────
 
 func (m Model) renderHeader() string {
+	header, _ := m.headerLayout()
+	return header
+}
+
+// headerLayout shares the drawn repository span with mouse hit-testing.
+func (m Model) headerLayout() (string, rect) {
 	st := m.st
 	w := m.width
 	if w < 20 {
@@ -52,9 +58,13 @@ func (m Model) renderHeader() string {
 		busy = " " + st.BadgeStyle.Render("RUNNING")
 	}
 
+	repoStart := components.VisibleWidth(logo) + 2
+	repoEnd := repoStart
 	build := func(repoW, branchW, wfW int) string {
 		out := logo
-		out += "  " + st.HeaderAccent.Render(compMiddleEll(repo, repoW))
+		repoText := compMiddleEll(repo, repoW)
+		repoEnd = repoStart + components.VisibleWidth(repoText)
+		out += "  " + st.HeaderAccent.Render(repoText)
 		if branchW > 0 {
 			bname := m.branchSel
 			if bname == "" {
@@ -83,12 +93,21 @@ func (m Model) renderHeader() string {
 		right = "" // right side disappears last
 		rw = 0
 	}
-	bar = components.Clamp(bar, max(w-rw-1, 8))
+	barLimit := max(w-rw-1, 8)
+	if components.VisibleWidth(bar) > barLimit && repoEnd > barLimit {
+		repoEnd = barLimit
+	}
+	bar = components.Clamp(bar, barLimit)
+	repoEnd = min(repoEnd, components.VisibleWidth(bar))
 	gap := w - components.VisibleWidth(bar) - rw
 	if gap < 0 {
 		gap = 0
 	}
-	return components.Pad(bar+strings.Repeat(" ", gap)+right, w)
+	repoEnd = min(repoEnd, w)
+	if repoEnd < repoStart {
+		repoEnd = repoStart
+	}
+	return components.Pad(bar+strings.Repeat(" ", gap)+right, w), rect{x: repoStart, y: 0, w: repoEnd - repoStart, h: 1}
 }
 
 // compMiddleEll ellipsizes the CENTER of s ("termux-x11-un…-wrapp") so the
@@ -97,64 +116,91 @@ func compMiddleEll(s string, w int) string {
 	if w <= 0 {
 		return ""
 	}
-	if len(s) <= w {
+	if components.VisibleWidth(s) <= w {
 		return s
 	}
-	if w <= 4 {
-		return s[:w-1] + "…"
+	if w == 1 {
+		return "…"
 	}
+	// Work in terminal cells and whole runes: repository/branch names can
+	// contain multibyte or wide characters, especially on non-English phones.
 	head := (w+1)/2 - 1
+	if w <= 4 {
+		head = w - 1
+	}
 	tail := w - head - 1
-	return s[:head] + "…" + s[len(s)-tail:]
+	rs := []rune(s)
+	leftEnd, used := 0, 0
+	for leftEnd < len(rs) {
+		rw := components.VisibleWidth(string(rs[leftEnd]))
+		if used+rw > head {
+			break
+		}
+		used += rw
+		leftEnd++
+	}
+	rightStart := len(rs)
+	used = 0
+	for rightStart > leftEnd {
+		rw := components.VisibleWidth(string(rs[rightStart-1]))
+		if used+rw > tail {
+			break
+		}
+		used += rw
+		rightStart--
+	}
+	return string(rs[:leftEnd]) + "…" + string(rs[rightStart:])
 }
 
 func (m Model) renderStatusBar() string {
+	return m.statusBar().Render(m.st)
+}
+
+// statusBar is the single source for displayed hints and their key actions.
+func (m Model) statusBar() components.StatusBar {
 	hints := []components.Hint{}
-	add := func(k, d string) { hints = append(hints, components.Hint{Key: k, Desc: d}) }
+	add := func(k, d, action string) { hints = append(hints, components.Hint{Key: k, Desc: d, Action: action}) }
 	if m.filterMode {
-		add("type", "filter")
-		add("esc", "clear")
-		add("enter", "keep")
+		add("⌫", "delete", "backspace")
+		add("esc", "clear", "esc")
+		add("enter", "keep", "enter")
 	} else {
 		switch m.focus {
 		case PanelRepos:
-			add("enter", "select / next")
-			add("R", "picker")
-			add("e", "edit")
-			add("x", "remove")
-			add("f", "star")
+			add("enter", "select / next", "enter")
+			add("R", "picker", "R")
+			add("e", "edit", "e")
+			add("x", "remove", "x")
+			add("f", "star", "f")
 		case PanelWorkflows:
 			if m.wfYAMLFocused {
-				add("↑/↓", "scroll")
-				add("esc", "list")
+				add("↑", "up", "up")
+				add("↓", "down", "down")
+				add("esc", "list", "esc")
 			} else {
-				add("enter", "select / next")
-				add("→/v", "view yaml")
+				add("enter", "select / next", "enter")
+				if len(m.workflows.Items) > 0 {
+					add("→/v", "view yaml", "right")
+				}
 			}
 		case PanelArtifacts:
-			add("d", "download")
-			add("i", "install")
+			add("d", "download", "d")
+			add("i", "install", "i")
 		case PanelRuns:
-			add("→", "artifacts")
-			add("d", "download")
-			add("i", "install")
-			add("o", "open")
+			add("→", "artifacts", "right")
+			add("d", "download", "d")
+			add("i", "install", "i")
+			add("o", "open", "o")
 		}
-		add("tab", "panels")
-		add("/", "filter")
-		add("s", "settings")
-		add("?", "help")
-		add("q", "quit")
+		add("tab", "panels", "tab")
+		if m.focusedListOrNil() != nil {
+			add("/", "filter", "/")
+		}
+		add("s", "settings", "s")
+		add("?", "help", "?")
+		add("q", "quit", "q")
 	}
-	sb := components.StatusBar{
-		Width:   m.width,
-		Hints:   hints,
-		Message: m.toastIfFresh(),
-		Busy:    m.busy,
-		BusyMsg: m.busyMsg,
-		Spinner: m.spin.View(),
-	}
-	return sb.Render(m.st)
+	return components.StatusBar{Width: m.width, Hints: hints, Message: m.toastIfFresh(), Busy: m.busy, BusyMsg: m.busyMsg, Spinner: m.spin.View()}
 }
 
 func (m Model) toastIfFresh() string {
