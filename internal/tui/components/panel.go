@@ -55,13 +55,6 @@ func (p Panel) Render(st theme.Styles) string {
 		titleSt = st.PanelTitleFoc
 	}
 	bs := lipgloss.NewStyle().Foreground(borderCol)
-	// body background: focused panels use the active bg, others the panel
-	// bg — painted reset-proof so inner styles never leave dark strips
-	bodyBg := st.P.BgPanel
-	if p.Focused {
-		bodyBg = st.P.BgActive
-	}
-	bodySeq := StyleSeq(lipgloss.NewStyle().Background(bodyBg))
 
 	title := titleSt.Render(" " + p.Title + " ")
 	badge := ""
@@ -100,8 +93,8 @@ func (p Panel) Render(st theme.Styles) string {
 				ln = Clamp(ln, iw-3) + ind
 			}
 		}
-		inner := ReStyle(" "+ln+" ", bodySeq)
-		b.WriteString(bs.Render("│") + inner + bs.Render("│"))
+		// Preserve styling on highlighted content without painting the panel.
+		b.WriteString(bs.Render("│") + " " + ln + " " + bs.Render("│"))
 		if i < ih-1 {
 			b.WriteByte('\n')
 		}

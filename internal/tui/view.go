@@ -97,7 +97,7 @@ func (m Model) renderTooSmall() string {
 	return lipgloss.NewStyle().Foreground(m.st.P.Warning).Render(body)
 }
 
-// overlayModal centers a box over a fully dimmed background.
+// overlayModal centers a box on the terminal's background.
 func (m Model) overlayModal(title, body string) string {
 	w := m.width * 3 / 4
 	if w < 50 {
@@ -129,8 +129,7 @@ func (m Model) overlayModal(title, body string) string {
 		lines[0] = putTitle(lines[0], m.st, title)
 		box = strings.Join(lines, "\n")
 	}
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box,
-		lipgloss.WithWhitespaceBackground(m.st.P.Bg))
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
 func putTitle(borderLine string, st theme.Styles, title string) string {

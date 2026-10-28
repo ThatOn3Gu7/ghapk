@@ -166,6 +166,10 @@ func (m Model) renderShimmerLogo(w int, totalBannerH ...int) string {
 
 	whiteBold := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFFFFF"))
 	whiteDim := lipgloss.NewStyle().Foreground(lipgloss.Color("#E0E0E0"))
+	if st.P.Name == "paper" {
+		whiteBold = lipgloss.NewStyle().Bold(true).Foreground(st.P.Text)
+		whiteDim = lipgloss.NewStyle().Foreground(st.P.Muted)
+	}
 	shineEdge := lipgloss.NewStyle().Foreground(st.P.Accent)
 
 	var lines []string
@@ -275,7 +279,7 @@ func (m Model) reposContent(w, h int, mm *Model) string {
 	})
 
 	if bannerH > 0 {
-		banner := m.renderShimmerLogo(w - 4, bannerH)
+		banner := m.renderShimmerLogo(w-4, bannerH)
 		return banner + "\n" + list
 	}
 	return list
@@ -1307,6 +1311,5 @@ func (m Model) renderSetup() string {
 		b.WriteString(st.Bold.Render("    gh auth login") + "\n\n")
 	}
 	b.WriteString(st.Muted.Render("  r  re-check      q  quit") + "\n")
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, b.String(),
-		lipgloss.WithWhitespaceBackground(st.P.Bg))
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, b.String())
 }

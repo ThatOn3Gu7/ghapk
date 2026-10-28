@@ -152,6 +152,8 @@ go install github.com/ThatOn3Gu7/ghapk@latest
 | `?` | Toggle help overlay |
 | `q` / `Ctrl+C` | Clean exit (restores terminal state) |
 
+The UI uses your terminal's background, while keeping selection and action highlights. Press `t` to cycle themes; `paper` is designed for light terminal backgrounds.
+
 *Note for mobile users:* Below 64 columns, Builds shows the list first. Tap a build or press `→` to see its artifacts and details; tap the top border or press `←` to go back.
 
 ---
