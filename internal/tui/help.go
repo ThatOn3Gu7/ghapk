@@ -72,7 +72,7 @@ func (m Model) helpLayout() (viewport.Model, []int) {
 
 	h1("Moving around")
 	row("tab / shift+tab", "cycle panels")
-	row("1 … 5", "jump to Repos, Flows, Builds, Device, Downloads")
+	row("1 … 5", "jump to Repos, Flows, Builds, Downloads, Device")
 	row("enter", "select a repo, branch or workflow; enter again to move on")
 	row("j / k · ↑ / ↓", "move in a list")
 	row("ctrl+d / ctrl+u", "page a list")
@@ -101,6 +101,11 @@ func (m Model) helpLayout() (viewport.Model, []int) {
 	row("x / X", "remove a finished job / remove all finished jobs")
 	row("x", "delete the selected saved APK after confirmation")
 	row("touch", "tap rows and hints; swipe lists or job details")
+
+	h1("Device")
+	row("j / k · ↑ / ↓", "scroll the device and setup details")
+	row("r", "re-check device, tools and GitHub rate limit")
+	row("touch", "swipe the device details to scroll")
 
 	h1("Pickers & screens")
 	row("R", "repository picker (recents, yours, GitHub search)")

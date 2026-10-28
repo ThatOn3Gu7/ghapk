@@ -112,7 +112,7 @@ go install github.com/ThatOn3Gu7/ghapk@latest
 `ghapk` is built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) and supports both **keyboard navigation** and **mouse / touch gestures**:
 
 ```
- 1 Repos   2 Flows   3 Builds   4 Device
+ 1 Repos   2 Flows   3 Builds   4 Downloads   5 Device
 ╭─ Builds ────────────────────╮╭─ Artifacts ────────────────────────────╮
 │ ✓ #42 feat: block+pipe logo ││ ✓ app-arm64-v8a-debug       14.2 MB  │
 │ ✓ #41 fix: centering        ││ · app-universal-debug       20.1 MB  │
@@ -131,13 +131,13 @@ go install github.com/ThatOn3Gu7/ghapk@latest
 | Key | Action |
 | :--- | :--- |
 | `Tab` / `Shift+Tab` | Cycle through screens |
-| `1` – `5` | Jump to Repos, Flows, Builds, Device, or Downloads |
+| `1` – `5` | Jump to Repos, Flows, Builds, Downloads, or Device |
 | `Enter` | Select a repo, branch, or workflow; press again to move on |
 | `↑` `↓` / `j` `k` | Move cursor in the current list |
 | `g` / `G` | Jump to top / bottom |
 | `Ctrl+D` / `Ctrl+U` | Half-page down / up |
 | `Enter` / `→` | Open a build’s artifacts; Enter on an artifact opens the install plan |
-| **Mouse / Touch** | Tap to select; tap the repo name for the picker or a bottom hint to run it; swipe or drag the scroll bar in Help |
+| **Mouse / Touch** | Tap to select; tap the repo name for the picker or a bottom hint to run it; swipe Device details, or swipe/drag the scroll bar in Help |
 | `d` | Download selected artifact to local cache |
 | `i` | Check the device, choose an artifact, then install or download only |
 | `R` | Repository picker (accessible GitHub repos, recents, git remote, search) |

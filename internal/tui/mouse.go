@@ -102,8 +102,20 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.modal != ModalNone {
+		m.deviceDrag = false
 		m.branchTouchActive = false
 		return m.handleModalMouse(msg)
+	}
+	if m.deviceDrag {
+		if msg.Action == tea.MouseActionRelease || msg.Type == tea.MouseRelease {
+			m.deviceDrag = false
+			return m, nil
+		}
+		if msg.Action == tea.MouseActionMotion && msg.Button == tea.MouseButtonLeft {
+			m.scrollDevice(m.deviceDragY - msg.Y)
+			m.deviceDragY = msg.Y
+			return m, nil
+		}
 	}
 	if m.branchTouchActive {
 		if msg.Action == tea.MouseActionRelease || msg.Type == tea.MouseRelease {
@@ -154,6 +166,25 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				m.wfYAMLFocused = false
 				m.buildDetail = false
 				m.updateListBounds()
+				return m, nil
+			}
+		}
+	}
+	if m.activeTab() == PanelDevice {
+		r := m.panelRects()[PanelDevice]
+		if r.contains(msg.X, msg.Y) {
+			switch msg.Type {
+			case tea.MouseWheelUp:
+				m.scrollDevice(-3)
+				return m, nil
+			case tea.MouseWheelDown:
+				m.scrollDevice(3)
+				return m, nil
+			case tea.MouseLeft:
+				if msg.Action == tea.MouseActionPress {
+					m.deviceDrag = true
+					m.deviceDragY = msg.Y
+				}
 				return m, nil
 			}
 		}

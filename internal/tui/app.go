@@ -123,9 +123,21 @@ type Model struct {
 	releases []ghapi.Release
 
 	// device panel
-	instApp   device.InstalledApp
-	instFound bool
-	instPkg   string
+	instApp              device.InstalledApp
+	instFound            bool
+	instPkg              string
+	deviceScroll         int
+	deviceDrag           bool
+	deviceDragY          int
+	deviceCheckSeq       int
+	deviceChecking       bool
+	deviceChecks         deviceChecks
+	deviceHistory        config.HistoryEntry
+	deviceHistoryRepo    string
+	deviceHistoryLoaded  bool
+	deviceHistoryLoading bool
+	deviceHistoryOK      bool
+	deviceHistorySeq     int
 
 	// detail pane + log
 	detailVP viewport.Model
@@ -314,9 +326,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := next.(type) {
 	case Model:
 		v.showNextJobQuestion()
+		if v.focus != m.focus || v.settings.Repo != m.settings.Repo || (m.deviceHistoryLoaded && !v.deviceHistoryLoaded) || (m.deviceHistoryLoading && !v.deviceHistoryLoading) {
+			cmd = tea.Batch(cmd, v.ensureDeviceHistory())
+		}
 		return v, cmd
 	case *Model:
 		v.showNextJobQuestion()
+		if v.focus != m.focus || v.settings.Repo != m.settings.Repo || (m.deviceHistoryLoaded && !v.deviceHistoryLoaded) || (m.deviceHistoryLoading && !v.deviceHistoryLoading) {
+			cmd = tea.Batch(cmd, v.ensureDeviceHistory())
+		}
 		return v, cmd
 	}
 	return next, cmd
@@ -341,6 +359,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case jobQuestionMsg:
 		return m, m.handleJobQuestion(msg)
 	case jobFinishedMsg:
+		m.deviceHistorySeq++
+		m.deviceHistoryLoaded = false
+		m.deviceHistoryLoading = false
 		m.handleJobFinished(msg)
 		if m.quitAfterJobs && !m.hasActiveJobs() {
 			m.quitting = true
@@ -355,6 +376,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMouse(msg)
 
 	case tea.WindowSizeMsg:
+		m.deviceDrag = false
 		m.branchTouchActive = false
 		m.width = msg.Width
 		m.height = msg.Height
@@ -427,14 +449,35 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case DeviceMsg:
 		m.dev = msg.Info
+		m.deviceCheckSeq++
+		m.deviceChecking = true
+		checks := deviceChecksCmd(m.deviceCheckSeq, m.dev)
 		if m.instPkg != "" {
-			return m, queryPackageCmd(m.instPkg)
+			return m, tea.Batch(queryPackageCmd(m.instPkg), checks)
+		}
+		return m, checks
+
+	case deviceChecksMsg:
+		if msg.seq == m.deviceCheckSeq {
+			m.deviceChecks = msg.checks
+			m.deviceChecking = false
+		}
+		return m, nil
+
+	case deviceHistoryMsg:
+		if msg.repo == m.deviceHistoryRepo && msg.seq == m.deviceHistorySeq {
+			m.deviceHistory = msg.entry
+			m.deviceHistoryOK = msg.ok
+			m.deviceHistoryLoading = false
+			m.deviceHistoryLoaded = true
 		}
 		return m, nil
 
 	case PackageQueryMsg:
-		m.instApp = msg.App
-		m.instFound = msg.Found
+		if msg.Pkg == m.instPkg {
+			m.instApp = msg.App
+			m.instFound = msg.Found
+		}
 		return m, nil
 
 	case GitRemoteMsg:
@@ -1297,6 +1340,9 @@ func (m *Model) applyTheme(name string) {
 }
 
 func (m *Model) recordAPKHistory(meta apk.Inspection) {
+	m.deviceHistorySeq++
+	m.deviceHistoryLoaded = false
+	m.deviceHistoryLoading = false
 	if m.settings.Repo == "" || (!meta.HaveInfo && meta.Cert.SHA256 == "") {
 		return
 	}

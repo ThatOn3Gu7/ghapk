@@ -85,9 +85,9 @@ func TestMouseCompactTabs(t *testing.T) {
 }
 
 // The tab cycle must match the visual order of the compact tabs:
-// repos → flows → builds → device. Artifacts live inside Builds.
+// repos → flows → builds → downloads → device. Artifacts live inside Builds.
 func TestFocusRingOrder(t *testing.T) {
-	want := []PanelID{PanelRepos, PanelWorkflows, PanelRuns, PanelDevice, PanelDownloads}
+	want := []PanelID{PanelRepos, PanelWorkflows, PanelRuns, PanelDownloads, PanelDevice}
 	if len(FocusOrder) != len(want) {
 		t.Fatalf("FocusOrder len = %d", len(FocusOrder))
 	}
@@ -242,7 +242,7 @@ func TestDevicePanelCentered(t *testing.T) {
 	m.dev.Model = "Pixel 8"
 	m.dev.OS = "android"
 	m.dev.Release = "14"
-	p := m.panel(PanelDevice, 40, 20, m.deviceContent(40, 20, &m))
+	p := m.panel(PanelDevice, 80, 100, m.deviceContent(80, 100, &m))
 	// Because Center: true for PanelDevice, device information floats in the middle (empty lines above)
 	lines := strings.Split(p, "\n")
 	if len(lines) < 15 {

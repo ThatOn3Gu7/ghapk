@@ -45,6 +45,37 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleFilterKey(msg)
 	}
 
+	if m.focus == PanelDevice {
+		switch key {
+		case "j", "down":
+			m.scrollDevice(1)
+			return m, nil
+		case "k", "up":
+			m.scrollDevice(-1)
+			return m, nil
+		case "ctrl+d", "pgdown":
+			m.scrollDevice(6)
+			return m, nil
+		case "ctrl+u", "pgup":
+			m.scrollDevice(-6)
+			return m, nil
+		case "g":
+			m.deviceScroll = 0
+			return m, nil
+		case "G":
+			m.deviceScroll = 999999
+			m.scrollDevice(0)
+			return m, nil
+		case "r":
+			m.deviceChecking = true
+			m.deviceCheckSeq++
+			m.deviceHistorySeq++
+			m.deviceHistoryLoaded = false
+			m.deviceHistoryLoading = false
+			m.toastf("re-checking device…")
+			return m, probeDeviceCmd()
+		}
+	}
 	if m.focus == PanelDownloads {
 		switch key {
 		case "s", "c", "x", "X", "i", "enter", "esc":
