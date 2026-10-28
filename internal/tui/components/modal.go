@@ -87,8 +87,8 @@ type Confirm struct {
 	Cursor  int
 }
 
-// Modal renders content centered in a bordered box on the terminal background.
-func Modal(st theme.Styles, width, height int, title string, body string) string {
+// ModalBox renders a bordered dialog without the surrounding whitespace.
+func ModalBox(st theme.Styles, width int, title string, body string) string {
 	bw := width * 3 / 4
 	if bw < 40 {
 		bw = min(width-4, 40)
@@ -96,7 +96,6 @@ func Modal(st theme.Styles, width, height int, title string, body string) string
 	if bw > width-4 {
 		bw = width - 4
 	}
-	bh := lipgloss.Height(body) + 4
 	titleSt := st.PanelTitleFoc.Render(" " + title + " ")
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -108,8 +107,12 @@ func Modal(st theme.Styles, width, height int, title string, body string) string
 		lines[0] = overlayCenter(lines[0], titleSt)
 	}
 	box = strings.Join(lines, "\n")
-	_ = bh
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
+	return box
+}
+
+// Modal renders a dialog centered on the terminal background.
+func Modal(st theme.Styles, width, height int, title, body string) string {
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, ModalBox(st, width, title, body))
 }
 
 func overlayCenter(borderLine, content string) string {
@@ -195,8 +198,8 @@ func hex(d string) string {
 	return string([]byte{h[n/16], h[n%16]})
 }
 
-// RenderConfirm draws a Confirm dialog with buttons.
-func (c Confirm) Render(st theme.Styles, width, height int) string {
+// Box draws the confirmation dialog and its buttons, without screen padding.
+func (c Confirm) Box(st theme.Styles, width int) string {
 	var b strings.Builder
 	for _, ln := range c.Body {
 		b.WriteString(ln + "\n")
@@ -232,7 +235,12 @@ func (c Confirm) Render(st theme.Styles, width, height int) string {
 		}
 	}
 	b.WriteString(strings.Join(btns, join))
-	return Modal(st, width, height, c.Title, b.String())
+	return ModalBox(st, width, c.Title, b.String())
+}
+
+// Render draws a centered confirmation dialog.
+func (c Confirm) Render(st theme.Styles, width, height int) string {
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, c.Box(st, width))
 }
 
 func min(a, b int) int {

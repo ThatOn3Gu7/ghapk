@@ -34,45 +34,68 @@ func (m Model) View() string {
 		base = m.renderDashboard()
 	}
 
+	if box := m.modalBox(); box != "" {
+		return components.Overlay(base, box, m.width, m.height)
+	}
+	return base
+}
+
+// modalBox is shared by rendering and modal mouse hit-testing.
+func (m Model) modalBox() string {
 	switch m.modal {
 	case ModalHelp:
-		return m.overlayModal("Help", m.helpVP.View())
+		return m.modalWindow("Help", m.helpVP.View())
 	case ModalSettings:
 		if m.settingsUI != nil {
-			return m.overlayModal("Settings", m.settingsUI.view(&m))
+			return m.modalWindow("Settings", m.settingsUI.view(&m))
 		}
 	case ModalPickRepo:
 		if m.repoPicker != nil {
-			return m.overlayModal("Repository", m.repoPicker.view(&m))
+			return m.modalWindow("Repository", m.repoPicker.view(&m))
 		}
 	case ModalPickBranch:
 		if m.branchPicker != nil {
-			return m.overlayModal("Branch", m.branchPicker.view(&m))
+			return m.modalWindow("Branch", m.branchPicker.view(&m))
 		}
 		body := m.branchList.Render(m.st, 44)
-		return m.overlayModal("Branch", body)
+		return m.modalWindow("Branch", body)
 	case ModalPickWorkflow:
 		if m.workflowPicker != nil {
-			return m.overlayModal("Workflow", m.workflowPicker.view(&m))
+			return m.modalWindow("Workflow", m.workflowPicker.view(&m))
 		}
 	case ModalEditRepo:
 		body := m.editInput.View() + "\n\n" +
 			m.st.Dim.Render("enter saves as owner/repo · esc cancels")
-		return m.overlayModal("Edit repository", body)
+		return m.modalWindow("Edit repository", body)
 	case ModalConfirm:
-		return m.confirm.Render(m.st, m.width, m.height)
+		if m.safetyDialogTooLarge() {
+			return (components.Confirm{Title: "Safety check", Body: []string{"Not enough room to show the safety warnings.", "Zoom out or rotate to see them."}, Options: []string{"Cancel"}}).Box(m.st, m.width)
+		}
+		return m.confirm.Box(m.st, m.width)
 	case ModalTask:
 		if m.task != nil {
 			device_CanInstall = m.dev.CanInstall
-			return m.overlayModal(ellipsisTitle(m.task.Title), m.task.view(&m))
+			return m.modalWindow(ellipsisTitle(m.task.Title), m.task.view(&m))
 		}
 	case ModalDoctor:
 		if m.doctor != nil {
 			device_CanInstall = m.dev.CanInstall
-			return m.overlayModal("Doctor", m.doctor.view(&m))
+			return m.modalWindow("Doctor", m.doctor.view(&m))
 		}
 	}
-	return base
+	return ""
+}
+
+// Never offer an install override when the full warning cannot fit onscreen.
+func (m Model) safetyDialogTooLarge() bool {
+	if m.modal != ModalConfirm || m.confirmKind != confirmSafetyOverride {
+		return false
+	}
+	if m.width < minWidth || m.height < minHeight {
+		return true
+	}
+	box := m.confirm.Box(m.st, m.width)
+	return lipgloss.Width(box) > m.width || lipgloss.Height(box) > m.height
 }
 
 func ellipsisTitle(s string) string { return s }
@@ -97,8 +120,8 @@ func (m Model) renderTooSmall() string {
 	return lipgloss.NewStyle().Foreground(m.st.P.Warning).Render(body)
 }
 
-// overlayModal centers a box on the terminal's background.
-func (m Model) overlayModal(title, body string) string {
+// modalWindow renders the dialog without the surrounding whitespace.
+func (m Model) modalWindow(title, body string) string {
 	w := m.width * 3 / 4
 	if w < 50 {
 		w = m.width - 8
@@ -129,7 +152,18 @@ func (m Model) overlayModal(title, body string) string {
 		lines[0] = putTitle(lines[0], m.st, title)
 		box = strings.Join(lines, "\n")
 	}
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+	return box
+}
+
+// modalLayer gives the dialog in its screen position, without the dashboard.
+// Mouse hit-testing must use this layer, never the borders behind it.
+func (m Model) modalLayer() string {
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.modalBox())
+}
+
+// overlayModal is the isolated, centered dialog rendering.
+func (m Model) overlayModal(title, body string) string {
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.modalWindow(title, body))
 }
 
 func putTitle(borderLine string, st theme.Styles, title string) string {
