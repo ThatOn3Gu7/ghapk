@@ -27,8 +27,15 @@ func TestRepoAndWorkflowEnterSelectThenAdvance(t *testing.T) {
 	}
 	first, _ = current.Update(keyOf("enter"))
 	current = first.(Model)
+	if current.focus != PanelRepos || !current.repoBranchFocused {
+		t.Fatal("configured repo did not advance to branches")
+	}
+	first, _ = current.Update(keyOf("enter"))
+	current = first.(Model)
+	first, _ = current.Update(keyOf("enter"))
+	current = first.(Model)
 	if current.focus != PanelWorkflows {
-		t.Fatal("configured repo did not advance")
+		t.Fatal("branch did not advance to workflows")
 	}
 
 	m := seedRuns(newTestModel())
@@ -45,8 +52,18 @@ func TestRepoAndWorkflowEnterSelectThenAdvance(t *testing.T) {
 	}
 	mm, _ = m.Update(keyOf("enter"))
 	m = mm.(Model)
+	if m.focus != PanelRepos || !m.repoBranchFocused {
+		t.Fatalf("second repo enter did not focus branches")
+	}
+	mm, cmd = m.Update(keyOf("enter"))
+	m = mm.(Model)
+	if cmd == nil || !m.navBranchSet || m.focus != PanelRepos {
+		t.Fatal("first branch enter did not select")
+	}
+	mm, _ = m.Update(keyOf("enter"))
+	m = mm.(Model)
 	if m.focus != PanelWorkflows {
-		t.Fatalf("second repo enter: focus=%v", m.focus)
+		t.Fatal("second branch enter did not advance")
 	}
 	mm, _ = m.Update(WorkflowsMsg{Repo: "other/app", List: []ghapi.Workflow{{Name: "CI"}, {Name: "Release"}}})
 	m = mm.(Model)
@@ -94,6 +111,7 @@ func TestRepoAndWorkflowEnterSelectThenAdvance(t *testing.T) {
 
 	// Returning to another repo clears the remembered workflow activation.
 	m.focus = PanelRepos
+	m.repoBranchFocused = false
 	m.repos.SetItems([]components.Item{{ID: "acme/rocket", Label: "acme/rocket"}})
 	mm, cmd = m.Update(keyOf("enter"))
 	m = mm.(Model)

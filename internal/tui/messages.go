@@ -55,8 +55,16 @@ type ArtifactsMsg struct {
 }
 
 type BranchesMsg struct {
+	Repo string
 	List []ghapi.Branch
 	Err  error
+}
+
+// LocalBranchesMsg contains only branches from a working tree whose origin
+// matches the selected GitHub repository.
+type LocalBranchesMsg struct {
+	Repo  string
+	Names []string
 }
 
 type ReleasesMsg struct {
@@ -186,7 +194,29 @@ func fetchArtifactsCmd(repo string, runID int64) tea.Cmd {
 func fetchBranchesCmd(repo string) tea.Cmd {
 	return func() tea.Msg {
 		bs, err := ghapi.ListBranches(repo)
-		return BranchesMsg{List: bs, Err: err}
+		return BranchesMsg{Repo: repo, List: bs, Err: err}
+	}
+}
+
+func fetchLocalBranchesCmd(repo string) tea.Cmd {
+	return func() tea.Msg {
+		result := LocalBranchesMsg{Repo: repo}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, "git", "remote", "get-url", "origin").Output()
+		if err != nil || !strings.EqualFold(parseGitRemote(string(out)), repo) {
+			return result
+		}
+		out, err = exec.CommandContext(ctx, "git", "for-each-ref", "--format=%(refname:short)", "refs/heads/").Output()
+		if err != nil {
+			return result
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			if line != "" {
+				result.Names = append(result.Names, line)
+			}
+		}
+		return result
 	}
 }
 

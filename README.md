@@ -132,7 +132,7 @@ go install github.com/ThatOn3Gu7/ghapk@latest
 | :--- | :--- |
 | `Tab` / `Shift+Tab` | Cycle through screens |
 | `1` – `4` | Jump to Repos, Flows, Builds, or Device |
-| `Enter` | Select a repo or workflow; press again to move to the next screen |
+| `Enter` | Select a repo, branch, or workflow; press again to move on |
 | `↑` `↓` / `j` `k` | Move cursor in the current list |
 | `g` / `G` | Jump to top / bottom |
 | `Ctrl+D` / `Ctrl+U` | Half-page down / up |
@@ -141,7 +141,7 @@ go install github.com/ThatOn3Gu7/ghapk@latest
 | `d` | Download selected artifact to local cache |
 | `i` | Download and immediately launch installer on device |
 | `R` | Quick repository switcher (recent repos, git remote detection, search) |
-| `B` | Switch branch filter |
+| `B` | Switch the Actions branch filter (release assets are not branch-filtered) |
 | `r` | Refresh current view from GitHub API |
 | `w` | Toggle watch mode (live polling for running CI workflows) |
 | `/` | Real-time fuzzy filter within current panel |
@@ -151,6 +151,8 @@ go install github.com/ThatOn3Gu7/ghapk@latest
 | `D` | Run diagnostic Doctor tool |
 | `?` | Toggle help overlay |
 | `q` / `Ctrl+C` | Clean exit (restores terminal state) |
+
+On Repos, select a repository and then a branch; choose “all branches” to leave Actions runs unfiltered. Branches come from GitHub and, when the current working tree has a matching GitHub origin, its local branches. A local-only branch needs a pushed Actions run to have downloadable artifacts.
 
 In Help, press `W` (or tap the wrap label) to toggle word wrapping; when wrapping is off, long lines are clipped on the right.
 

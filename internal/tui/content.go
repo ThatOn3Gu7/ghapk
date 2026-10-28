@@ -89,6 +89,16 @@ func reposSplit(h, count int, w ...int) (bannerH, listH int) {
 	return bannerH, listH
 }
 
+// reposBranchSplit reserves a visible branch list below the repository list.
+func reposBranchSplit(h, repoCount, _ int, w int) (bannerH, repoH, branchH int) {
+	inner := max(0, h-2)
+	// Keep the box fixed while async branches or runs arrive; otherwise its
+	// rows can move between the first and second touch.
+	branchH = max(3, min(8, inner/3))
+	bannerH, repoH = reposSplit(h-branchH, repoCount, w)
+	return
+}
+
 // ANSI Shadow block plus pipe style (as in Santui reference)
 var logoBlockWide = []string{
 	` ██████╗ ██╗  ██╗   █████╗ ██████╗ ██╗  ██╗`,
@@ -115,7 +125,7 @@ func (m Model) renderShimmerLogo(w int, totalBannerH ...int) string {
 		return ""
 	}
 
-	useFull := innerW >= 43
+	useFull := innerW >= 43 && (len(totalBannerH) == 0 || totalBannerH[0] >= 8)
 	var baseBannerH int
 	var logoLines []string
 	var logoW int
@@ -254,9 +264,9 @@ func (m Model) reposContent(w, h int, mm *Model) string {
 		return m.emptyState("🔍 ∅", "No matching repositories", fmt.Sprintf("No repos match %q", l.Filter), "press Esc to clear filter", w, h)
 	}
 
-	bannerH, listH := reposSplit(h, len(l.Items), w)
+	bannerH, listH, branchH := reposBranchSplit(h, len(l.Items), len(m.branchList.Items), w)
 	l.MaxShown = listH - 2
-	l.Focused = m.focus == PanelRepos
+	l.Focused = m.focus == PanelRepos && !m.repoBranchFocused
 	st := m.st
 
 	var items []components.Item
@@ -273,16 +283,29 @@ func (m Model) reposContent(w, h int, mm *Model) string {
 	}
 	l.Items = items
 
-	list := renderBoxedList(l, st, w-4, listH, m.focus == PanelRepos, func(it components.Item) bool {
+	list := renderBoxedList(l, st, w-4, listH, m.focus == PanelRepos && !m.repoBranchFocused, func(it components.Item) bool {
 		repo, _ := it.ID.(string)
 		return repo != "" && repo == m.settings.Repo
 	})
 
+	branches := m.branchList
+	branches.MaxShown = max(1, branchH-2)
+	branches.Focused = m.focus == PanelRepos && m.repoBranchFocused
+	branchBox := renderBoxedList(branches, st, w-4, branchH, branches.Focused, func(it components.Item) bool { value, ok := it.ID.(string); return ok && value == m.branchSel })
+	lines := strings.Split(branchBox, "\n")
+	if len(lines) > 0 {
+		title := "Branches"
+		if m.branchLoading {
+			title = "Branches · loading"
+		}
+		lines[0] = putTitle(lines[0], st, title)
+	}
+	branchBox = strings.Join(lines, "\n")
 	if bannerH > 0 {
 		banner := m.renderShimmerLogo(w-4, bannerH)
-		return banner + "\n" + list
+		return banner + "\n" + list + "\n" + branchBox
 	}
-	return list
+	return list + "\n" + branchBox
 }
 
 // renderBoxedList draws a list of options inside a single static bordered box

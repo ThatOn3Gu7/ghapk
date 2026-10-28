@@ -191,6 +191,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.activate()
 
 	case "esc", "left", "h":
+		if m.focus == PanelRepos && m.repoBranchFocused {
+			m.repoBranchFocused = false
+			return m, nil
+		}
 		if m.focus == PanelArtifacts {
 			m.focus = PanelRuns
 			m.buildDetail = false
@@ -200,6 +204,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "right", "l", "v":
+		if m.focus == PanelRepos && !m.repoBranchFocused && m.settings.Repo != "" && key != "v" {
+			m.repoBranchFocused = true
+			return m, nil
+		}
 		if m.focus == PanelRuns {
 			m.focus = PanelArtifacts
 			m.buildDetail = true
@@ -258,7 +266,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "f":
 		// favourite the highlighted recent repo
-		if m.focus == PanelRepos {
+		if m.focus == PanelRepos && !m.repoBranchFocused {
 			if sel, ok := m.repos.Selected(); ok {
 				if repo, _ := sel.ID.(string); repo != "" {
 					state := config.ToggleFavourite(repo)
@@ -276,7 +284,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "e":
 		// edit the highlighted repo entry (fix a typo'd slug, rename…)
-		if m.focus == PanelRepos {
+		if m.focus == PanelRepos && !m.repoBranchFocused {
 			if sel, ok := m.repos.Selected(); ok {
 				if repo, _ := sel.ID.(string); repo != "" {
 					m.openRepoEditor(repo)
@@ -287,7 +295,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "x":
 		// remove the highlighted repo entry from the config
-		if m.focus == PanelRepos {
+		if m.focus == PanelRepos && !m.repoBranchFocused {
 			if sel, ok := m.repos.Selected(); ok {
 				if repo, _ := sel.ID.(string); repo != "" {
 					m.askRemoveRepo(repo)
@@ -329,6 +337,9 @@ func (m *Model) cycleFocus(dir int) {
 func (m *Model) focusedList() *components.List {
 	switch m.focus {
 	case PanelRepos:
+		if m.repoBranchFocused {
+			return &m.branchList
+		}
 		return &m.repos
 	case PanelWorkflows:
 		return &m.workflows
@@ -356,7 +367,11 @@ func (m *Model) moveFocus(d int) tea.Cmd {
 		m.arts.MoveBy(d)
 		m.syncArtifactSelection()
 	case PanelRepos:
-		m.repos.MoveBy(d)
+		if m.repoBranchFocused {
+			m.branchList.MoveBy(d)
+		} else {
+			m.repos.MoveBy(d)
+		}
 	case PanelWorkflows:
 		m.wfScroll = 0
 		m.workflows.MoveBy(d)
@@ -370,12 +385,26 @@ func (m *Model) moveFocus(d int) tea.Cmd {
 func (m *Model) activate() tea.Cmd {
 	switch m.focus {
 	case PanelRepos:
+		if m.repoBranchFocused {
+			if sel, ok := m.branchList.Selected(); ok {
+				if branch, ok := sel.ID.(string); ok {
+					if m.navBranchSet && m.navBranch == branch && m.branchSel == branch {
+						m.focus = PanelWorkflows
+						m.updateListBounds()
+						return m.fetchWorkflowForSelection()
+					}
+					m.navBranch, m.navBranchSet = branch, true
+					return m.selectBranch(branch)
+				}
+			}
+			return nil
+		}
 		if sel, ok := m.repos.Selected(); ok {
 			if repo, ok := sel.ID.(string); ok && repo != "" {
 				if m.navRepo == repo && m.settings.Repo == repo {
-					m.focus = PanelWorkflows
+					m.repoBranchFocused = true
 					m.updateListBounds()
-					return m.fetchWorkflowForSelection()
+					return nil
 				}
 				if repo != m.settings.Repo {
 					m.setRepo(repo, true)
@@ -510,18 +539,10 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ModalPickBranch:
 		if m.branchPicker != nil {
 			return m.branchPicker.handleKey(msg, &m, func(val string) tea.Cmd {
-				m.branchSel = val
-				m.settings.Branch = val
-				m.runsLoaded = false
-				m.runs.SetItems(nil)
-				m.arts.SetItems(nil)
 				m.branchPicker = nil
-				if val == "" {
-					m.toastf("branch: all")
-				} else {
-					m.toastf("branch: %s", val)
-				}
-				return tea.Batch(m.refreshAll()...)
+				m.branchList.Filter = ""
+				m.navBranch, m.navBranchSet = val, true
+				return m.selectBranch(val)
 			})
 		}
 		m.modal = ModalNone
@@ -812,4 +833,29 @@ func (m *Model) confirmAccept() tea.Cmd {
 		return nil
 	}
 	return nil
+}
+
+// selectBranch changes the Actions run filter; release assets are not branch-scoped.
+func (m *Model) selectBranch(branch string) tea.Cmd {
+	m.branchSel = branch
+	m.settings.Branch = branch
+	m.navWorkflowSet = false
+	m.runsLoaded = false
+	m.runs.SetItems(nil)
+	m.arts.SetItems(nil)
+	m.selectedRunID, m.selectedArtID = 0, 0
+	m.rebuildBranchList()
+	m.branchList.SelectByID(branch)
+	if m.settings.Source == "releases" {
+		m.syncReleaseArtifactItems()
+	}
+	if branch == "" {
+		m.toastf("branch: all")
+	} else {
+		m.toastf("branch: %s", branch)
+	}
+	if m.settings.Repo == "" {
+		return nil
+	}
+	return fetchRunsCmd(m.settings.Repo, m.settings.Workflow, branch, m.settings.RunLimit)
 }

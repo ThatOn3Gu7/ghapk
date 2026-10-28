@@ -50,7 +50,7 @@ func TestHelpWordWrapPreservesTextAndFits(t *testing.T) {
 				entries = append(entries, strings.Join(parts, " "))
 			}
 			all := strings.Join(entries, "\n")
-			for _, want := range []string{"tab / shift+tab cycle panels", "ctrl+d / ctrl+u page a list", "touch tap the repo name or bottom hints; swipe to scroll help", "select a repo or workflow; enter again to move on"} {
+			for _, want := range []string{"tab / shift+tab cycle panels", "ctrl+d / ctrl+u page a list", "touch tap the repo name or bottom hints; swipe to scroll help", "select a repo, branch or workflow; enter again to move on"} {
 				if !strings.Contains(all, want) {
 					t.Errorf("lost or split words %q: %s", want, all)
 				}
@@ -124,7 +124,7 @@ func TestHelpWrapOffClipsRatherThanReflowing(t *testing.T) {
 	lines := allHelpLines(m)
 	target := -1
 	for i, line := range lines {
-		if strings.Contains(line, "select a repo or workflow; enter again to move on") {
+		if strings.Contains(line, "select a repo, branch or workflow; enter again to move on") {
 			target = i
 			break
 		}
@@ -176,7 +176,7 @@ func TestWrappedContinuationRetainsThemeColor(t *testing.T) {
 	lines := allHelpLines(m)
 	index := -1
 	for i, line := range lines {
-		if strings.TrimSpace(line) == "again to move on" {
+		if strings.TrimSpace(line) == "selected artifact" {
 			index = i
 			break
 		}
@@ -187,7 +187,7 @@ func TestWrappedContinuationRetainsThemeColor(t *testing.T) {
 	m.helpVP.SetYOffset(index)
 	cells := cellbuf.NewBuffer(m.helpVP.Width, m.helpVP.Height)
 	cellbuf.SetContent(cells, m.helpVP.View())
-	if c := cells.Cell(4, 0); c.Rune != 'a' || c.Style.Fg == nil {
+	if c := cells.Cell(4, 0); c.Rune != 's' || c.Style.Fg == nil {
 		t.Fatalf("continuation lost its style: %+v", c)
 	}
 }

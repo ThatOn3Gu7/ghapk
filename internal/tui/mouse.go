@@ -84,6 +84,8 @@ func hintKey(action string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyDown}
 	case "right":
 		return tea.KeyMsg{Type: tea.KeyRight}
+	case "left":
+		return tea.KeyMsg{Type: tea.KeyLeft}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(action)}
 	}
@@ -96,7 +98,36 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.modal != ModalNone {
+		m.branchTouchActive = false
 		return m.handleModalMouse(msg)
+	}
+	if m.branchTouchActive {
+		if msg.Action == tea.MouseActionRelease || msg.Type == tea.MouseRelease {
+			m.branchTouchActive = false
+			if !m.branchTouchMoved && m.focus == PanelRepos && m.repoBranchFocused && m.settings.Repo == m.branchTouchRepo {
+				r := m.panelRects()[PanelRepos]
+				banner, repoH, branchH := reposBranchSplit(r.h, len(m.repos.Items), len(m.branchList.Items), r.w)
+				top := r.y + 1 + banner + repoH
+				if msg.X >= r.x+2 && msg.X < r.x+r.w-2 && msg.Y > top && msg.Y < top+branchH-1 {
+					idx := m.branchList.Offset + msg.Y - top - 1
+					fs := m.branchList.Filtered()
+					if idx >= 0 && idx < len(fs) && fs[idx].ID == m.branchTouchValue {
+						m.branchList.Cursor = idx
+						return m, m.activate()
+					}
+				}
+			}
+			return m, nil
+		}
+		if msg.Action == tea.MouseActionMotion && msg.Button == tea.MouseButtonLeft {
+			delta := m.branchTouchLastY - msg.Y
+			if delta != 0 {
+				m.branchTouchMoved = true
+				m.branchList.MoveBy(delta)
+			}
+			m.branchTouchLastY = msg.Y
+			return m, nil
+		}
 	}
 
 	if msg.Type == tea.MouseLeft && msg.Action == tea.MouseActionPress && m.width >= minWidth && m.height >= minHeight {
@@ -147,6 +178,17 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 			}
+			if p == PanelRepos {
+				if len(m.repos.Items) == 0 || len(m.repos.Filtered()) == 0 {
+					return m, nil
+				}
+				banner, repoH, branchH := reposBranchSplit(r.h, len(m.repos.Items), len(m.branchList.Items), r.w)
+				branchTop := r.y + 1 + banner + repoH
+				if msg.Y >= branchTop && msg.Y < branchTop+branchH {
+					m.branchList.MoveBy(d)
+					return m, nil
+				}
+			}
 			if l := m.listOf(p); l != nil {
 				l.MoveBy(d)
 				// mouse scroll does not steal keyboard focus
@@ -184,21 +226,55 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			}
 
 			if p == PanelRepos {
-				bannerH, listH := reposSplit(r.h, len(m.repos.Items), r.w)
-				listInnerH := listH - 2
-				if listInnerH < 1 {
-					listInnerH = 1
-				}
-				row := msg.Y - (r.y + 2 + bannerH)
-				if row < 0 || row >= listInnerH {
+				if len(m.repos.Items) == 0 || len(m.repos.Filtered()) == 0 {
 					return m, nil
 				}
-				idx := l.Offset + row
+				if msg.Action != tea.MouseActionPress {
+					return m, nil
+				}
+				bannerH, repoH, branchH := reposBranchSplit(r.h, len(m.repos.Items), len(m.branchList.Items), r.w)
+				repoTop := r.y + 1 + bannerH
+				branchTop := repoTop + repoH
+				if msg.X < r.x+2 || msg.X >= r.x+r.w-2 {
+					return m, nil
+				}
+				if msg.Y == branchTop {
+					m.repoBranchFocused = true
+					return m, nil
+				}
+				if msg.Y > branchTop && msg.Y < branchTop+branchH-1 {
+					l := &m.branchList
+					idx := l.Offset + msg.Y - branchTop - 1
+					fs := l.Filtered()
+					if idx < 0 || idx >= len(fs) {
+						return m, nil
+					}
+					m.repoBranchFocused = true
+					l.Cursor = idx
+					l.MoveBy(0)
+					value, ok := fs[idx].ID.(string)
+					if !ok {
+						return m, nil
+					}
+					// Wait for release so a swipe scrolls without selecting.
+					m.branchTouchActive = true
+					m.branchTouchMoved = false
+					m.branchTouchLastY = msg.Y
+					m.branchTouchValue = value
+					m.branchTouchRepo = m.settings.Repo
+					return m, nil
+				}
+				if msg.Y <= repoTop || msg.Y >= repoTop+repoH-1 {
+					return m, nil
+				}
+				l := &m.repos
+				idx := l.Offset + msg.Y - repoTop - 1
 				fs := l.Filtered()
 				if idx < 0 || idx >= len(fs) {
 					return m, nil
 				}
-				same := l.Cursor == idx
+				same := !m.repoBranchFocused && l.Cursor == idx
+				m.repoBranchFocused = false
 				l.Cursor = idx
 				l.MoveBy(0)
 				if same {
