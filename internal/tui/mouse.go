@@ -477,6 +477,18 @@ func (m Model) handleRepoPickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.Type == tea.MouseLeft && msg.Action == tea.MouseActionPress {
+		hintY := status.y + 1
+		chooseWidth := components.VisibleWidth(repoChooseHint)
+		cancelX := status.x + chooseWidth + components.VisibleWidth(repoHintSeparator)
+		cancelWidth := components.VisibleWidth(repoCancelHint)
+		if msg.Y == hintY && msg.X >= status.x && msg.X < status.x+chooseWidth {
+			rp.touchActive = false
+			return rp.handleKey(tea.KeyMsg{Type: tea.KeyEnter}, &m)
+		}
+		if msg.Y == hintY && msg.X >= cancelX && msg.X < cancelX+cancelWidth {
+			rp.touchActive = false
+			return rp.handleKey(tea.KeyMsg{Type: tea.KeyEsc}, &m)
+		}
 		if status.contains(msg.X, msg.Y) && rp.errMsg != "" {
 			return m, m.fetchUserRepos()
 		}

@@ -45,6 +45,13 @@ type RepoPicker struct {
 	touchValue  string
 }
 
+// Shared text and cell widths keep the visible hints and their touch targets aligned.
+const (
+	repoChooseHint    = "↵ choose"
+	repoHintSeparator = " · "
+	repoCancelHint    = "Esc cancel"
+)
+
 type repoSearchDebounced struct {
 	seq   int
 	query string
@@ -302,6 +309,7 @@ func (rp *RepoPicker) view(m *Model) string {
 		status = "Load failed · tap retry: " + rp.errMsg
 	}
 	lines = append(lines, m.st.Dim.Render(components.Clamp(status, width)))
+	lines = append(lines, m.st.Dim.Render(repoChooseHint+repoHintSeparator+repoCancelHint))
 	return strings.Join(lines, "\n")
 }
 

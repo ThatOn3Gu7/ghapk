@@ -272,3 +272,59 @@ func TestRepoPickerAccountSwitchClearsOldData(t *testing.T) {
 		t.Fatal("old account's repositories remained visible")
 	}
 }
+
+func TestRepoPickerFooterHintsAndTouch(t *testing.T) {
+	for _, sz := range [][2]int{{32, 18}, {40, 24}, {80, 26}, {120, 40}} {
+		t.Run(fmt.Sprint(sz), func(t *testing.T) {
+			t.Setenv("GHAPK_CONFIG_DIR", t.TempDir())
+			m := buildModel(t, sz[0], sz[1])
+			m.cachedUserRepos = []ghapi.Repo{{FullName: "team/selected"}}
+			m.userReposLoaded = true
+			m.openRepoPicker()
+			_, status := m.repoPickerBounds()
+			lines := strings.Split(components.StripANSI(m.View()), "\n")
+			if len(lines) != sz[1] || !strings.Contains(lines[status.y+1], "↵ choose · Esc cancel") {
+				t.Fatalf("footer missing or outside screen: %q", lines[status.y+1])
+			}
+			// The separator does nothing, and choosing activates the selected repository.
+			sepX := status.x + components.VisibleWidth(repoChooseHint)
+			mm, cmd := m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: sepX, Y: status.y + 1})
+			m = mm.(Model)
+			if cmd != nil || m.modal != ModalPickRepo {
+				t.Fatal("separator activated a hint")
+			}
+			mm, cmd = m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: status.x, Y: status.y + 1})
+			m = mm.(Model)
+			if cmd == nil || m.modal != ModalNone || m.settings.Repo != "team/selected" {
+				t.Fatal("choose hint did not select repo")
+			}
+			m.openRepoPicker()
+			_, status = m.repoPickerBounds()
+			cancelX := status.x + components.VisibleWidth(repoChooseHint+repoHintSeparator)
+			mm, cmd = m.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: cancelX, Y: status.y + 1})
+			m = mm.(Model)
+			if cmd != nil || m.modal != ModalNone || m.settings.Repo != "team/selected" {
+				t.Fatal("cancel hint did not close picker")
+			}
+		})
+	}
+}
+
+func TestRepoPickerFooterVisibleDuringLoadingAndError(t *testing.T) {
+	t.Setenv("GHAPK_CONFIG_DIR", t.TempDir())
+	m := buildModel(t, 32, 18)
+	m.openRepoPicker()
+	for _, state := range []string{"loading", "error"} {
+		if state == "error" {
+			next, _ := m.Update(UserReposMsg{Seq: m.userReposSeq, Err: errors.New("offline")})
+			m = next.(Model)
+		}
+		view := components.StripANSI(m.View())
+		if !strings.Contains(view, "↵ choose · Esc cancel") {
+			t.Fatalf("footer missing during %s", state)
+		}
+		if state == "error" && !strings.Contains(view, "Load failed") {
+			t.Fatal("error disappeared")
+		}
+	}
+}
