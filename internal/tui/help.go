@@ -72,7 +72,7 @@ func (m Model) helpLayout() (viewport.Model, []int) {
 
 	h1("Moving around")
 	row("tab / shift+tab", "cycle panels")
-	row("1 … 4", "jump to Repos, Flows, Builds, Device")
+	row("1 … 5", "jump to Repos, Flows, Builds, Device, Downloads")
 	row("enter", "select a repo, branch or workflow; enter again to move on")
 	row("j / k · ↑ / ↓", "move in a list")
 	row("ctrl+d / ctrl+u", "page a list")
@@ -84,7 +84,7 @@ func (m Model) helpLayout() (viewport.Model, []int) {
 
 	h1("Doing things")
 	row("d", "download the selected artifact")
-	row("i", "download and install it")
+	row("i", "check the device and choose Install or Download only")
 	row("o", "open the selected run in the browser")
 	row("O", "open the download folder")
 	row("r", "refresh runs, workflows, releases")
@@ -93,6 +93,14 @@ func (m Model) helpLayout() (viewport.Model, []int) {
 	row("f", "star/unstar a recent repository")
 	row("e", "edit the highlighted repo entry")
 	row("x", "remove it from the recents file")
+
+	h1("Downloads")
+	row("enter", "view job detail, or install a selected saved APK")
+	row("s / esc", "focus saved APKs / return to jobs")
+	row("c", "cancel the selected job (installer handoff cannot be undone)")
+	row("x / X", "remove a finished job / remove all finished jobs")
+	row("x", "delete the selected saved APK after confirmation")
+	row("touch", "tap rows and hints; swipe lists or job details")
 
 	h1("Pickers & screens")
 	row("R", "repository picker (recents, yours, GitHub search)")

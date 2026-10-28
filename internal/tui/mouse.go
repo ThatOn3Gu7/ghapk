@@ -158,6 +158,9 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.activeTab() == PanelRuns {
 		return m.handleBuildMouse(msg)
 	}
+	if m.activeTab() == PanelDownloads {
+		return m.handleDownloadMouse(msg)
+	}
 
 	switch msg.Type {
 
@@ -378,6 +381,9 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 // handleModalMouse captures input before it can reach the dashboard.
 func (m Model) handleModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.modal == ModalPlan {
+		return m.handlePlanMouse(msg)
+	}
 	if m.modal == ModalHelp {
 		return m.handleHelpMouse(msg), nil
 	}

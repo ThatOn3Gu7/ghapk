@@ -4,6 +4,7 @@ package apk
 
 import (
 	"archive/zip"
+	"context"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/asn1"
@@ -73,6 +74,14 @@ type Inspection struct {
 // for path. A non-fatal manifest parse failure leaves HaveInfo=false and
 // populates InfoErr so callers can warn honestly without crashing.
 func Inspect(apkPath string) (Inspection, error) {
+	return InspectContext(context.Background(), apkPath)
+}
+
+// InspectContext checks cancellation during the potentially long file hash.
+func InspectContext(ctx context.Context, apkPath string) (Inspection, error) {
+	if err := ctx.Err(); err != nil {
+		return Inspection{}, err
+	}
 	st, err := os.Lstat(apkPath)
 	if err != nil {
 		return Inspection{}, err
@@ -80,7 +89,7 @@ func Inspect(apkPath string) (Inspection, error) {
 	if !st.Mode().IsRegular() || st.Size() == 0 {
 		return Inspection{}, errors.New("APK is empty or not a regular file")
 	}
-	sha, err := FileSHA256(apkPath)
+	sha, err := FileSHA256Context(ctx, apkPath)
 	if err != nil {
 		return Inspection{}, err
 	}
@@ -89,27 +98,51 @@ func Inspect(apkPath string) (Inspection, error) {
 		LocalSHA256:  sha,
 		DigestStatus: DigestUnverified,
 	}
+	if err := ctx.Err(); err != nil {
+		return Inspection{}, err
+	}
 	if info, ierr := ReadInfo(apkPath); ierr == nil {
 		out.Info = info
 		out.HaveInfo = true
 	} else {
 		out.InfoErr = ierr.Error()
 	}
+	if err := ctx.Err(); err != nil {
+		return Inspection{}, err
+	}
 	if cert, cerr := ReadCert(apkPath); cerr == nil {
 		out.Cert = cert
+	}
+	if err := ctx.Err(); err != nil {
+		return Inspection{}, err
 	}
 	return out, nil
 }
 
 // FileSHA256 returns the lowercase hex SHA-256 of a regular file.
-func FileSHA256(p string) (string, error) {
+func FileSHA256(p string) (string, error) { return FileSHA256Context(context.Background(), p) }
+
+type contextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(p)
+}
+
+// FileSHA256Context stops hashing promptly when ctx is cancelled.
+func FileSHA256Context(ctx context.Context, p string) (string, error) {
 	f, err := os.Open(p)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	if _, err := io.Copy(h, contextReader{ctx, f}); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
@@ -149,11 +182,14 @@ func NormalizeExpectedSHA256(expected string) (hexDigest string, present bool, e
 // DigestVerified) along with the file's local SHA-256. When expected is set
 // and does not match, it returns DigestMismatch and a non-nil error.
 func VerifyExpectedSHA256(filePath, expected string) (status DigestStatus, actual string, err error) {
+	return VerifyExpectedSHA256Context(context.Background(), filePath, expected)
+}
+func VerifyExpectedSHA256Context(ctx context.Context, filePath, expected string) (status DigestStatus, actual string, err error) {
 	want, present, perr := NormalizeExpectedSHA256(expected)
 	if perr != nil {
 		return DigestMismatch, "", perr
 	}
-	got, herr := FileSHA256(filePath)
+	got, herr := FileSHA256Context(ctx, filePath)
 	if herr != nil {
 		return DigestUnverified, "", herr
 	}

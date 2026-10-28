@@ -46,7 +46,7 @@ func VerifyInstall(ctx context.Context, pkg string, wantVersionCode int64, wait 
 	}
 
 	checkOnce := func() (VerifyResult, bool) {
-		app, found := QueryPackage(pkg)
+		app, found := QueryPackageContext(ctx, pkg)
 		if !app.Queryable && !found {
 			return VerifyResult{
 				Outcome: VerifyUnavailable,

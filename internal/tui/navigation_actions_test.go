@@ -190,7 +190,7 @@ func TestBuildActionChipsAndTouchTargets(t *testing.T) {
 				if cmd == nil {
 					t.Fatalf("%s did not start", label)
 				}
-				if action < 2 && (m.modal != ModalTask || m.task == nil || m.pendingInstall != (action == 0)) {
+				if (action == 0 && m.modal != ModalPlan) || (action == 1 && (m.focus != PanelDownloads || len(m.jobs) != 1 || m.jobs[0].spec.install)) {
 					t.Fatalf("wrong action: modal=%v task=%+v pending=%v", m.modal, m.task, m.pendingInstall)
 				}
 				if action == 2 && m.modal != ModalNone {
@@ -252,14 +252,13 @@ func TestDownloadActionOnlySaves(t *testing.T) {
 	m := buildModel(t, 100, 30)
 	mm, cmd := m.Update(key("d"))
 	m = mm.(Model)
-	if cmd == nil || m.pendingInstall || m.modal != ModalTask {
+	if cmd == nil || m.focus != PanelDownloads || len(m.jobs) != 1 || m.jobs[0].spec.install {
 		t.Fatal("download did not start")
 	}
-	mm, cmd = m.Update(DownloadDoneMsg{APK: ghapi.ExtractedAPK{Path: "/tmp/app.apk", Name: "app.apk"}})
-	m = mm.(Model)
-	if cmd != nil || !m.haveDownload || m.task.Kind != "download" || m.task.phase != "done" {
-		t.Fatalf("download unexpectedly installed: %+v", m.task)
+	if m.jobs[0].spec.install {
+		t.Fatal("download-only job must not install")
 	}
+
 }
 
 func TestActionChipsInNoColor(t *testing.T) {
@@ -278,7 +277,7 @@ func TestActionChipsInNoColor(t *testing.T) {
 	_, hits := m.buildActionChips(r.w - 4)
 	mm, cmd := m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: r.x + 2 + hits[0].start, Y: r.y + r.h - 2})
 	m = mm.(Model)
-	if cmd == nil || m.modal != ModalTask || !m.pendingInstall {
+	if cmd == nil || m.modal != ModalPlan || m.plan == nil {
 		t.Fatal("no-color install touch failed")
 	}
 }

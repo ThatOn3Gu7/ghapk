@@ -98,7 +98,7 @@ func TestBuildArtifactIconsAndFiltering(t *testing.T) {
 			}
 			mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 			m = mm.(Model)
-			if m.modal != ModalTask || m.task == nil || m.task.Artifact != "nazo-debug-apk" {
+			if m.modal != ModalPlan || m.plan == nil || m.plan.choices[m.plan.selected].name() != "nazo-debug-apk" {
 				t.Fatal("icon affected artifact action")
 			}
 		})

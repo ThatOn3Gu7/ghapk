@@ -85,6 +85,7 @@ func defaultAtomicFS() atomicFS {
 }
 
 type streamOpts struct {
+	ctx            context.Context
 	maxBytes       int64
 	stallTimeout   time.Duration
 	ghBin          string
@@ -103,12 +104,13 @@ func defaultStreamOpts() streamOpts {
 }
 
 type extractOpts struct {
-	maxEntries       int
-	maxAPKBytes      int64
-	maxNestedDepth   int
-	maxNestedBytes   int64
-	excludePattern   string
-	fs               atomicFS
+	ctx            context.Context
+	maxEntries     int
+	maxAPKBytes    int64
+	maxNestedDepth int
+	maxNestedBytes int64
+	excludePattern string
+	fs             atomicFS
 }
 
 func defaultExtractOpts() extractOpts {
@@ -149,6 +151,12 @@ func DownloadArtifactCached(repo string, art Artifact, destZip string, allowCach
 // CanReuseArtifactZip reports whether destZip is an existing, safe regular ZIP
 // file whose SHA-256 matches art.Digest (when GitHub published a digest).
 func CanReuseArtifactZip(destZip string, art Artifact) bool {
+	return CanReuseArtifactZipContext(context.Background(), destZip, art)
+}
+func CanReuseArtifactZipContext(ctx context.Context, destZip string, art Artifact) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	if _, _, err := validateDestFilePath(destZip); err != nil {
 		return false
 	}
@@ -159,7 +167,7 @@ func CanReuseArtifactZip(destZip string, art Artifact) bool {
 	if _, present, derr := apk.NormalizeExpectedSHA256(art.Digest); derr != nil {
 		return false
 	} else if present {
-		st, _, verr := apk.VerifyExpectedSHA256(destZip, art.Digest)
+		st, _, verr := apk.VerifyExpectedSHA256Context(ctx, destZip, art.Digest)
 		if verr != nil || st != apk.DigestVerified {
 			return false
 		}
@@ -196,6 +204,12 @@ func DownloadReleaseAssetCached(repo string, asset ReleaseAsset, dest string, al
 // CanReuseReleaseAsset reports whether targetPath is an existing regular file
 // matching asset.Size and asset.Digest (when published).
 func CanReuseReleaseAsset(targetPath string, asset ReleaseAsset) bool {
+	return CanReuseReleaseAssetContext(context.Background(), targetPath, asset)
+}
+func CanReuseReleaseAssetContext(ctx context.Context, targetPath string, asset ReleaseAsset) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	if _, _, err := validateDestFilePath(targetPath); err != nil {
 		return false
 	}
@@ -209,7 +223,7 @@ func CanReuseReleaseAsset(targetPath string, asset ReleaseAsset) bool {
 	if _, present, derr := apk.NormalizeExpectedSHA256(asset.Digest); derr != nil {
 		return false
 	} else if present {
-		st, _, verr := apk.VerifyExpectedSHA256(targetPath, asset.Digest)
+		st, _, verr := apk.VerifyExpectedSHA256Context(ctx, targetPath, asset.Digest)
 		if verr != nil || st != apk.DigestVerified {
 			return false
 		}
@@ -301,9 +315,14 @@ func streamWithOpts(opts streamOpts, endpoint, dest string, expected int64, prog
 	}
 
 	return writeFileAtomicInDir(opts.fs, dir, leaf, func(w io.Writer) error {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		parent := opts.ctx
+		if parent == nil {
+			parent = context.Background()
+		}
+		ctx, cancel := context.WithTimeout(parent, 30*time.Minute)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, opts.ghBin, ghArgs...)
+		cmd.WaitDelay = time.Second
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
 			return err
@@ -332,6 +351,14 @@ func streamWithOpts(opts streamOpts, endpoint, dest string, expected int64, prog
 		var didStall atomic.Bool
 		stallDone := make(chan struct{})
 		defer close(stallDone)
+		// An inherited pipe held by a child must not keep a cancelled read stuck.
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = stdout.Close()
+			case <-stallDone:
+			}
+		}()
 		if opts.stallTimeout > 0 {
 			pollDur := 500 * time.Millisecond
 			if opts.stallTimeout/4 > 0 && opts.stallTimeout/4 < pollDur {
@@ -421,6 +448,9 @@ func streamWithOpts(opts streamOpts, endpoint, dest string, expected int64, prog
 					endpoint, wantDigest, gotDigest,
 				)
 			}
+		}
+		if opts.ctx != nil && opts.ctx.Err() != nil {
+			return opts.ctx.Err()
 		}
 		if prog != nil {
 			prog(got, expected)
@@ -564,6 +594,9 @@ func extractBestAPKWithOpts(zipPath, outDir, filePattern string, p score.Prefs, 
 		entriesLeft -= len(files)
 
 		for _, f := range files {
+			if opts.ctx != nil && opts.ctx.Err() != nil {
+				return opts.ctx.Err()
+			}
 			isDir, err := validateZipEntryMode(f)
 			if err != nil {
 				return err
@@ -595,7 +628,11 @@ func extractBestAPKWithOpts(zipPath, outDir, filePattern string, p score.Prefs, 
 					return fmt.Errorf("opening nested zip %q: %w", sanitizeDisplayPath(f.Name), oerr)
 				}
 				var nbuf bytes.Buffer
-				n, cerr := copyBounded(&nbuf, rc, capBytes)
+				var reader io.Reader = rc
+				if opts.ctx != nil {
+					reader = cancelReader{opts.ctx, rc}
+				}
+				n, cerr := copyBounded(&nbuf, reader, capBytes)
 				_ = rc.Close()
 				if cerr != nil {
 					return fmt.Errorf("reading nested zip %q: %w", sanitizeDisplayPath(f.Name), cerr)
@@ -655,11 +692,19 @@ func extractBestAPKWithOpts(zipPath, outDir, filePattern string, p score.Prefs, 
 	if err != nil {
 		return ExtractedAPK{}, err
 	}
-	written, err := extractOneLimited(opts.fs, best.f, outDir, best.leaf, opts.maxAPKBytes)
+	written, err := extractOneLimitedContext(opts.ctx, opts.fs, best.f, outDir, best.leaf, opts.maxAPKBytes)
 	if err != nil {
 		return ExtractedAPK{}, err
 	}
-	meta, _ := apk.Inspect(dest)
+	var meta apk.Inspection
+	if opts.ctx != nil {
+		meta, err = apk.InspectContext(opts.ctx, dest)
+		if err != nil && opts.ctx.Err() != nil {
+			return ExtractedAPK{}, opts.ctx.Err()
+		}
+	} else {
+		meta, _ = apk.Inspect(dest)
+	}
 	return ExtractedAPK{
 		Path:         dest,
 		Name:         best.leaf,
@@ -687,6 +732,22 @@ func copyBounded(w io.Writer, r io.Reader, maxBytes int64) (int64, error) {
 }
 
 func extractOneLimited(fs atomicFS, f *zip.File, outDir, leaf string, maxBytes int64) (int64, error) {
+	return extractOneLimitedContext(nil, fs, f, outDir, leaf, maxBytes)
+}
+
+type cancelReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r cancelReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(p)
+}
+
+func extractOneLimitedContext(ctx context.Context, fs atomicFS, f *zip.File, outDir, leaf string, maxBytes int64) (int64, error) {
 	if maxBytes <= 0 {
 		return 0, errors.New("invalid maximum APK size limit")
 	}
@@ -700,7 +761,14 @@ func extractOneLimited(fs atomicFS, f *zip.File, outDir, leaf string, maxBytes i
 		if err != nil {
 			return fmt.Errorf("opening zip entry %q: %w", sanitizeDisplayPath(f.Name), err)
 		}
-		n, copyErr := copyBounded(w, rc, maxBytes)
+		var reader io.Reader = rc
+		if ctx != nil {
+			reader = cancelReader{ctx, rc}
+		}
+		n, copyErr := copyBounded(w, reader, maxBytes)
+		if copyErr == nil && ctx != nil {
+			copyErr = ctx.Err()
+		}
 		closeErr := rc.Close()
 		written = n
 		if copyErr != nil {
@@ -1370,4 +1438,25 @@ func HumanBytes(b int64) string {
 	default:
 		return fmt.Sprintf("%d B", b)
 	}
+}
+
+// DownloadArtifactContext and ExtractBestAPKContext are cancellable variants
+// used by interactive jobs. Existing CLI APIs retain their original behavior.
+func DownloadArtifactContext(ctx context.Context, repo string, art Artifact, dest string, verify bool, prog Progress) error {
+	opts := defaultStreamOpts()
+	opts.ctx = ctx
+	opts.skipDigest = !verify
+	return downloadArtifactWithOpts(opts, repo, art, dest, prog)
+}
+func DownloadReleaseAssetContext(ctx context.Context, repo string, asset ReleaseAsset, dest string, verify bool, prog Progress) error {
+	opts := defaultStreamOpts()
+	opts.ctx = ctx
+	opts.skipDigest = !verify
+	return downloadReleaseAssetWithOpts(opts, repo, asset, dest, prog)
+}
+func ExtractBestAPKContext(ctx context.Context, zipPath, outDir, filePattern, excludePattern string, p score.Prefs, dev score.Device) (ExtractedAPK, error) {
+	opts := defaultExtractOpts()
+	opts.ctx = ctx
+	opts.excludePattern = excludePattern
+	return extractBestAPKWithOpts(zipPath, outDir, filePattern, p, dev, opts)
 }

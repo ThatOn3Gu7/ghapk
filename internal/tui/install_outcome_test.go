@@ -154,44 +154,25 @@ func TestStartInstallPromptsOnDowngradeAutoAndBlocksReflexY(t *testing.T) {
 	}
 }
 
-// Explicit install starts directly and must work even when NoOpen is set.
-func TestDownloadAndInstallTransitionsDirectlyToInstall(t *testing.T) {
-	t.Setenv("GHAPK_HISTORY", filepath.Join(t.TempDir(), "history.json"))
-	apkPath := filepath.Join(t.TempDir(), "app-debug.apk")
-	if err := os.WriteFile(apkPath, []byte("apk"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for _, confirmKey := range []tea.KeyMsg{key("i"), keyOf("enter")} {
+// Install opens a preflight plan, even when NoOpen is set.
+func TestInstallOpensPreflight(t *testing.T) {
+	for _, k := range []tea.KeyMsg{key("i"), keyOf("enter")} {
 		m := seedArtifacts(seedRuns(newTestModel()))
-		m.dev = device.Info{OS: "android", CanInstall: true, InstallVia: "termux-open"}
 		m.settings.NoOpen = true
 		mm, _ := m.Update(key("3"))
 		mm, _ = mm.Update(keyOf("enter"))
 		m = mm.(Model)
-		mm, dlCmd := m.Update(confirmKey)
+		mm, cmd := m.Update(k)
 		m = mm.(Model)
-		if dlCmd == nil || !m.pendingInstall || m.modal != ModalTask {
-			t.Fatalf("key %q did not start direct install: pending=%v cmdNil=%v modal=%v", confirmKey.String(), m.pendingInstall, dlCmd == nil, m.modal)
+		if cmd == nil || m.modal != ModalPlan || m.plan == nil || !m.plan.loading {
+			t.Fatalf("%s did not open checking plan", k.String())
 		}
-
-		// Complete download: must immediately enter Installing, NOT stop at ["Install", "Close"].
-		mm, instCmd := m.Update(DownloadDoneMsg{
-			APK: ghapi.ExtractedAPK{
-				Path: apkPath,
-				Name: "app-debug.apk",
-				Size: 3,
-				Meta: apk.Inspection{
-					HaveInfo: true,
-					Info:     apk.Info{Package: "com.acme.rocket", VersionCode: 10, VersionName: "1.0"},
-				},
-			},
-		})
+		mm, _ = m.Update(planReadyMsg{seq: m.plan.seq, dev: device.Info{CanInstall: true}})
 		m = mm.(Model)
-		if instCmd == nil {
-			t.Fatalf("DownloadDoneMsg with pendingInstall returned nil install cmd (key %q)", confirmKey.String())
-		}
-		if m.modal != ModalTask || m.task == nil || m.task.Kind != "install" || m.task.phase != "installing" {
-			t.Fatalf("expected ModalTask in installing phase, got modal=%v task=%+v", m.modal, m.task)
+		mm, cmd = m.Update(keyOf("enter"))
+		m = mm.(Model)
+		if cmd == nil || m.focus != PanelDownloads || len(m.jobs) != 1 || !m.jobs[0].spec.install {
+			t.Fatal("plan did not start install job")
 		}
 	}
 }
@@ -412,12 +393,20 @@ func TestLiveTeaProgramDirectInstallEndToEnd(t *testing.T) {
 		t.Fatalf("timed out waiting for %q in live TUI output:\n%s", sub, components.StripANSI(out.String()))
 	}
 
-	// Select Builds and install the selected artifact directly.
+	// Select Builds, wait for the preflight, then install.
 	_, _ = inW.Write([]byte("3"))
 	waitForOut("app-debug")
 	waitForOut("d:download")
 	_, _ = inW.Write([]byte("i"))
-	waitForOut("installed")
+	waitForOut("APK details checked after download")
+	_, _ = inW.Write([]byte("\r"))
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(adbMarker); err == nil {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 	if strings.Contains(components.StripANSI(out.String()), "Confirm download") {
 		t.Fatal("unexpected download confirmation")
 	}
@@ -427,8 +416,9 @@ func TestLiveTeaProgramDirectInstallEndToEnd(t *testing.T) {
 		t.Fatalf("expected live Install action to run `adb install -r`, got marker=%q err=%v", string(gotADB), err)
 	}
 
-	// Press Enter on "Close" to dismiss modal, then 'q' to quit cleanly.
-	_, _ = inW.Write([]byte("\rq"))
+	// Wait for the background job to finish before quitting.
+	waitForOut("Job #1 · installed")
+	_, _ = inW.Write([]byte("q"))
 	_ = inW.Close()
 
 	select {
@@ -437,6 +427,6 @@ func TestLiveTeaProgramDirectInstallEndToEnd(t *testing.T) {
 			t.Fatalf("tea.Program exited with error: %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("tea.Program did not exit after Close + q")
+		t.Fatal("tea.Program did not exit after q")
 	}
 }

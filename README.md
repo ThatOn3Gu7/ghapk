@@ -131,22 +131,22 @@ go install github.com/ThatOn3Gu7/ghapk@latest
 | Key | Action |
 | :--- | :--- |
 | `Tab` / `Shift+Tab` | Cycle through screens |
-| `1` – `4` | Jump to Repos, Flows, Builds, or Device |
+| `1` – `5` | Jump to Repos, Flows, Builds, Device, or Downloads |
 | `Enter` | Select a repo, branch, or workflow; press again to move on |
 | `↑` `↓` / `j` `k` | Move cursor in the current list |
 | `g` / `G` | Jump to top / bottom |
 | `Ctrl+D` / `Ctrl+U` | Half-page down / up |
-| `Enter` / `→` | Open a build’s artifacts; Enter on an artifact downloads and installs it |
+| `Enter` / `→` | Open a build’s artifacts; Enter on an artifact opens the install plan |
 | **Mouse / Touch** | Tap to select; tap the repo name for the picker or a bottom hint to run it; swipe or drag the scroll bar in Help |
 | `d` | Download selected artifact to local cache |
-| `i` | Download and immediately launch installer on device |
+| `i` | Check the device, choose an artifact, then install or download only |
 | `R` | Repository picker (accessible GitHub repos, recents, git remote, search) |
 | `B` | Switch the Actions branch filter (release assets are not branch-filtered) |
 | `r` | Refresh current view from GitHub API |
 | `w` | Toggle watch mode (live polling for running CI workflows) |
 | `/` | Real-time fuzzy filter within current panel |
 | `f` | Star / favorite a repository |
-| `s` | Open interactive settings editor |
+| `s` | Open settings (in Downloads, focus saved APKs) |
 | `t` | Cycle color theme (`action`, `mocha`, `emerald`, `paper`) |
 | `D` | Run diagnostic Doctor tool |
 | `?` | Toggle help overlay |
@@ -248,6 +248,24 @@ Settings can be customized inside the TUI (`s`) or directly via configuration fi
 - **Per-Repository Config:** `~/.config/ghapk/repos/<owner>_<repo>.conf`
 - **Local Workspace Config:** `.ghapk.conf`
 - **Downloaded APK Storage:** `~/.cache/ghapk/apk/`
+
+### Downloads and installation
+
+Install first checks the device and presents a plan; APK manifest and signing
+information are inspected **after** downloading. Choose an artifact, then
+**Install**, **Download only**, or **Cancel**. Downloads run in the background;
+the Downloads tab shows progress, checksum status, processing steps and logs.
+On a narrow screen, select a job and press Enter (or tap it again) for details.
+Swipe lists or details to scroll. In Downloads, `c` cancels a job, `x` removes
+a finished job or deletes a selected saved APK (with confirmation), `X`
+removes finished jobs, and `s` focuses saved APKs. Select a saved APK and press
+Enter to install it with the same safety checks.
+
+Jobs are kept only for the current session; saved APKs survive restarts.
+Cancelled downloads restart from the beginning. Cancellation cannot undo an
+installer handoff already made to Android. An installer launch is reported as
+unconfirmed unless installation can actually be verified on the device.
+
 
 ---
 

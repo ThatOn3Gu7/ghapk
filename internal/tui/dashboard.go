@@ -188,6 +188,22 @@ func (m Model) statusBar() components.StatusBar {
 					add("→/v", "view yaml", "right")
 				}
 			}
+		case PanelDownloads:
+			if !m.downloadDetail && m.width < 80 && m.downloadFocus == 0 {
+				add("↵", "detail", "enter")
+			}
+			if m.downloadDetail {
+				add("esc", "back", "esc")
+			}
+			if m.downloadFocus == 1 {
+				add("i", "install", "i")
+				add("x", "delete", "x")
+				add("esc", "jobs", "esc")
+			} else {
+				add("c", "cancel", "c")
+				add("x", "remove", "x")
+				add("s", "saved", "s")
+			}
 		case PanelArtifacts:
 			add("d", "download", "d")
 			add("i", "install", "i")
@@ -201,7 +217,9 @@ func (m Model) statusBar() components.StatusBar {
 		if m.focusedListOrNil() != nil {
 			add("/", "filter", "/")
 		}
-		add("s", "settings", "s")
+		if m.focus != PanelDownloads {
+			add("s", "settings", "s")
+		}
 		add("?", "help", "?")
 		add("q", "quit", "q")
 	}
@@ -247,6 +265,8 @@ func (m Model) renderCompact(h int) string {
 		return tabBar + "\n" + m.renderBuilds()
 	case PanelArtifacts:
 		return tabBar + "\n" + m.renderBuilds()
+	case PanelDownloads:
+		return tabBar + "\n" + m.renderDownloads()
 	default:
 		content = m.deviceContent(m.width, bodyH, &m)
 	}
@@ -268,7 +288,7 @@ func (m Model) tabLabels() (map[PanelID]string, bool) {
 	if total <= m.width {
 		return labels, false
 	}
-	labels = map[PanelID]string{PanelRepos: "1 Repo", PanelRuns: "3 Build", PanelWorkflows: "2 Flow", PanelDevice: "4 Dev"}
+	labels = map[PanelID]string{PanelRepos: "1 Repo", PanelRuns: "3 Build", PanelWorkflows: "2 Flow", PanelDownloads: "5 DL", PanelDevice: "4 Dev"}
 	return labels, false
 }
 
@@ -292,6 +312,22 @@ func (m Model) compactTabLabel(p PanelID) string {
 	case PanelArtifacts:
 		if c := len(m.arts.Items); c > 0 {
 			n = fmt.Sprint(c)
+		}
+	case PanelDownloads:
+		active := 0
+		asking := false
+		for _, j := range m.jobs {
+			if j.status == "running" || j.status == "cancelling" || j.status == "asking" {
+				active++
+			}
+			if j.status == "asking" {
+				asking = true
+			}
+		}
+		if asking {
+			n = "?"
+		} else if active > 0 {
+			n = fmt.Sprint(active)
 		}
 	}
 	i := 0
@@ -317,6 +353,8 @@ func panelShort(p PanelID) string {
 		return "Builds"
 	case PanelArtifacts:
 		return "Artif"
+	case PanelDownloads:
+		return "Downloads"
 	default:
 		return "Device"
 	}
