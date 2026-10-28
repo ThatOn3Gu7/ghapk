@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""A stand-in for the GitHub CLI that answers from fixtures made by gen.py.
+Put its directory first on PATH and ghapk cannot tell the difference.
+
+  FAKEGH_DIR    fixtures directory (default: ./fake next to this file)
+  FAKEGH_SPEED  download speed in bytes/second (default 1500000, 0 = unthrottled)
+  FAKEGH_FAIL   ratelimit | server | auth | network : make every `api` call fail
+  FAKEGH_LOG    append a line per invocation to this file
+"""
+import base64, hashlib, json, os, re, sys, time
+from urllib.parse import urlparse, parse_qs
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+D = os.environ.get("FAKEGH_DIR", os.path.join(HERE, "fake"))
+args = sys.argv[1:]
+if os.environ.get("FAKEGH_LOG"):
+    open(os.environ["FAKEGH_LOG"], "a").write(" ".join(args) + "\n")
+db = json.load(open(os.path.join(D, "db.json")))
+
+
+def out(s):
+    sys.stdout.write(s if isinstance(s, str) else s.decode())
+    sys.stdout.flush()
+
+
+def die(msg, code=1):
+    sys.stderr.write(msg + "\n")
+    sys.exit(code)
+
+
+if not args:
+    die("gh: fake")
+if args[0] == "--version":
+    out("gh version 2.99.0 (fake)\n"); sys.exit(0)
+if args[0] == "auth":
+    if args[1] == "status":
+        if os.environ.get("FAKEGH_FAIL") == "auth":
+            die("You are not logged into any GitHub hosts. To log in, run: gh auth login", 1)
+        out("github.com\n  ✓ Logged in to github.com account thaton3 (keyring)\n"); sys.exit(0)
+    if args[1] == "token":
+        out("ghp_faketoken1234567890\n"); sys.exit(0)
+if args[0] == "repo" and args[1] == "view":
+    out(db["repo"]["full_name"] + "\n"); sys.exit(0)
+if args[0] == "run" and args[1] == "view":
+    out("fake log line 1\nfake error: compilation failed\n"); sys.exit(0)
+if args[0] == "run" and args[1] == "download":
+    rid = int(args[2]); name = args[args.index("--name") + 1]; dest = args[args.index("--dir") + 1]
+    import zipfile
+    for a in db["artifacts"]:
+        if a["workflow_run"]["id"] == rid and a["name"] == name:
+            zipfile.ZipFile(os.path.join(D, "zips", "%d.zip" % a["id"])).extractall(dest); sys.exit(0)
+    die("no artifact", 1)
+if args[0] != "api":
+    die("fake gh: unsupported " + " ".join(args))
+
+include, headers, endpoint = False, {}, None
+i = 1
+while i < len(args):
+    a = args[i]
+    if a in ("--include", "-i"):
+        include = True
+    elif a == "-H":
+        k, _, v = args[i + 1].partition(":"); headers[k.strip().lower()] = v.strip(); i += 1
+    elif a in ("--jq", "-q", "-X", "--method", "-f", "-F"):
+        i += 1
+    elif a.startswith("-"):
+        pass
+    else:
+        endpoint = a
+    i += 1
+
+fail = os.environ.get("FAKEGH_FAIL")
+if fail == "ratelimit" and endpoint != "rate_limit":
+    die("gh: API rate limit exceeded (HTTP 403)")
+if fail == "server":
+    die("gh: Server Error (HTTP 502)")
+if fail == "network":
+    die("dial tcp: lookup api.github.com: no such host")
+if fail == "auth":
+    die("gh: Bad credentials (HTTP 401)")
+
+u = urlparse(endpoint)
+path, q = u.path.strip("/"), {k: v[0] for k, v in parse_qs(u.query).items()}
+repo = db["repo"]["full_name"]
+if path.startswith("repos/") and not path.startswith("repos/" + repo):
+    die("gh: Not Found (HTTP 404)")
+
+
+def reply(obj, status="200 OK"):
+    body = json.dumps(obj)
+    if include:
+        etag = '"%s"' % hashlib.md5(body.encode()).hexdigest()
+        if headers.get("if-none-match") == etag:
+            die("gh: HTTP 304", 1)
+        out("HTTP/2.0 %s\r\nContent-Type: application/json\r\nEtag: %s\r\n\r\n" % (status, etag))
+    out(body + "\n")
+    sys.exit(0)
+
+
+def page(items, key=None):
+    pp = int(q.get("per_page", 30)); pg = int(q.get("page", 1))
+    s = items[(pg - 1) * pp: pg * pp]
+    return {key: s, "total_count": len(items)} if key else s
+
+
+if path == "rate_limit":
+    reply({"resources": {"core": {"limit": 5000, "remaining": 4977, "reset": int(time.time()) + 1800}}})
+if path == "user":
+    reply(db["user"])
+rest = path[len("repos/" + repo):].strip("/") if path.startswith("repos/") else path
+if path.startswith("repos/") and rest == "":
+    reply(db["repo"])
+if rest == "actions/runs" or re.fullmatch(r"actions/workflows/[^/]+/runs", rest):
+    rs = db["runs"]
+    if rest != "actions/runs":
+        w = rest.split("/")[2]
+        ids = [x["id"] for x in db["workflows"] if str(x["id"]) == w or x["path"].endswith("/" + w)]
+        if not ids:
+            die("gh: Not Found (HTTP 404)")
+        rs = [r for r in rs if r["workflow_id"] in ids]
+    if q.get("branch"):
+        rs = [r for r in rs if r["head_branch"] == q["branch"]]
+    if q.get("status"):
+        s = q["status"]
+        rs = [r for r in rs if s in (r["status"], r["conclusion"])]
+    reply(page(rs, "workflow_runs"))
+m = re.fullmatch(r"actions/runs/(\d+)", rest)
+if m:
+    for r in db["runs"]:
+        if r["id"] == int(m.group(1)): reply(r)
+    die("gh: Not Found (HTTP 404)")
+m = re.fullmatch(r"actions/runs/(\d+)/artifacts", rest)
+if m:
+    reply({"artifacts": [a for a in db["artifacts"] if a["workflow_run"]["id"] == int(m.group(1))]})
+m = re.fullmatch(r"actions/runs/(\d+)/jobs", rest)
+if m:
+    reply(db["jobs"])
+if rest == "actions/workflows":
+    reply({"workflows": db["workflows"]})
+if rest == "actions/artifacts":
+    reply(page(sorted(db["artifacts"], key=lambda a: a["created_at"], reverse=True), "artifacts"))
+m = re.fullmatch(r"actions/artifacts/(\d+)(/zip)?", rest)
+if m:
+    for a in db["artifacts"]:
+        if a["id"] == int(m.group(1)):
+            if not m.group(2):
+                reply(a)
+            data = open(os.path.join(D, "zips", "%d.zip" % a["id"]), "rb").read()
+            speed = int(os.environ.get("FAKEGH_SPEED", "1500000"))
+            chunk = 64 * 1024
+            for o in range(0, len(data), chunk):
+                sys.stdout.buffer.write(data[o:o + chunk]); sys.stdout.buffer.flush()
+                if speed: time.sleep(chunk / speed)
+            sys.exit(0)
+    die("gh: Not Found (HTTP 404)")
+if rest == "branches":
+    reply(db["branches"])
+if rest == "releases":
+    reply(db["releases"])
+if rest.startswith("compare/"):
+    reply({"ahead_by": len(db["commits"]), "commits": db["commits"]})
+if rest.startswith("contents/"):
+    die("gh: Not Found (HTTP 404)")
+if path == "user/repos":
+    reply([db["repo"]])
+die("gh: Not Found (HTTP 404)")

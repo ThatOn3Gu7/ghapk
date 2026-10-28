@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _phone
+a = sys.argv[1:]
+if a[:3] == ["package", "list", "packages"]:
+    st = _phone.load()
+    if "--show-versioncode" in a:
+        q = a[-1]
+        for k, v in st.items():
+            if q in k: print("package:%s versionCode:%d" % (k, v["versionCode"]))
+    else:
+        print("package:com.android.settings")
+        for k in st: print("package:" + k)
