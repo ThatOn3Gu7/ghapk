@@ -67,6 +67,28 @@ func (m *Model) listOf(p PanelID) *components.List {
 	return nil
 }
 
+// hintKey translates a visible hint into exactly the same message as a keypress.
+func hintKey(action string) tea.KeyMsg {
+	switch action {
+	case "enter":
+		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "esc":
+		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "tab":
+		return tea.KeyMsg{Type: tea.KeyTab}
+	case "backspace":
+		return tea.KeyMsg{Type: tea.KeyBackspace}
+	case "up":
+		return tea.KeyMsg{Type: tea.KeyUp}
+	case "down":
+		return tea.KeyMsg{Type: tea.KeyDown}
+	case "right":
+		return tea.KeyMsg{Type: tea.KeyRight}
+	default:
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(action)}
+	}
+}
+
 // handleMouse implements click-to-focus, click-to-select,
 // click-again-to-activate, and wheel scrolling of the hovered panel.
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
@@ -77,7 +99,20 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m.handleModalMouse(msg)
 	}
 
-	if msg.Type == tea.MouseLeft {
+	if msg.Type == tea.MouseLeft && msg.Action == tea.MouseActionPress && m.width >= minWidth && m.height >= minHeight {
+		if _, repo := m.headerLayout(); repo.contains(msg.X, msg.Y) {
+			return m, m.openRepoPicker()
+		}
+		if msg.Y == m.height-1 {
+			sb := m.statusBar()
+			_, spans := sb.Layout(m.st)
+			for _, span := range spans {
+				if msg.X >= span.Start && msg.X < span.End {
+					return m.handleKey(hintKey(sb.Hints[span.Index].Action))
+				}
+			}
+			return m, nil
+		}
 		for p, r := range m.compactTabRects() {
 			if r.contains(msg.X, msg.Y) {
 				m.focus = p

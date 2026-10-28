@@ -29,6 +29,7 @@ func (m Model) buildHelp() viewport.Model {
 	row("enter / →", "open a build’s artifacts; enter installs the selected artifact")
 	row("← / esc", "return to the build list")
 	row("mouse", "click focuses & selects, click again opens, wheel scrolls")
+	row("touch", "tap the repo name or any visible bottom hint")
 
 	h1("Doing things")
 	row("d", "download the selected artifact")
