@@ -91,7 +91,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.modal = ModalHelp
 		m.helpDragging = false
-		m.helpVP = m.buildHelp()
+		m.helpVP, m.helpLineEntries = m.helpLayout()
 		return m, nil
 
 	case "s":
@@ -476,6 +476,8 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case ModalHelp:
 		switch key {
+		case "w", "W":
+			m.toggleHelpWrap()
 		case "q", "esc", "?":
 			m.modal = ModalNone
 		case "j", "down":

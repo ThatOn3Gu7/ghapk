@@ -5,21 +5,70 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/ghapk/ghapk/internal/tui/components"
 )
 
 func (m Model) buildHelp() viewport.Model {
+	vp, _ := m.helpLayout()
+	return vp
+}
+
+// helpLayout returns the display lines and their logical help-entry IDs. The
+// IDs let a resize or wrap toggle keep the reader at the same entry.
+func (m Model) helpLayout() (viewport.Model, []int) {
 	st := m.st
 	var b strings.Builder
+	var lineEntries []int
+	entry := 0
+	appendLine := func(line string) { b.WriteString(line + "\n"); lineEntries = append(lineEntries, entry) }
 
-	h1 := func(t string) { b.WriteString("\n" + st.PanelTitleFoc.Render(t) + "\n\n") }
+	// A narrow dialog stacks the key above its description; larger dialogs
+	// keep two columns, with wrapped continuation lines under the description.
+	width := max(1, m.modalWindowWidth()-6)
+	wrapped := !m.helpWrapOff
+	writeText := func(text string, indent int, render func(...string) string) {
+		pad := strings.Repeat(" ", indent)
+		for _, line := range strings.Split(text, "\n") {
+			if wrapped {
+				line = ansi.Wrap(line, max(1, width-indent), "")
+			}
+			for _, part := range strings.Split(line, "\n") {
+				appendLine(pad + render(part))
+			}
+		}
+	}
+	h1 := func(t string) {
+		defer func() { entry++ }()
+		appendLine("")
+		appendLine(st.PanelTitleFoc.Render(t))
+		appendLine("")
+	}
 	row := func(k, d string) {
-		b.WriteString(fmt.Sprintf("  %s %s\n", st.Hotkey.Render(fmt.Sprintf("%-12s", k)), st.Muted.Render(d)))
+		defer func() { entry++ }()
+		if !wrapped {
+			appendLine(fmt.Sprintf("  %s %s", st.Hotkey.Render(fmt.Sprintf("%-12s", k)), st.Muted.Render(d)))
+			return
+		}
+		if width < 42 {
+			writeText(k, 2, st.Hotkey.Render)
+			writeText(d, 4, st.Muted.Render)
+			return
+		}
+		const keyWidth = 15
+		const descIndent = keyWidth + 3
+		lines := strings.Split(ansi.Wrap(d, max(1, width-descIndent), ""), "\n")
+		appendLine("  " + st.Hotkey.Render(components.Pad(k, keyWidth)) + " " + st.Muted.Render(lines[0]))
+		for _, line := range lines[1:] {
+			appendLine(strings.Repeat(" ", descIndent) + st.Muted.Render(line))
+		}
 	}
 
-	b.WriteString(st.Header.Render(" ghapk · GitHub Actions artifact APK installer ") + "\n")
-	b.WriteString(st.Muted.Render("finds the newest build of your app in GitHub Actions,\nscores its artifacts for your device, downloads and installs it.") + "\n")
+	writeText(" ghapk · GitHub Actions artifact APK installer ", 0, st.Header.Render)
+	entry++
+	writeText("finds the newest build of your app in GitHub Actions,\nscores its artifacts for your device, downloads and installs it.", 0, st.Muted.Render)
+	entry++
 
 	h1("Moving around")
 	row("tab / shift+tab", "cycle panels")
@@ -48,7 +97,7 @@ func (m Model) buildHelp() viewport.Model {
 	h1("Pickers & screens")
 	row("R", "repository picker (recents, yours, GitHub search)")
 	row("B", "branch picker (filter + default/protected/PR branches)")
-	row("W", "workflow picker (filter workflows by name or .yml)")
+	row("W", "workflow picker outside Help (filter by name or .yml)")
 	row("s", "settings editor")
 	row("t", "cycle theme")
 	row("D", "doctor — environment health check")
@@ -59,29 +108,43 @@ func (m Model) buildHelp() viewport.Model {
 	row("q / ctrl+c", "quit — your terminal is restored, nothing is cleared")
 
 	h1("How artifacts are picked")
-	b.WriteString(st.Muted.Render(`  Every artifact of a run is scored for your device:
-  variant (debug/release) + arch (arm64/armv7/x86/universal)
-  + android-N API hints, minus symbols/mapping/reports.
-  The best score gets a ★ — exactly the script's algorithm.`))
+	writeText(`Every artifact of a run is scored for your device:
+variant (debug/release) + arch (arm64/armv7/x86/universal)
++ android-N API hints, minus symbols/mapping/reports.
+The best score gets a ★ — exactly the script's algorithm.`, 2, st.Muted.Render)
 
-	// Leave a gap and a column for the indicator so it remains visible on
-	// phones, and wrap rather than clipping long help lines at narrow widths.
-	width := max(1, m.modalWindowWidth()-6)
+	// Leave a gap and a column for the scrollbar.
 	height := max(1, m.height-10)
 	if m.height <= 20 {
 		height = max(1, m.height-6)
 	}
 	vp := viewport.New(width, height)
-	vp.SetContent(ansi.Wrap(b.String(), width, ""))
-	return vp
+	vp.SetContent(strings.TrimSuffix(b.String(), "\n"))
+	return vp, lineEntries
 }
 
-// Reflow for the new width and retain relative scroll position on rotation.
+// Reflow for width or wrap changes while keeping the same help entry visible.
 func (m *Model) resizeHelp() {
 	progress := m.helpVP.ScrollPercent()
-	atTop := m.helpVP.AtTop()
-	m.helpVP = m.buildHelp()
-	if !atTop {
+	atTop, atBottom := m.helpVP.AtTop(), m.helpVP.AtBottom()
+	oldOffset := m.helpVP.YOffset
+	entry := -1
+	if len(m.helpLineEntries) == m.helpVP.TotalLineCount() && oldOffset >= 0 && oldOffset < len(m.helpLineEntries) {
+		entry = m.helpLineEntries[oldOffset]
+	}
+	m.helpVP, m.helpLineEntries = m.helpLayout()
+	switch {
+	case atTop:
+	case atBottom:
+		m.helpVP.GotoBottom()
+	case entry >= 0:
+		for i, v := range m.helpLineEntries {
+			if v == entry {
+				m.helpVP.SetYOffset(i)
+				break
+			}
+		}
+	default:
 		m.helpVP.SetYOffset(int(progress*float64(max(0, m.helpVP.TotalLineCount()-m.helpVP.Height)) + 0.5))
 	}
 	m.helpDragging = false
@@ -119,4 +182,31 @@ func (m Model) helpBounds() rect {
 	boxWidth := m.modalWindowWidth() + 2
 	boxHeight := m.helpVP.Height + 2
 	return rect{x: max(0, (m.width-boxWidth)/2) + 3, y: max(0, (m.height-boxHeight)/2) + 1, w: max(1, boxWidth-6), h: m.helpVP.Height}
+}
+
+func (m Model) helpTitle() string {
+	if m.helpWrapOff {
+		return "Help · W:wrap off"
+	}
+	return "Help · W:wrap on"
+}
+
+func (m *Model) toggleHelpWrap() {
+	m.helpWrapOff = !m.helpWrapOff
+	m.resizeHelp()
+}
+
+// The visible title hint is also a touch target for phones without a keyboard.
+func (m Model) helpWrapBounds() rect {
+	box := m.modalBox()
+	first := components.StripANSI(strings.Split(box, "\n")[0])
+	idx := strings.Index(first, "W:wrap ")
+	if idx < 0 {
+		return rect{}
+	}
+	width := len("W:wrap on")
+	if m.helpWrapOff {
+		width = len("W:wrap off")
+	}
+	return rect{x: max(0, (m.width-lipgloss.Width(box))/2) + components.VisibleWidth(first[:idx]), y: max(0, (m.height-lipgloss.Height(box))/2), w: width, h: 1}
 }

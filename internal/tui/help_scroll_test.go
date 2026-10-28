@@ -239,6 +239,14 @@ func TestLiveTeaHelpTouchScroll(t *testing.T) {
 	waitFor(func(m Model) bool { return !m.helpDragging })
 	send(65, x, y, 'M')
 	waitFor(func(m Model) bool { return m.helpVP.YOffset == 6 })
+	wrap := m.helpWrapBounds()
+	send(0, wrap.x, wrap.y, 'M')
+	waitFor(func(m Model) bool { return m.helpWrapOff })
+	send(0, wrap.x, wrap.y, 'm')
+	if _, err := fmt.Fprint(writer, "W"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(func(m Model) bool { return !m.helpWrapOff })
 	p.Quit()
 	select {
 	case err := <-done:
