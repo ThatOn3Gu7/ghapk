@@ -179,7 +179,28 @@ func (c Confirm) Render(st theme.Styles, width, height int) string {
 			btns = append(btns, st.ButtonBlur.Render(opt))
 		}
 	}
-	b.WriteString(strings.Join(btns, "  "))
+	// Keep each choice intact on phones instead of letting the terminal wrap
+	// a button's label across lines (which also makes touch hit-testing unsafe).
+	bw := width * 3 / 4
+	if bw < 40 {
+		bw = min(width-4, 40)
+	}
+	if bw > width-4 {
+		bw = width - 4
+	}
+	join := "  "
+	if VisibleWidth(strings.Join(btns, join)) > bw-10 {
+		join = "\n"
+		btns = nil
+		for i, opt := range c.Options {
+			if i == c.Cursor {
+				btns = append(btns, st.ButtonFocus.Padding(0, 0).Render(opt))
+			} else {
+				btns = append(btns, st.ButtonBlur.Padding(0, 0).Render(opt))
+			}
+		}
+	}
+	b.WriteString(strings.Join(btns, join))
 	return Modal(st, width, height, c.Title, b.String())
 }
 

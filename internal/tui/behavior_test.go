@@ -19,7 +19,8 @@ func TestArtifactsInteraction(t *testing.T) {
 	t.Logf("selected run id=%d cache=%d", r.ID, len(m.runCache[r.ID]))
 	v := m.artsContent(60, 12, &m)
 	t.Logf("before move:\n%s\n", v)
-	mm, _ := m.Update(key("4"))
+	mm, _ := m.Update(key("2"))
+	mm, _ = mm.Update(keyOf("enter"))
 	m = mm.(Model)
 	t.Logf("focus=%v want Artifacts(%v)", m.focus, PanelArtifacts)
 	mm, _ = m.Update(key("j"))
@@ -40,12 +41,13 @@ func TestMouse(t *testing.T) {
 	m = seedRuns(m)
 	m = seedArtifacts(m)
 
+	m.focus = PanelRuns
 	rs := m.panelRects()
 	rr := rs[PanelRuns]
 	if rr.w == 0 {
 		t.Fatal("runs panel rect not computed")
 	}
-	cy := rr.y + 1 + panelCenterTop(PanelRuns, rr, &m.runs)
+	cy := rr.y
 	// click row 1 of the runs panel inside the stretched box:
 	// top border sits at cy, row 0 at cy+1, row 1 at cy+2
 	mm, _ := m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: rr.x + 2, Y: cy + 2})
@@ -89,7 +91,7 @@ func TestMouseCompactTabs(t *testing.T) {
 // The tab cycle must match the visual order of the compact tabs:
 // repos → flows → runs → artifacts → device. Details live inside Runs.
 func TestFocusRingOrder(t *testing.T) {
-	want := []PanelID{PanelRepos, PanelWorkflows, PanelRuns, PanelArtifacts, PanelDevice}
+	want := []PanelID{PanelRepos, PanelRuns, PanelWorkflows, PanelDevice}
 	if len(FocusOrder) != len(want) {
 		t.Fatalf("FocusOrder len = %d", len(FocusOrder))
 	}
@@ -121,17 +123,16 @@ func TestCompactTabsShowRealCounts(t *testing.T) {
 	mm, _ := m.Update(tea.WindowSizeMsg{Width: 70, Height: 26})
 	m = mm.(Model)
 	got := m.compactTabLabel(PanelRuns)
-	if got != "3 Runs (2)" {
-		t.Errorf("runs tab label = %q, want %q", got, "3 Runs (2)")
+	if got != "2 Builds (2)" {
+		t.Errorf("runs tab label = %q, want %q", got, "2 Builds (2)")
 	}
-	got = m.compactTabLabel(PanelArtifacts)
-	if got != "4 Artif (3)" {
-		t.Errorf("artifacts tab label = %q, want %q", got, "4 Artif (3)")
+	if _, ok := m.compactTabRects()[PanelArtifacts]; ok {
+		t.Fatal("artifacts must not be a separate tab")
 	}
 	m.runs.AddFilterChar('x')
 	got = m.compactTabLabel(PanelRuns)
-	if got != "3 Runs (2)" {
-		t.Errorf("filtered runs tab = %q, want it to still show the total 2, got %s", "3 Runs 2", got)
+	if got != "2 Builds (2)" {
+		t.Errorf("filtered runs tab = %q, want it to still show the total 2, got %s", "2 Builds (2)", got)
 	}
 }
 
@@ -455,4 +456,3 @@ func TestShimmerAnimationAndLogoRendering(t *testing.T) {
 		}
 	}
 }
-

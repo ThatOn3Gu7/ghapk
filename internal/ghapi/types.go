@@ -45,7 +45,11 @@ type Run struct {
 	HTMLURL      string    `json:"html_url"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
-	WorkflowID   int64     `json:"workflow_id"`
+	RunAttempt   int       `json:"run_attempt"`
+	Actor        struct {
+		Login string `json:"login"`
+	} `json:"actor"`
+	WorkflowID int64 `json:"workflow_id"`
 }
 
 func (r Run) Finished() bool { return r.Status == "completed" }

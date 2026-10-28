@@ -63,6 +63,7 @@ type Model struct {
 
 	width, height int
 	compact       bool
+	buildDetail   bool // narrow-screen drill-down from builds into artifacts
 
 	// environment
 	ghVersion string
@@ -87,9 +88,10 @@ type Model struct {
 	workflowSel string // "" = any (name from workflow list)
 	branchSel   string
 
-	runCache   map[int64][]ghapi.Artifact // scored+sorted artifacts per run
-	fetching   map[int64]bool
-	runsLoaded bool
+	runCache       map[int64][]ghapi.Artifact // scored+sorted artifacts per run
+	fetching       map[int64]bool
+	artifactErrors map[int64]string
+	runsLoaded     bool
 
 	wfPaths       map[string]string // workflow name → repo path (for previews)
 	wfCache       map[string]string // path → YAML text (nil LRU, workflows are small)
@@ -129,9 +131,9 @@ type Model struct {
 
 	settingsUI *SettingsUI
 
-	repoPicker     *RepoPicker
-	branchPicker   *FilterPicker
-	workflowPicker *FilterPicker
+	repoPicker      *RepoPicker
+	branchPicker    *FilterPicker
+	workflowPicker  *FilterPicker
 	cachedUserRepos []ghapi.Repo
 	wfCatalog       []ghapi.Workflow
 
@@ -181,26 +183,27 @@ func New(opts Options) Model {
 	sp.Style = th.Accent
 
 	m := Model{
-		screen:      ScreenBoot,
-		opts:        opts,
-		settings:    opts.Settings,
-		st:          th,
-		spin:        sp,
-		runCache:    map[int64][]ghapi.Artifact{},
-		fetching:    map[int64]bool{},
-		repos:       components.List{Empty: "  no recent repos — press R"},
-		workflows:   components.List{Empty: "  no workflows found"},
-		runs:        components.List{Empty: "  no runs yet"},
-		wfPaths:     map[string]string{},
-		wfCache:     map[string]string{},
-		wfFetching:  map[string]bool{},
-		arts:        components.List{Empty: "  select a run with artifacts"},
-		branchList:  components.List{Empty: "  no branches"},
-		refreshSecs: opts.Settings.AutoRefreshSecs,
-		branchSel:   opts.Settings.Branch,
-		instPkg:     opts.Settings.PackageName,
-		progCh:      make(chan tea.Msg, 64),
-		logCh:       make(chan tea.Msg, 64),
+		screen:         ScreenBoot,
+		opts:           opts,
+		settings:       opts.Settings,
+		st:             th,
+		spin:           sp,
+		runCache:       map[int64][]ghapi.Artifact{},
+		fetching:       map[int64]bool{},
+		artifactErrors: map[int64]string{},
+		repos:          components.List{Empty: "  no recent repos — press R"},
+		workflows:      components.List{Empty: "  no workflows found"},
+		runs:           components.List{Empty: "  no runs yet"},
+		wfPaths:        map[string]string{},
+		wfCache:        map[string]string{},
+		wfFetching:     map[string]bool{},
+		arts:           components.List{Empty: "  select a run with artifacts"},
+		branchList:     components.List{Empty: "  no branches"},
+		refreshSecs:    opts.Settings.AutoRefreshSecs,
+		branchSel:      opts.Settings.Branch,
+		instPkg:        opts.Settings.PackageName,
+		progCh:         make(chan tea.Msg, 64),
+		logCh:          make(chan tea.Msg, 64),
 	}
 	m.loadRecents("")
 	m.updateListBounds()
@@ -211,55 +214,20 @@ func New(opts Options) Model {
 // scrolling (List.Offset) is computed against the real panel heights.
 // Repos is carded: every row also reserves the blank line the card borders
 // draw into, so its MaxShown is counted in ROWS (k cards), not lines.
-// Runs is split into list + detail sub-pane: its MaxShown is the list part.
+// Builds and artifacts use their actual visible box heights.
 func (m *Model) updateListBounds() {
 	if m.width == 0 || m.height == 0 {
 		return
 	}
-	boxRows := func(outerH int) int {
-		k := outerH - 2
-		if k < 1 {
-			k = 1
-		}
-		return k
-	}
-	if m.compact {
-		h := m.height - 3 // header + tabs + status (panel outer height)
-		if h < 5 {
-			h = 5
-		}
-		m.repos.MaxShown = boxRows(h - 2)
-		m.workflows.MaxShown = h - 2
-		listH, _ := runsSplit(h)
-		m.runs.MaxShown = listH
-		m.arts.MaxShown = h - 2
-		return
-	}
-	h := m.height - 2
-	lTop := h * 1 / 2
-	if lTop < 6 {
-		lTop = 6
-	}
-	lBot := h - lTop
-	mTop := runsPanelH(h)
-	m.repos.MaxShown = boxRows(lTop - 2)
-	m.workflows.MaxShown = lBot - 2
-	listH, _ := runsSplit(mTop)
-	m.runs.MaxShown = listH
-	m.arts.MaxShown = h - 2 // right column is full-height artifacts
+	h := m.height - 3
+	m.repos.MaxShown = max(1, h-4)
+	m.workflows.MaxShown = max(1, h-4)
+	layout := m.buildsLayout()
+	m.runs.MaxShown = max(1, layout.runs.h-2)
+	m.arts.MaxShown = max(1, layout.arts.h-2)
+	m.runs.MoveBy(0)
+	m.arts.MoveBy(0)
 	m.branchList.MaxShown = 12
-}
-
-// runsPanelH is the outer height of the runs panel in the wide grid.
-func runsPanelH(h int) int {
-	mTop := h - 11
-	if mTop < 8 {
-		mTop = 8
-	}
-	if mTop > h-6 {
-		mTop = h - 6
-	}
-	return mTop
 }
 
 func (m *Model) loadRecents(current string) {
@@ -305,7 +273,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.compact = m.width < 96
+		m.compact = m.width < 64
 		m.updateListBounds()
 		if m.screen == ScreenBoot && m.authErr == nil && m.ghVersion != "" {
 			m.screen = ScreenDashboard
@@ -321,7 +289,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Only repaint for the spinner when something is visibly moving.
 		// Idle dashboards used to redraw ten times a second for no reason,
 		// which made every repo switch on a phone feel jerky.
-		if m.busy || m.modal == ModalTask || m.watchActive() {
+		if m.busy || len(m.fetching) > 0 || m.modal == ModalTask || m.watchActive() {
 			return m, cmd
 		}
 		return m, nil
@@ -432,15 +400,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.setRuns(msg.List)
+		m.syncBuildSelection()
 		return m, m.fetchArtifactsForSelection()
 
 	case ArtifactsMsg:
+		if msg.Repo != "" && msg.Repo != m.settings.Repo {
+			return m, nil
+		}
 		if msg.Err != nil {
+			m.artifactErrors[msg.RunID] = shortErr(msg.Err)
 			m.toastf("artifacts: %s", shortErr(msg.Err))
 			delete(m.fetching, msg.RunID)
 			return m, nil
 		}
 		delete(m.fetching, msg.RunID)
+		delete(m.artifactErrors, msg.RunID)
 		arts := m.scoreArtifacts(msg.List)
 		m.runCache[msg.RunID] = arts
 		if sel, ok := m.selectedRun(); ok && sel.ID == msg.RunID {
@@ -720,6 +694,9 @@ func (m *Model) setRepo(repo string, persist bool) {
 	m.wfMissToasted = false
 	m.wfScroll = 0
 	m.wfYAMLFocused = false
+	m.buildDetail = false
+	m.fetching = map[int64]bool{}
+	m.artifactErrors = map[int64]string{}
 	m.selectedRunID = 0
 	m.selectedArtID = 0
 	m.runsLoaded = false
@@ -799,7 +776,7 @@ func (m *Model) setRuns(list []ghapi.Run) {
 	for _, r := range list {
 		items = append(items, components.Item{
 			ID:    runRow{r},
-			Label: fmt.Sprintf("#%d %s", r.RunNumber, firstLineS(r.DisplayTitle)),
+			Label: fmt.Sprintf("#%d %s %s %s %s %s", r.RunNumber, firstLineS(r.DisplayTitle), r.HeadBranch, r.Name, r.Actor.Login, shortSHA(r.HeadSHA)),
 		})
 	}
 	m.runs.SetItems(items)
@@ -952,6 +929,8 @@ func (m *Model) setArtifactItems(arts []ghapi.Artifact) {
 		if !found {
 			m.selectedArtID = arts[0].ID
 		}
+		m.arts.SelectByID(m.selectedArtID)
+		m.syncArtifactSelection()
 	} else {
 		m.selectedArtID = 0
 	}
@@ -1053,21 +1032,35 @@ func (m *Model) fetchWorkflowForSelection() tea.Cmd {
 
 // fetchArtifactsForSelection fetches artifacts for the highlighted run if needed.
 func (m *Model) fetchArtifactsForSelection() tea.Cmd {
+	if m.settings.Source == "releases" && len(m.rankedReleases()) > 0 {
+		m.syncReleaseArtifactItems()
+		return nil
+	}
 	r, ok := m.selectedRun()
 	if !ok || m.settings.Repo == "" {
-		m.arts.SetItems(nil)
+		if m.usingReleaseAssets() {
+			m.syncReleaseArtifactItems()
+		} else {
+			m.arts.SetItems(nil)
+			m.selectedArtID = 0
+		}
 		return nil
 	}
 	if cached, ok := m.runCache[r.ID]; ok {
-		m.setArtifactItems(cached)
+		if m.usingReleaseAssets() {
+			m.syncReleaseArtifactItems()
+		} else {
+			m.setArtifactItems(cached)
+		}
 		return nil
 	}
 	if m.fetching[r.ID] {
 		return nil
 	}
 	m.fetching[r.ID] = true
+	delete(m.artifactErrors, r.ID)
 	m.arts.SetItems(nil)
-	return fetchArtifactsCmd(m.settings.Repo, r.ID)
+	return tea.Batch(fetchArtifactsCmd(m.settings.Repo, r.ID), m.spin.Tick)
 }
 
 // invalidateArtifacts drops cached scoring so artifacts get re-ranked.
@@ -1112,15 +1105,20 @@ func (m *Model) cursorArtifact() (ghapi.Artifact, bool) {
 	if !ok {
 		return ghapi.Artifact{}, false
 	}
-	arts, ok := m.runCache[r.ID]
-	if !ok || len(arts) == 0 {
+	it, ok := m.arts.Selected()
+	if !ok {
 		return ghapi.Artifact{}, false
 	}
-	idx := m.arts.SelectedIndex()
-	if idx < 0 || idx >= len(arts) {
+	id, ok := it.ID.(int64)
+	if !ok {
 		return ghapi.Artifact{}, false
 	}
-	return arts[idx], true
+	for _, a := range m.runCache[r.ID] {
+		if a.ID == id {
+			return a, true
+		}
+	}
+	return ghapi.Artifact{}, false
 }
 
 // ───────────────────────────── styles helper ─────────────────────────────
@@ -1209,6 +1207,8 @@ func (m *Model) syncReleaseArtifactItems() {
 		if !found {
 			m.selectedArtID = -rels[0].Asset.ID
 		}
+		m.arts.SelectByID(m.selectedArtID)
+		m.syncArtifactSelection()
 	} else {
 		m.selectedArtID = 0
 	}
@@ -1230,13 +1230,18 @@ func (m *Model) selectedReleaseAsset() (ghapi.RankedReleaseAsset, bool) {
 }
 
 func (m *Model) cursorReleaseAsset() (ghapi.RankedReleaseAsset, bool) {
-	rels := m.rankedReleases()
-	if len(rels) == 0 {
+	it, ok := m.arts.Selected()
+	if !ok {
 		return ghapi.RankedReleaseAsset{}, false
 	}
-	idx := m.arts.SelectedIndex()
-	if idx < 0 || idx >= len(rels) {
+	id, ok := it.ID.(int64)
+	if !ok {
 		return ghapi.RankedReleaseAsset{}, false
 	}
-	return rels[idx], true
+	for _, ra := range m.rankedReleases() {
+		if -ra.Asset.ID == id {
+			return ra, true
+		}
+	}
+	return ghapi.RankedReleaseAsset{}, false
 }

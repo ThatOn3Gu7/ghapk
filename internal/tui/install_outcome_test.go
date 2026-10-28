@@ -175,7 +175,8 @@ func TestDownloadAndInstallTransitionsDirectlyToInstall(t *testing.T) {
 		m.settings.NoOpen = true // even with no-open=1 in config, explicit Download & Install must work
 
 		// Focus Artifacts panel, open Confirm download, move to "Download & Install" (index 1).
-		mm, _ := m.Update(key("4"))
+		mm, _ := m.Update(key("2"))
+		mm, _ = mm.Update(keyOf("enter"))
 		m = mm.(Model)
 		mm, _ = m.Update(key("d"))
 		m = mm.(Model)
@@ -434,8 +435,8 @@ func TestLiveTeaProgramInstallMenuEndToEnd(t *testing.T) {
 	// Wait for artifact list to load in live TUI, focus Artifacts ('4'), open
 	// Confirm download ('d'), and confirm Download ('\r') so the post-download
 	// ["Install", "Close"] menu appears on screen.
+	_, _ = inW.Write([]byte("2"))
 	waitForOut("app-debug")
-	_, _ = inW.Write([]byte("4"))
 	waitForOut("d:download")
 	_, _ = inW.Write([]byte("d"))
 	waitForOut("Confirm download")

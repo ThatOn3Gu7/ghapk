@@ -149,6 +149,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.toastf("refreshing…")
 		// clear artifact cache so counts/detail always match fresh data
 		m.runCache = map[int64][]ghapi.Artifact{}
+		m.artifactErrors = map[int64]string{}
 		return m, tea.Batch(m.refreshAll()...)
 
 	case "tab":
@@ -158,11 +159,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cycleFocus(-1)
 		return m, nil
 
-	case "g":
-		m.focusedList().Home()
-		return m, nil
-	case "G":
-		m.focusedList().End()
+	case "g", "G":
+		if l := m.focusedListOrNil(); l != nil {
+			if key == "g" {
+				l.Home()
+			} else {
+				l.End()
+			}
+			if m.focus == PanelRuns {
+				m.syncBuildSelection()
+				return m, m.fetchArtifactsForSelection()
+			}
+			if m.focus == PanelArtifacts {
+				m.syncArtifactSelection()
+			}
+		}
 		return m, nil
 
 	case "j", "down":
@@ -184,7 +195,22 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		return m, m.activate()
 
+	case "esc", "left", "h":
+		if m.focus == PanelArtifacts {
+			m.focus = PanelRuns
+			m.buildDetail = false
+			m.updateListBounds()
+			return m, nil
+		}
+		return m, nil
+
 	case "right", "l", "v":
+		if m.focus == PanelRuns {
+			m.focus = PanelArtifacts
+			m.buildDetail = true
+			m.updateListBounds()
+			return m, nil
+		}
 		if m.focus == PanelWorkflows && len(m.workflows.Items) > 0 {
 			m.wfYAMLFocused = true
 			return m, nil
@@ -215,6 +241,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.requestDownload(true)
 
 	case "o":
+		if m.activeTab() == PanelRuns && m.usingReleaseAssets() {
+			if a, ok := m.selectedReleaseAsset(); ok {
+				return m, openURL(a.HTMLURL)
+			}
+		}
 		if r, ok := m.selectedRun(); ok {
 			return m, openURL(r.HTMLURL)
 		}
@@ -277,6 +308,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if i := int(key[0] - '1'); i < len(FocusOrder) {
 				m.wfYAMLFocused = false
 				m.focus = FocusOrder[i]
+				m.buildDetail = false
+				m.updateListBounds()
 			}
 		}
 		return m, nil
@@ -287,13 +320,15 @@ func (m *Model) cycleFocus(dir int) {
 	m.wfYAMLFocused = false
 	idx := 0
 	for i, p := range FocusOrder {
-		if p == m.focus {
+		if p == m.activeTab() {
 			idx = i
 			break
 		}
 	}
 	idx = (idx + dir + len(FocusOrder)) % len(FocusOrder)
 	m.focus = FocusOrder[idx]
+	m.buildDetail = false
+	m.updateListBounds()
 }
 
 func (m *Model) focusedList() *components.List {
@@ -321,10 +356,10 @@ func (m *Model) focusedListOrNil() *components.List {
 func (m *Model) moveFocus(d int) tea.Cmd {
 	switch m.focus {
 	case PanelRuns:
-		m.runs.MoveBy(d)
-		return m.fetchArtifactsForSelection()
+		return m.moveBuild(d)
 	case PanelArtifacts:
 		m.arts.MoveBy(d)
+		m.syncArtifactSelection()
 	case PanelRepos:
 		m.repos.MoveBy(d)
 	case PanelWorkflows:
@@ -371,12 +406,12 @@ func (m *Model) activate() tea.Cmd {
 		} else if a, ok := m.cursorArtifact(); ok {
 			m.selectedArtID = a.ID
 		}
-		return m.requestDownload(false)
+		return m.requestDownload(true)
 	case PanelRuns:
-		if r, ok := m.cursorRun(); ok {
-			m.selectedRunID = r.ID
-		}
+		m.syncBuildSelection()
 		m.focus = PanelArtifacts
+		m.buildDetail = true
+		m.updateListBounds()
 		return m.fetchArtifactsForSelection()
 	case PanelDevice:
 		if m.instPkg != "" {
@@ -408,6 +443,11 @@ func (m *Model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		l.MoveBy(1)
 	}
 	if m.focus == PanelRuns {
+		m.syncBuildSelection()
+		return m, m.fetchArtifactsForSelection()
+	}
+	if m.focus == PanelArtifacts {
+		m.syncArtifactSelection()
 	}
 	return m, nil
 }
@@ -701,10 +741,10 @@ func (m *Model) requestDownload(withInstall bool) tea.Cmd {
 	if m.usingReleaseAssets() {
 		ra, ok := m.selectedReleaseAsset()
 		if !ok {
-			if m.haveDownload && withInstall && m.dev.CanInstall {
+			if m.activeTab() != PanelRuns && m.haveDownload && withInstall && m.dev.CanInstall {
 				return m.startInstall(m.downloadedAPK.Path)
 			}
-			m.toastf("select a release asset first (Tab to Artifacts)")
+			m.toastf("select a release asset in Builds")
 			return nil
 		}
 		opts := []string{"Download", "Cancel"}
@@ -735,11 +775,11 @@ func (m *Model) requestDownload(withInstall bool) tea.Cmd {
 
 	art, ok := m.selectedArtifact()
 	if !ok {
-		if m.haveDownload && withInstall && m.dev.CanInstall {
+		if m.activeTab() != PanelRuns && m.haveDownload && withInstall && m.dev.CanInstall {
 			// install the last download again
 			return m.startInstall(m.downloadedAPK.Path)
 		}
-		m.toastf("select an artifact first (Tab to Artifacts)")
+		m.toastf("select an artifact in Builds")
 		return nil
 	}
 	opts := []string{"Download", "Cancel"}

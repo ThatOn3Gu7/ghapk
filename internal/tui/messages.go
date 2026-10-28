@@ -44,6 +44,7 @@ type WorkflowFileMsg struct {
 }
 
 type ArtifactsMsg struct {
+	Repo  string
 	RunID int64
 	List  []ghapi.Artifact
 	Err   error
@@ -173,7 +174,7 @@ func fetchWorkflowFileCmd(repo, path string) tea.Cmd {
 func fetchArtifactsCmd(repo string, runID int64) tea.Cmd {
 	return func() tea.Msg {
 		as, err := ghapi.ListArtifacts(repo, runID)
-		return ArtifactsMsg{RunID: runID, List: as, Err: err}
+		return ArtifactsMsg{Repo: repo, RunID: runID, List: as, Err: err}
 	}
 }
 

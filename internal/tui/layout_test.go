@@ -155,15 +155,15 @@ func TestResizeRefilters(t *testing.T) {
 	m = seedArtifacts(m)
 
 	// shrink to compact
-	mm, _ := m.Update(tea.WindowSizeMsg{Width: 72, Height: 26})
+	mm, _ := m.Update(tea.WindowSizeMsg{Width: 48, Height: 26})
 	m = mm.(Model)
 	if !m.compact {
-		t.Fatal("72 cols must be compact")
+		t.Fatal("48 cols must be compact")
 	}
-	lineWidths(t, 72, 26, strings.Split(m.View(), "\n"))
+	lineWidths(t, 48, 26, strings.Split(m.View(), "\n"))
 	// runs panel splits into list + detail sub-box: the list gets the top
-	if want, _ := runsSplit(26 - 3); m.runs.MaxShown != want {
-		t.Errorf("compact runs window = %d, want %d", m.runs.MaxShown, want)
+	if want := 26 - 3 - 2; m.runs.MaxShown != want {
+		t.Errorf("compact builds window = %d, want %d", m.runs.MaxShown, want)
 	}
 
 	// grow back to wide

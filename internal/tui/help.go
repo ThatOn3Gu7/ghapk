@@ -21,11 +21,12 @@ func (m Model) buildHelp() viewport.Model {
 
 	h1("Moving around")
 	row("tab / shift+tab", "cycle panels")
-	row("1 … 5", "jump straight to a panel")
+	row("1 … 4", "jump straight to a panel")
 	row("j / k · ↑ / ↓", "move in a list")
 	row("ctrl+d / ctrl+u", "page a list")
 	row("g / G", "first / last row")
-	row("enter", "activate: switch repo, filter by workflow, focus runs…")
+	row("enter / →", "open a build’s artifacts; enter installs the selected artifact")
+	row("← / esc", "return to the build list")
 	row("mouse", "click focuses & selects, click again opens, wheel scrolls")
 
 	h1("Doing things")
