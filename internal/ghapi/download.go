@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -103,13 +104,9 @@ func DownloadReleaseAsset(repo string, asset ReleaseAsset, dest string, prog Pro
 }
 
 func downloadReleaseAssetWithOpts(opts streamOpts, repo string, asset ReleaseAsset, dest string, prog Progress) error {
-	resolvedDest := dest
-	if asset.Name != "" {
-		var err error
-		resolvedDest, err = ResolveReleaseAssetDest(dest, asset.Name)
-		if err != nil {
-			return err
-		}
+	resolvedDest, err := ResolveReleaseAssetDest(dest, asset.Name)
+	if err != nil {
+		return err
 	}
 	endpoint := fmt.Sprintf("repos/%s/releases/assets/%d", repo, asset.ID)
 	return streamWithOpts(opts, endpoint, resolvedDest, asset.Size, prog,
@@ -178,7 +175,7 @@ func streamWithOpts(opts streamOpts, endpoint, dest string, expected int64, prog
 		for {
 			n, rerr := stdout.Read(buf)
 			if n > 0 {
-				if got+int64(n) > opts.maxBytes {
+				if int64(n) > opts.maxBytes-got {
 					killAndWait()
 					return fmt.Errorf("gh %s: download exceeds maximum allowed size (%d bytes)", endpoint, opts.maxBytes)
 				}
@@ -251,13 +248,24 @@ type ExtractedAPK struct {
 	Candidate bool // false for files inside the zip that lost the ranking
 }
 
+func openZipReader(zipPath string) (*zip.ReadCloser, error) {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil && !errors.Is(err, zip.ErrInsecurePath) {
+		if r != nil {
+			_ = r.Close()
+		}
+		return nil, err
+	}
+	return r, nil
+}
+
 // InspectZip lists the contents without extracting (for the UI detail pane).
 func InspectZip(zipPath string) ([]string, error) {
 	return inspectZipWithMax(zipPath, defaultMaxZipEntries)
 }
 
 func inspectZipWithMax(zipPath string, maxEntries int) ([]string, error) {
-	r, err := zip.OpenReader(zipPath)
+	r, err := openZipReader(zipPath)
 	if err != nil {
 		return nil, err
 	}
@@ -293,14 +301,11 @@ func extractBestAPKWithOpts(zipPath, outDir, filePattern string, p score.Prefs, 
 	if opts.fs.createTemp == nil {
 		opts.fs = defaultAtomicFS()
 	}
-	if strings.TrimSpace(outDir) == "" {
-		return ExtractedAPK{}, errors.New("empty output directory")
-	}
-	if hasControlChars(outDir) {
-		return ExtractedAPK{}, errors.New("output directory contains control characters")
+	if err := validateOutDir(outDir); err != nil {
+		return ExtractedAPK{}, err
 	}
 
-	r, err := zip.OpenReader(zipPath)
+	r, err := openZipReader(zipPath)
 	if err != nil {
 		return ExtractedAPK{}, fmt.Errorf("not a zip: %w", err)
 	}
@@ -377,6 +382,21 @@ func extractBestAPKWithOpts(zipPath, outDir, filePattern string, p score.Prefs, 
 	}, nil
 }
 
+func copyBounded(w io.Writer, r io.Reader, maxBytes int64) (int64, error) {
+	if maxBytes <= 0 {
+		return 0, errors.New("invalid maximum byte limit")
+	}
+	limit := maxBytes
+	if maxBytes < math.MaxInt64 {
+		limit = maxBytes + 1
+	}
+	n, err := io.Copy(w, io.LimitReader(r, limit))
+	if n > maxBytes {
+		return n, fmt.Errorf("exceeds maximum extracted size (%d bytes)", maxBytes)
+	}
+	return n, err
+}
+
 func extractOneLimited(fs atomicFS, f *zip.File, outDir, leaf string, maxBytes int64) (int64, error) {
 	if maxBytes <= 0 {
 		return 0, errors.New("invalid maximum APK size limit")
@@ -391,14 +411,9 @@ func extractOneLimited(fs atomicFS, f *zip.File, outDir, leaf string, maxBytes i
 		if err != nil {
 			return fmt.Errorf("opening zip entry %q: %w", sanitizeDisplayPath(f.Name), err)
 		}
-		limited := io.LimitReader(rc, maxBytes+1)
-		n, copyErr := io.Copy(w, limited)
+		n, copyErr := copyBounded(w, rc, maxBytes)
 		closeErr := rc.Close()
 		written = n
-		if n > maxBytes {
-			return fmt.Errorf("zip entry %q exceeds maximum extracted size (%d bytes)",
-				sanitizeDisplayPath(f.Name), maxBytes)
-		}
 		if copyErr != nil {
 			return fmt.Errorf("extracting zip entry %q: %w", sanitizeDisplayPath(f.Name), copyErr)
 		}
@@ -417,15 +432,33 @@ func extractOneLimited(fs atomicFS, f *zip.File, outDir, leaf string, maxBytes i
 	return written, nil
 }
 
+func validateOutDir(outDir string) error {
+	if strings.TrimSpace(outDir) == "" {
+		return errors.New("empty output directory")
+	}
+	if hasControlChars(outDir) {
+		return errors.New("output directory contains control characters")
+	}
+	if hasWindowsDrivePrefix(outDir) {
+		if runtime.GOOS != "windows" {
+			return fmt.Errorf("output directory %q contains a Windows drive prefix", outDir)
+		}
+		if len(outDir) < 3 || (outDir[2] != '\\' && outDir[2] != '/') {
+			return fmt.Errorf("output directory %q is a drive-relative path", outDir)
+		}
+	}
+	if runtime.GOOS != "windows" && strings.Contains(outDir, `\`) {
+		return fmt.Errorf("output directory %q contains backslash path separator", outDir)
+	}
+	return nil
+}
+
 // SafeDestinationPath validates leaf as a single safe file name and verifies
 // that placing leaf inside outDir remains a direct child of outDir (both
 // lexically and after resolving directory symlinks).
 func SafeDestinationPath(outDir, leaf string) (string, error) {
-	if strings.TrimSpace(outDir) == "" {
-		return "", errors.New("empty output directory")
-	}
-	if hasControlChars(outDir) {
-		return "", errors.New("output directory contains control characters")
+	if err := validateOutDir(outDir); err != nil {
+		return "", err
 	}
 	if err := validateSafeLeafName(leaf); err != nil {
 		return "", err
@@ -756,9 +789,22 @@ func isWindowsReservedName(seg string) bool {
 	return false
 }
 
+func isUnsafeControlOrBidiRune(r rune) bool {
+	if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+		return true
+	}
+	// Reject Unicode bidirectional override/isolate controls used in filename spoofing.
+	return (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069)
+}
+
 func hasControlChars(s string) bool {
 	for i := 0; i < len(s); i++ {
 		if s[i] < 0x20 || s[i] == 0x7f {
+			return true
+		}
+	}
+	for _, r := range s {
+		if isUnsafeControlOrBidiRune(r) {
 			return true
 		}
 	}
@@ -772,7 +818,7 @@ func sanitizeDisplayPath(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	for _, r := range s {
-		if r < 0x20 || r == 0x7f {
+		if isUnsafeControlOrBidiRune(r) {
 			b.WriteByte('?')
 		} else {
 			b.WriteRune(r)
@@ -821,27 +867,32 @@ func evalSymlinksAllowMissing(absPath string) (string, error) {
 	}
 }
 
+// matchGlobFold is path.Match against a lowercased leaf name and pattern,
+// falling back to substring match only when pattern has invalid glob syntax.
 func matchGlobFold(pattern, name string) bool {
 	p := strings.ToLower(pattern)
 	n := strings.ToLower(name)
-	if ok, _ := filepath.Match(p, n); ok {
-		return true
+	ok, err := path.Match(p, n)
+	if err != nil {
+		sub := strings.Trim(p, "*")
+		return sub != "" && strings.Contains(n, sub)
 	}
-	return strings.Contains(n, strings.Trim(p, "*"))
+	return ok
 }
 
+// HumanBytes is exported for the UI.
 func humanBytes(b int64) string { return HumanBytes(b) }
 
-// HumanBytes formats a byte size as KB/MB/GB.
+// HumanBytes formats sizes like the script's fmt_size.
 func HumanBytes(b int64) string {
-	const unit = 1024
-	if b < unit {
+	switch {
+	case b >= 1<<30:
+		return fmt.Sprintf("%.1f GB", float64(b)/float64(1<<30))
+	case b >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(b)/float64(1<<20))
+	case b >= 1<<10:
+		return fmt.Sprintf("%.0f KB", float64(b)/float64(1<<10))
+	default:
 		return fmt.Sprintf("%d B", b)
 	}
-	div, exp := int64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
