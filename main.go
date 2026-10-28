@@ -93,6 +93,10 @@ func getCmd(args []string) (int, tui.Options) {
 			settings.ArtifactPattern = val()
 		case a == "--file" || strings.HasPrefix(a, "--file="):
 			settings.FilePattern = val()
+		case a == "--exclude" || strings.HasPrefix(a, "--exclude="):
+			settings.ExcludePattern = val()
+		case a == "--source" || strings.HasPrefix(a, "--source="):
+			settings.Source = val()
 		case a == "--arch":
 			i++
 			settings.Arch = args[i]

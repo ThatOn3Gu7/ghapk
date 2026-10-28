@@ -121,17 +121,29 @@ func defaultExtractOpts() extractOpts {
 	}
 }
 
-// DownloadArtifactCached reuses destZip when allowCache is true and destZip
-// passes path, regular-file, ZIP-integrity, and published SHA-256 digest checks;
-// otherwise it downloads atomically.
-func DownloadArtifactCached(repo string, art Artifact, destZip string, allowCache bool, prog Progress) (cached bool, err error) {
-	if allowCache && CanReuseArtifactZip(destZip, art) {
+// DownloadArtifactCachedWithDigest behaves like DownloadArtifactCached while
+// allowing trusted local settings to disable digest verification when verifyDigest is false.
+func DownloadArtifactCachedWithDigest(repo string, art Artifact, destZip string, allowCache, verifyDigest bool, prog Progress) (cached bool, err error) {
+	checkArt := art
+	if !verifyDigest {
+		checkArt.Digest = ""
+	}
+	if allowCache && CanReuseArtifactZip(destZip, checkArt) {
 		if fi, statErr := os.Lstat(destZip); statErr == nil && prog != nil {
 			prog(fi.Size(), fi.Size())
 		}
 		return true, nil
 	}
-	return false, DownloadArtifact(repo, art, destZip, prog)
+	opts := defaultStreamOpts()
+	opts.skipDigest = !verifyDigest
+	return false, downloadArtifactWithOpts(opts, repo, art, destZip, prog)
+}
+
+// DownloadArtifactCached reuses destZip when allowCache is true and destZip
+// passes path, regular-file, ZIP-integrity, and published SHA-256 digest checks;
+// otherwise it downloads atomically.
+func DownloadArtifactCached(repo string, art Artifact, destZip string, allowCache bool, prog Progress) (cached bool, err error) {
+	return DownloadArtifactCachedWithDigest(repo, art, destZip, allowCache, true, prog)
 }
 
 // CanReuseArtifactZip reports whether destZip is an existing, safe regular ZIP
@@ -1238,11 +1250,31 @@ func RankReleaseAssets(rels []Release, artifactPattern, filePattern, excludePatt
 // any published SHA-256 digest, and if the asset is a .zip archive extracts the
 // best matching APK through the single hardened extraction pipeline.
 func FetchReleaseAPK(repo string, asset ReleaseAsset, outDir, filePattern, excludePattern string, allowCache bool, p score.Prefs, dev score.Device, prog Progress) (ExtractedAPK, error) {
-	resolved, _, err := DownloadReleaseAssetCached(repo, asset, outDir, allowCache, prog)
+	return FetchReleaseAPKWithDigest(repo, asset, outDir, filePattern, excludePattern, allowCache, true, p, dev, prog)
+}
+
+// FetchReleaseAPKWithDigest behaves like FetchReleaseAPK while honoring verifyDigest.
+func FetchReleaseAPKWithDigest(repo string, asset ReleaseAsset, outDir, filePattern, excludePattern string, allowCache, verifyDigest bool, p score.Prefs, dev score.Device, prog Progress) (ExtractedAPK, error) {
+	checkAsset := asset
+	if !verifyDigest {
+		checkAsset.Digest = ""
+	}
+	resolved, err := ResolveReleaseAssetDest(outDir, asset.Name)
 	if err != nil {
 		return ExtractedAPK{}, err
 	}
-	ds := DigestStatusFor(asset.Digest)
+	if allowCache && CanReuseReleaseAsset(resolved, checkAsset) {
+		if fi, statErr := os.Lstat(resolved); statErr == nil && prog != nil {
+			prog(fi.Size(), fi.Size())
+		}
+	} else {
+		opts := defaultStreamOpts()
+		opts.skipDigest = !verifyDigest
+		if err := downloadReleaseAssetWithOpts(opts, repo, asset, resolved, prog); err != nil {
+			return ExtractedAPK{}, err
+		}
+	}
+	ds := DigestStatusFor(checkAsset.Digest)
 	if strings.HasSuffix(strings.ToLower(asset.Name), ".zip") {
 		apkOut, xerr := ExtractBestAPKFiltered(resolved, outDir, filePattern, excludePattern, p, dev)
 		if !allowCache {

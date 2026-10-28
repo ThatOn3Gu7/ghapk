@@ -105,11 +105,16 @@ func Run(o GetOptions) int {
 				if a.Expired {
 					continue
 				}
-				if s.ArtifactPattern != "" && !containsFold(a.Name, s.ArtifactPattern) {
+				if s.ArtifactName != "" && !strings.EqualFold(a.Name, s.ArtifactName) {
 					continue
 				}
-				if s.ExcludePattern != "" && containsFold(a.Name, s.ExcludePattern) {
-					continue
+				if s.ArtifactName == "" {
+					if s.ArtifactPattern != "" && !containsFold(a.Name, s.ArtifactPattern) {
+						continue
+					}
+					if s.ExcludePattern != "" && containsFold(a.Name, s.ExcludePattern) {
+						continue
+					}
 				}
 				a.Score = score.ArtifactRank(a.Name, prefs, sd)
 				if !score.AllowedByPolicy(a.Name, prefs, sd) {
@@ -184,13 +189,13 @@ func Run(o GetOptions) int {
 	var apkOut ghapi.ExtractedAPK
 	if useRel {
 		var rerr error
-		apkOut, rerr = ghapi.FetchReleaseAPK(repo, relPick.Asset, dir, s.FilePattern, s.ExcludePattern, s.KeepCache, prefs, sd, prog)
+		apkOut, rerr = ghapi.FetchReleaseAPKWithDigest(repo, relPick.Asset, dir, s.FilePattern, s.ExcludePattern, s.KeepCache, s.VerifyDigest, prefs, sd, prog)
 		if rerr != nil {
 			out("\nghapk: release download failed: %v", rerr)
 			return 8
 		}
 		if !s.KeepCache && o.PrintDir == "" {
-			ghapi.PruneAPKCache(dir, 3, apkOut.Path)
+			ghapi.PruneAPKCache(dir, s.KeepCount, apkOut.Path)
 		}
 		if apkOut.DigestStatus == apk.DigestVerified {
 			out("\rghapk: downloaded release asset (sha256 verified against GitHub digest)   ")
@@ -199,12 +204,16 @@ func Run(o GetOptions) int {
 		}
 	} else {
 		zipPath := filepath.Join(dir, fmt.Sprintf("%d.zip", art.ID))
-		cached, derr := ghapi.DownloadArtifactCached(repo, art, zipPath, s.KeepCache, prog)
+		cached, derr := ghapi.DownloadArtifactCachedWithDigest(repo, art, zipPath, s.KeepCache, s.VerifyDigest, prog)
 		if derr != nil {
 			out("\nghapk: download failed: %v", derr)
 			return 8
 		}
-		ds := ghapi.DigestStatusFor(art.Digest)
+		checked := art.Digest
+		if !s.VerifyDigest {
+			checked = ""
+		}
+		ds := ghapi.DigestStatusFor(checked)
 		switch {
 		case cached:
 			out("\rghapk: reused verified cached archive %s   ", filepath.Base(zipPath))
@@ -219,7 +228,7 @@ func Run(o GetOptions) int {
 		if !s.KeepCache {
 			_ = os.Remove(zipPath)
 			if xerr == nil && o.PrintDir == "" {
-				ghapi.PruneAPKCache(dir, 3, apkOut.Path)
+				ghapi.PruneAPKCache(dir, s.KeepCount, apkOut.Path)
 			}
 		}
 		if xerr != nil {
@@ -268,8 +277,8 @@ func Run(o GetOptions) int {
 			HistoryCert:     hist.Sig,
 			DeviceSDK:       dev.SDK,
 			DowngradeMode:   s.Downgrade,
-			CheckPackage:    true,
-			CheckSignature:  true,
+			CheckPackage:    s.PkgCheck,
+			CheckSignature:  s.SigCheck,
 		})
 		for _, n := range safety.Notes {
 			out("ghapk: check: %s", n)
@@ -299,7 +308,7 @@ func Run(o GetOptions) int {
 		}
 		if res.Outcome == device.OutcomeLaunched {
 			out("ghapk: installer launched via %s — accept the prompt on your Android device", res.Via)
-			if queryPkg != "" && apkOut.Meta.HaveInfo {
+			if s.VerifyInstall && queryPkg != "" && apkOut.Meta.HaveInfo {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				vr := device.VerifyInstall(ctx, queryPkg, apkOut.Meta.Info.VersionCode, 25*time.Second)
 				cancel()

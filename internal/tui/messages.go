@@ -203,7 +203,7 @@ func searchReposCmd(query string) tea.Cmd {
 
 // downloadApkCmd downloads (or reuses cached) the artifact zip and extracts the best APK.
 // Progress flows through progCh; completion arrives as DownloadDoneMsg.
-func downloadApkCmd(repo string, art ghapi.Artifact, zipPath, outDir, filePattern, excludePattern string, keepCache bool, dev device.Info, prefs archPrefs, progCh chan tea.Msg) tea.Cmd {
+func downloadApkCmd(repo string, art ghapi.Artifact, zipPath, outDir, filePattern, excludePattern string, keepCache bool, keepCount int, verifyDigest bool, dev device.Info, prefs archPrefs, progCh chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		prog := func(got, total int64) {
 			select {
@@ -211,7 +211,7 @@ func downloadApkCmd(repo string, art ghapi.Artifact, zipPath, outDir, filePatter
 			default:
 			}
 		}
-		cached, err := ghapi.DownloadArtifactCached(repo, art, zipPath, keepCache, prog)
+		cached, err := ghapi.DownloadArtifactCachedWithDigest(repo, art, zipPath, keepCache, verifyDigest, prog)
 		if err != nil {
 			progCh <- DownloadDoneMsg{Err: err}
 			return nil
@@ -221,11 +221,15 @@ func downloadApkCmd(repo string, art ghapi.Artifact, zipPath, outDir, filePatter
 		if !keepCache {
 			_ = os.Remove(zipPath)
 			if err == nil {
-				ghapi.PruneAPKCache(outDir, 3, apkOut.Path)
+				ghapi.PruneAPKCache(outDir, keepCount, apkOut.Path)
 			}
 		}
 		if err == nil {
-			ds := ghapi.DigestStatusFor(art.Digest)
+			checked := art.Digest
+			if !verifyDigest {
+				checked = ""
+			}
+			ds := ghapi.DigestStatusFor(checked)
 			apkOut.DigestStatus = ds
 			apkOut.Meta.DigestStatus = ds
 		}
@@ -234,7 +238,7 @@ func downloadApkCmd(repo string, art ghapi.Artifact, zipPath, outDir, filePatter
 	}
 }
 
-func downloadReleaseApkCmd(repo string, asset ghapi.ReleaseAsset, outDir, filePattern, excludePattern string, keepCache bool, dev device.Info, prefs archPrefs, progCh chan tea.Msg) tea.Cmd {
+func downloadReleaseApkCmd(repo string, asset ghapi.ReleaseAsset, outDir, filePattern, excludePattern string, keepCache bool, keepCount int, verifyDigest bool, dev device.Info, prefs archPrefs, progCh chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		prog := func(got, total int64) {
 			select {
@@ -243,13 +247,13 @@ func downloadReleaseApkCmd(repo string, asset ghapi.ReleaseAsset, outDir, filePa
 			}
 		}
 		sd := scoreDeviceFrom(dev)
-		apkOut, err := ghapi.FetchReleaseAPK(repo, asset, outDir, filePattern, excludePattern, keepCache, scorePrefsFrom(prefs), sd, prog)
+		apkOut, err := ghapi.FetchReleaseAPKWithDigest(repo, asset, outDir, filePattern, excludePattern, keepCache, verifyDigest, scorePrefsFrom(prefs), sd, prog)
 		if err != nil {
 			progCh <- DownloadDoneMsg{Err: err}
 			return nil
 		}
 		if !keepCache {
-			ghapi.PruneAPKCache(outDir, 3, apkOut.Path)
+			ghapi.PruneAPKCache(outDir, keepCount, apkOut.Path)
 		}
 		progCh <- DownloadDoneMsg{
 			ZipPath: "",
