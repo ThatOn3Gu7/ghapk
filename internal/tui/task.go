@@ -249,7 +249,7 @@ func (m *Model) startDownload(withInstall bool) tea.Cmd {
 		m.modal = ModalTask
 		return tea.Batch(
 			downloadReleaseApkCmd(m.settings.Repo, ra.Asset, outDir, m.settings.FilePattern, m.settings.ExcludePattern,
-				m.settings.KeepCache, m.dev, archPrefs{m.settings.Arch, m.settings.Variant}, m.progCh),
+				m.settings.KeepCache, m.settings.KeepCount, m.settings.VerifyDigest, m.dev, archPrefs{m.settings.Arch, m.settings.Variant}, m.progCh),
 			waitProgress(m.progCh),
 		)
 	}
@@ -271,7 +271,7 @@ func (m *Model) startDownload(withInstall bool) tea.Cmd {
 	m.modal = ModalTask
 	return tea.Batch(
 		downloadApkCmd(m.settings.Repo, art, zipPath, outDir, m.settings.FilePattern, m.settings.ExcludePattern,
-			m.settings.KeepCache, m.dev, archPrefs{m.settings.Arch, m.settings.Variant}, m.progCh),
+			m.settings.KeepCache, m.settings.KeepCount, m.settings.VerifyDigest, m.dev, archPrefs{m.settings.Arch, m.settings.Variant}, m.progCh),
 		waitProgress(m.progCh),
 	)
 }
@@ -281,6 +281,10 @@ func (m *Model) startDownload(withInstall bool) tea.Cmd {
 func (m *Model) startInstall(path string) tea.Cmd {
 	if path == "" {
 		m.toastf("nothing downloaded yet")
+		return nil
+	}
+	if m.settings.NoOpen {
+		m.toastf("open installer is off in settings — APK saved")
 		return nil
 	}
 	meta := m.downloadedAPK.Meta
@@ -323,8 +327,8 @@ func (m *Model) startInstall(path string) tea.Cmd {
 		HistoryCert:     hist.Sig,
 		DeviceSDK:       m.dev.SDK,
 		DowngradeMode:   m.settings.Downgrade,
-		CheckPackage:    true,
-		CheckSignature:  true,
+		CheckPackage:    m.settings.PkgCheck,
+		CheckSignature:  m.settings.SigCheck,
 	})
 
 	if safety.BlockedReason != "" {

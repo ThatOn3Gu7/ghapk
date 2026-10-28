@@ -525,7 +525,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case msg.Result.Outcome == device.OutcomeLaunched:
 			m.toastf("installer launched (%s) — confirm on device", msg.Result.Via)
-			if pkg != "" && meta.HaveInfo {
+			if m.settings.VerifyInstall && pkg != "" && meta.HaveInfo {
 				cmds = append(cmds, verifyInstallCmd(pkg, meta.Info.VersionCode, 30*time.Second))
 			}
 		default:
@@ -803,11 +803,16 @@ func (m *Model) scoreArtifacts(list []ghapi.Artifact) []ghapi.Artifact {
 		if a.Expired {
 			continue
 		}
-		if m.settings.ArtifactPattern != "" && !globCI(m.settings.ArtifactPattern, a.Name) {
+		if m.settings.ArtifactName != "" && !strings.EqualFold(a.Name, m.settings.ArtifactName) {
 			continue
 		}
-		if m.settings.ExcludePattern != "" && globCI(m.settings.ExcludePattern, a.Name) {
-			continue
+		if m.settings.ArtifactName == "" {
+			if m.settings.ArtifactPattern != "" && !globCIList(m.settings.ArtifactPattern, a.Name) {
+				continue
+			}
+			if m.settings.ExcludePattern != "" && globCIList(m.settings.ExcludePattern, a.Name) {
+				continue
+			}
 		}
 		a.Score = score.ArtifactRank(a.Name, prefs, dev)
 		a.Rejected = !score.AllowedByPolicy(a.Name, prefs, dev)
@@ -820,6 +825,16 @@ func (m *Model) scoreArtifacts(list []ghapi.Artifact) []ghapi.Artifact {
 		return out[i].Score > out[j].Score
 	})
 	return out
+}
+
+func globCIList(patterns, name string) bool {
+	for _, p := range strings.Split(patterns, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" && globCI(p, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func globCI(pattern, name string) bool {

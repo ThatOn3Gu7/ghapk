@@ -21,20 +21,26 @@ type SettingRow struct {
 }
 
 var settingRows = []SettingRow{
-	{Key: "theme", Label: "Theme", Hint: "color scheme — ask t on the dashboard to cycle too", Kind: "enum", Values: []string{"action", "mocha", "emerald", "paper"}},
+	{Key: "theme", Label: "Theme", Hint: "color scheme — press t on the dashboard to cycle too", Kind: "enum", Values: []string{"action", "mocha", "emerald", "paper"}},
 	{Key: "arch", Label: "Arch preference", Hint: "which ABI the APK should match", Kind: "enum", Values: []string{"auto", "any", "arm64", "armv7", "x86_64", "x86", "universal"}},
 	{Key: "variant", Label: "Variant", Hint: "debug vs release builds", Kind: "enum", Values: []string{"auto", "debug", "release", "any"}},
-	{Key: "source", Label: "Source", Hint: "where APKs come from", Kind: "enum", Values: []string{"auto", "actions", "releases"}},
-	{Key: "downgrade", Label: "Downgrade", Hint: "may the installer replace a newer app?", Kind: "enum", Values: []string{"auto", "allow", "never"}},
+	{Key: "source", Label: "Source", Hint: "where APKs come from (actions, releases, or auto fallback)", Kind: "enum", Values: []string{"auto", "actions", "releases"}},
+	{Key: "downgrade", Label: "Downgrade", Hint: "auto asks before downgrading; allow permits; never blocks", Kind: "enum", Values: []string{"auto", "allow", "never"}},
 	{Key: "branch", Label: "Branch", Hint: "restrict runs to this branch (B for picker)", Kind: "text"},
-	{Key: "workflow", Label: "Workflow", Hint: "restrict to one workflow name", Kind: "text"},
-	{Key: "artifact-pattern", Label: "Artifact pattern", Hint: "glob for artifact names, e.g. *debug*", Kind: "text"},
+	{Key: "workflow", Label: "Workflow", Hint: "restrict to one workflow name (W for picker)", Kind: "text"},
+	{Key: "artifact-pattern", Label: "Artifact pattern", Hint: "comma-separated globs for artifact names, e.g. *debug*", Kind: "text"},
 	{Key: "file", Label: "File pattern", Hint: "glob for files inside the zip", Kind: "text"},
+	{Key: "exclude", Label: "Exclude pattern", Hint: "comma-separated globs of artifacts/APKs to skip", Kind: "text"},
 	{Key: "package", Label: "Package name", Hint: "com.example.app — tracks the installed version", Kind: "text"},
+	{Key: "pkg-check", Label: "Package check", Hint: "warn when APK package differs from tracked app", Kind: "bool"},
+	{Key: "sig-check", Label: "Signature check", Hint: "warn when APK signing key differs from installed app", Kind: "bool"},
+	{Key: "verify-digest", Label: "Verify SHA-256", Hint: "verify downloads against GitHub's published digest", Kind: "bool"},
+	{Key: "verify-install", Label: "Verify install", Hint: "check device package version after installer handoff", Kind: "bool"},
 	{Key: "limit", Label: "Run limit", Hint: "how many workflow runs to scan", Kind: "int"},
+	{Key: "keep", Label: "Keep cached APKs", Hint: "how many recent APKs to keep in cache", Kind: "int"},
 	{Key: "auto-refresh", Label: "Auto refresh", Hint: "seconds between refreshes, 0 = off", Kind: "int"},
-	{Key: "no-open", Label: "Never open installer", Hint: "download only, never hand off", Kind: "bool"},
-	{Key: "keep-cache", Label: "Keep cache", Hint: "keep downloaded zips between runs", Kind: "bool"},
+	{Key: "no-open", Label: "Open installer", Hint: "when off, download only and never launch installer", Kind: "bool"},
+	{Key: "keep-cache", Label: "Keep zip cache", Hint: "keep downloaded artifact zips for verified reuse", Kind: "bool"},
 	{Key: "watch", Label: "Watch runs", Hint: "fast refresh while a run is in flight", Kind: "bool"},
 }
 
@@ -75,10 +81,22 @@ func (s *SettingsUI) valueOf(m *Model, key string) string {
 		return orDefault(st.ArtifactPattern, "(none)")
 	case "file":
 		return orDefault(st.FilePattern, "(any .apk)")
+	case "exclude":
+		return orDefault(st.ExcludePattern, "(none)")
 	case "package":
 		return orDefault(st.PackageName, "(unset)")
+	case "pkg-check":
+		return onOff(st.PkgCheck)
+	case "sig-check":
+		return onOff(st.SigCheck)
+	case "verify-digest":
+		return onOff(st.VerifyDigest)
+	case "verify-install":
+		return onOff(st.VerifyInstall)
 	case "limit":
 		return fmt.Sprint(st.RunLimit)
+	case "keep":
+		return fmt.Sprint(st.KeepCount)
 	case "auto-refresh":
 		if st.AutoRefreshSecs == 0 {
 			return "off"
@@ -144,15 +162,32 @@ func (s *SettingsUI) setValue(m *Model, key, raw string) {
 			setting = ""
 		}
 		st.FilePattern = setting
+	case "exclude":
+		if strings.HasPrefix(setting, "(") {
+			setting = ""
+		}
+		st.ExcludePattern = setting
 	case "package":
 		if strings.HasPrefix(setting, "(") {
 			setting = ""
 		}
 		st.PackageName = setting
 		m.instPkg = setting
+	case "pkg-check":
+		st.PkgCheck = setting == "on"
+	case "sig-check":
+		st.SigCheck = setting == "on"
+	case "verify-digest":
+		st.VerifyDigest = setting == "on"
+	case "verify-install":
+		st.VerifyInstall = setting == "on"
 	case "limit":
 		if n, err := strconv.Atoi(strings.TrimSuffix(setting, "s")); err == nil && n > 0 {
 			st.RunLimit = n
+		}
+	case "keep":
+		if n, err := strconv.Atoi(setting); err == nil && n >= 0 {
+			st.KeepCount = n
 		}
 	case "auto-refresh":
 		if setting == "off" {
@@ -205,6 +240,15 @@ func (s *SettingsUI) cycle(m *Model, dir int) {
 			}
 			if n > 100 {
 				n = 100
+			}
+			s.setValue(m, row.Key, fmt.Sprint(n))
+		} else if row.Key == "keep" {
+			n += dir
+			if n < 0 {
+				n = 0
+			}
+			if n > 20 {
+				n = 20
 			}
 			s.setValue(m, row.Key, fmt.Sprint(n))
 		} else {
@@ -305,7 +349,13 @@ func (s *SettingsUI) view(m *Model) string {
 	st := m.st
 	var b strings.Builder
 	b.WriteString(st.Muted.Render("changes apply immediately · ctrl+g save for every repo · ctrl+r save for this repo") + "\n\n")
-	h := 16
+	h := 14
+	if m.height > 0 && m.height-11 < h {
+		h = m.height - 11
+	}
+	if h < 4 {
+		h = 4
+	}
 	if s.offset > s.cursor {
 		s.offset = s.cursor
 	}

@@ -1,11 +1,12 @@
-// Package config loads and saves ghapk settings.
+// Package config loads and saves ghapk settings with explicit trust boundaries
+// between user-owned configuration and untrusted repository-supplied hints.
 //
-// The file format is intentionally the same KEY=VALUE line format the
-// original bash script used, so existing users can keep their files:
+// The file format uses the same KEY=VALUE line syntax as the original script:
 //
-//	~/.config/ghapk/config                 — global, every repo
-//	~/.config/ghapk/repos/<owner>_<repo>.conf — one repo, outranks global
-//	.ghapk.conf                            — working directory, outranked by flags
+//	~/.config/ghapk/config                    — trusted global user config
+//	~/.config/ghapk/repos/<owner>_<repo>.conf — trusted per-repo user config (outranks global)
+//	.ghapk.conf / .github/ghapk.conf          — untrusted workspace/repo hints (lowest precedence;
+//	                                            benign selection hints only, never safety/destructive keys)
 package config
 
 import (
@@ -14,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -36,11 +38,19 @@ type Settings struct {
 	Theme           string `key:"theme"`
 	NoOpen          bool   `key:"no-open"`
 	KeepCache       bool   `key:"keep-cache"`
+	KeepCount       int    `key:"keep"`
 	Watch           bool   `key:"watch"`
 	AutoRefreshSecs int    `key:"auto-refresh"`
+
+	// Safety policies — always enabled by default and modifiable ONLY by
+	// trusted local user config/flags, never by untrusted repo configs.
+	PkgCheck      bool `key:"pkg-check"`
+	SigCheck      bool `key:"sig-check"`
+	VerifyDigest  bool `key:"verify-digest"`
+	VerifyInstall bool `key:"verify-install"`
 }
 
-// Defaults returns the out-of-the-box settings.
+// Defaults returns the out-of-the-box settings with all safety checks enabled.
 func Defaults() Settings {
 	return Settings{
 		Arch:            "auto",
@@ -49,13 +59,22 @@ func Defaults() Settings {
 		Downgrade:       "auto",
 		RunLimit:        20,
 		Theme:           "action",
+		KeepCount:       3,
 		AutoRefreshSecs: 60,
+		PkgCheck:        true,
+		SigCheck:        true,
+		VerifyDigest:    true,
+		VerifyInstall:   true,
 	}
 }
 
-// Dir is the per-user config directory (~/.config/ghapk).
+// Dir is the per-user config directory (~/.config/ghapk), honoring
+// GHAPK_CONFIG_DIR and XDG_CONFIG_HOME.
 func Dir() string {
-	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
+	if d := strings.TrimSpace(os.Getenv("GHAPK_CONFIG_DIR")); d != "" {
+		return d
+	}
+	if x := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); x != "" {
 		return filepath.Join(x, "ghapk")
 	}
 	home, err := os.UserHomeDir()
@@ -73,9 +92,16 @@ func RepoPath(repo string) string {
 	return filepath.Join(Dir(), "repos", r+".conf")
 }
 
-// CacheDir mirrors the script's CACHE_DIR (~/.cache/ghapk).
+// CacheDir mirrors the script's CACHE_DIR (~/.cache/ghapk), honoring
+// GHAPK_CACHE_DIR, CACHE_DIR, and XDG_CACHE_HOME.
 func CacheDir() string {
-	if x := os.Getenv("XDG_CACHE_HOME"); x != "" {
+	if d := strings.TrimSpace(os.Getenv("GHAPK_CACHE_DIR")); d != "" {
+		return d
+	}
+	if d := strings.TrimSpace(os.Getenv("CACHE_DIR")); d != "" {
+		return d
+	}
+	if x := strings.TrimSpace(os.Getenv("XDG_CACHE_HOME")); x != "" {
 		return filepath.Join(x, "ghapk")
 	}
 	home, err := os.UserHomeDir()
@@ -85,48 +111,201 @@ func CacheDir() string {
 	return filepath.Join(home, ".cache", "ghapk")
 }
 
-// Load reads global + working-dir config, then the per-repo file if the repo
-// is known. Later sources only fill fields the earlier ones left empty,
-// exactly like the script's apply_config_line.
-func Load() Settings {
-	s := Defaults()
-	kv := map[string]string{}
-	mergeInto := func(path string) {
-		for k, v := range readKV(path) {
-			if _, seen := kv[k]; !seen {
-				kv[k] = v
+// canonKey normalizes aliases and underscore variants to canonical key names.
+func canonKey(k string) string {
+	k = strings.ToLower(strings.TrimSpace(k))
+	k = strings.ReplaceAll(k, "_", "-")
+	switch k {
+	case "repository":
+		return "repo"
+	case "artifact-name":
+		return "artifact"
+	case "artifacts":
+		return "artifact-pattern"
+	case "file-pattern":
+		return "file"
+	case "exclude-pattern":
+		return "exclude"
+	case "source-mode":
+		return "source"
+	case "run-limit":
+		return "limit"
+	case "package-name", "pkg":
+		return "package"
+	case "downgrade-mode":
+		return "downgrade"
+	case "arch-pref", "abi":
+		return "arch"
+	case "variant-pref", "build-type":
+		return "variant"
+	case "refresh":
+		return "auto-refresh"
+	}
+	return k
+}
+
+// untrustedAllowedKeys is the strict allowlist of benign selection hints that
+// an untrusted workspace (.ghapk.conf) or remote repository (.github/ghapk.conf)
+// may suggest when the user has not configured a value locally.
+//
+// Security-sensitive, destructive, filesystem, and policy keys (such as
+// uninstall-first, downgrade, pkg-check, sig-check, verify-digest,
+// verify-install, package, no-open, out, keep, keep-cache) are NEVER accepted
+// from untrusted configs.
+var untrustedAllowedKeys = map[string]bool{
+	"repo":             true,
+	"branch":           true,
+	"workflow":         true,
+	"artifact":         true,
+	"artifact-pattern": true,
+	"file":             true,
+	"exclude":          true,
+	"source":           true,
+}
+
+// SanitizeUntrustedRepoConfig filters parsed KEY=VALUE pairs from an untrusted
+// repository or working-directory config, returning only benign selection hints
+// and a sorted list of blocked keys that were rejected.
+func SanitizeUntrustedRepoConfig(raw map[string]string) (safe map[string]string, blocked []string) {
+	safe = map[string]string{}
+	blockedSet := map[string]bool{}
+	for rk, v := range raw {
+		k := canonKey(rk)
+		if !untrustedAllowedKeys[k] {
+			blockedSet[k] = true
+			continue
+		}
+		if k == "source" {
+			sv := strings.ToLower(strings.TrimSpace(v))
+			if sv != "auto" && sv != "actions" && sv != "releases" {
+				blockedSet[k] = true
+				continue
 			}
+			v = sv
+		}
+		if k == "repo" && !validRepoHint(v) {
+			blockedSet[k] = true
+			continue
+		}
+		safe[k] = v
+	}
+	for k := range blockedSet {
+		blocked = append(blocked, k)
+	}
+	sort.Strings(blocked)
+	return safe, blocked
+}
+
+func validRepoHint(s string) bool {
+	if strings.ContainsAny(s, " \t\r\n") {
+		return false
+	}
+	parts := strings.Split(s, "/")
+	return len(parts) == 2 && parts[0] != "" && parts[1] != ""
+}
+
+// ApplyRemoteRepoConfig parses text from an untrusted in-repository config
+// (such as .github/ghapk.conf), strips any safety/destructive keys, and fills
+// only unset benign selection fields on s. It returns any blocked key names.
+func ApplyRemoteRepoConfig(s *Settings, text string) []string {
+	raw := parseKVText(text)
+	safe, blocked := SanitizeUntrustedRepoConfig(raw)
+	applyUntrustedHints(s, safe, nil)
+	return blocked
+}
+
+// Load reads trusted global user config, trusted per-repo user config, and
+// trusted GHAPK_* environment overrides, while treating working-directory
+// .ghapk.conf strictly as lowest-precedence untrusted selection hints.
+func Load() Settings {
+	return loadWithLocal(".ghapk.conf", "")
+}
+
+// LoadForRepo returns settings with a specific repo's trusted per-repo config
+// applied on top of global settings.
+func LoadForRepo(repo string) Settings {
+	return loadWithLocal(".ghapk.conf", repo)
+}
+
+func loadWithLocal(localUntrustedPath, explicitRepo string) Settings {
+	s := Defaults()
+
+	globalKV := readKV(globalPath())
+	envKV := readTrustedEnv()
+	untrustedRaw := readKV(localUntrustedPath)
+	untrustedSafe, _ := SanitizeUntrustedRepoConfig(untrustedRaw)
+
+	// Track which keys were explicitly configured by trusted sources so
+	// untrusted workspace hints cannot override even default-valued enums
+	// like source="auto" when the user explicitly wrote source=auto globally.
+	trustedSeen := map[string]bool{}
+	for k := range globalKV {
+		trustedSeen[k] = true
+	}
+	for k := range envKV {
+		trustedSeen[k] = true
+	}
+
+	// 1. Lowest precedence: sanitized untrusted workspace hints.
+	applyUntrustedHints(&s, untrustedSafe, trustedSeen)
+
+	// 2. Trusted global user file.
+	applyTop(&s, globalKV)
+
+	// 3. Determine target repo so we can load its trusted per-repo config.
+	repo := explicitRepo
+	if repo == "" {
+		repo = envKV["repo"]
+	}
+	if repo == "" {
+		repo = s.Repo
+	}
+	if repo != "" {
+		s.Repo = repo
+		repoKV := readKV(RepoPath(repo))
+		applyTop(&s, repoKV)
+	}
+
+	// 4. Highest config-layer precedence before CLI flags: GHAPK_* env vars.
+	applyTop(&s, envKV)
+	if explicitRepo != "" {
+		s.Repo = explicitRepo
+	}
+	return s
+}
+
+func readTrustedEnv() map[string]string {
+	out := map[string]string{}
+	keys := []string{
+		"repo", "branch", "workflow", "artifact", "artifact-pattern",
+		"file", "exclude", "arch", "variant", "source", "downgrade",
+		"package", "limit", "theme", "no-open", "keep-cache", "keep",
+		"watch", "auto-refresh", "pkg-check", "sig-check",
+		"verify-digest", "verify-install",
+	}
+	for _, k := range keys {
+		envName := "GHAPK_" + strings.ToUpper(strings.ReplaceAll(k, "-", "_"))
+		if v, ok := os.LookupEnv(envName); ok && strings.TrimSpace(v) != "" {
+			out[k] = strings.TrimSpace(v)
 		}
 	}
-	mergeInto(globalPath())
-	mergeInto(".ghapk.conf")
-	apply(&s, kv)
-	if s.Repo != "" {
-		// per-repo file wins over global: re-apply its values on top
-		applyTop(&s, readKV(RepoPath(s.Repo)))
-	}
-	return s
+	return out
 }
 
-// LoadForRepo returns settings with a specific repo's per-repo file applied.
-func LoadForRepo(repo string) Settings {
-	s := Load()
-	s.Repo = repo
-	applyTop(&s, readKV(RepoPath(repo)))
-	return s
-}
-
-func lowerKey(k string) string { return strings.ToLower(strings.TrimSpace(k)) }
-
-// readKV parses a KEY=VALUE file; blank lines and '#' comments are ignored.
 func readKV(path string) map[string]string {
-	out := map[string]string{}
-	f, err := os.Open(path)
-	if err != nil {
-		return out
+	if path == "" {
+		return map[string]string{}
 	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]string{}
+	}
+	return parseKVText(string(b))
+}
+
+func parseKVText(text string) map[string]string {
+	out := map[string]string{}
+	sc := bufio.NewScanner(strings.NewReader(text))
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -136,87 +315,159 @@ func readKV(path string) map[string]string {
 		if !ok {
 			continue
 		}
-		out[lowerKey(k)] = strings.Trim(strings.TrimSpace(v), `"'`)
+		v = strings.TrimSpace(v)
+		if i := strings.Index(v, " #"); i >= 0 {
+			v = strings.TrimSpace(v[:i])
+		}
+		out[canonKey(k)] = strings.Trim(v, `"'`)
 	}
 	return out
 }
 
-func apply(s *Settings, kv map[string]string) {
-	for k, v := range kv {
-		setField(s, k, v, false)
+func applyUntrustedHints(s *Settings, safe map[string]string, trustedSeen map[string]bool) {
+	for k, v := range safe {
+		if v == "" || (trustedSeen != nil && trustedSeen[k]) {
+			continue
+		}
+		switch k {
+		case "repo":
+			if s.Repo == "" {
+				s.Repo = v
+			}
+		case "branch":
+			if s.Branch == "" {
+				s.Branch = v
+			}
+		case "workflow":
+			if s.Workflow == "" {
+				s.Workflow = v
+			}
+		case "artifact":
+			if s.ArtifactName == "" {
+				s.ArtifactName = v
+			}
+		case "artifact-pattern":
+			if s.ArtifactPattern == "" {
+				s.ArtifactPattern = v
+			}
+		case "file":
+			if s.FilePattern == "" {
+				s.FilePattern = v
+			}
+		case "exclude":
+			if s.ExcludePattern == "" {
+				s.ExcludePattern = v
+			}
+		case "source":
+			if s.Source == "" || s.Source == "auto" {
+				s.Source = v
+			}
+		}
 	}
 }
 
 func applyTop(s *Settings, kv map[string]string) {
 	for k, v := range kv {
-		setField(s, k, v, true)
+		setTrustedField(s, canonKey(k), v)
 	}
 }
 
-func setField(s *Settings, k, v string, force bool) {
-	setS := func(dst *string) {
-		if force || *dst == "" {
-			*dst = v
-		}
-	}
+func setTrustedField(s *Settings, k, v string) {
 	switch k {
 	case "repo":
-		setS(&s.Repo)
+		if v != "" {
+			s.Repo = v
+		}
 	case "branch":
-		setS(&s.Branch)
+		s.Branch = v
 	case "workflow":
-		setS(&s.Workflow)
+		s.Workflow = v
 	case "artifact":
-		setS(&s.ArtifactName)
-	case "artifact_pattern", "artifact-pattern":
-		setS(&s.ArtifactPattern)
-	case "file", "file_pattern", "file-pattern":
-		setS(&s.FilePattern)
-	case "exclude", "exclude_pattern", "exclude-pattern":
-		setS(&s.ExcludePattern)
-	case "arch", "arch_pref":
-		if v != "" {
-			s.Arch = v
+		s.ArtifactName = v
+	case "artifact-pattern":
+		s.ArtifactPattern = v
+	case "file":
+		s.FilePattern = v
+	case "exclude":
+		s.ExcludePattern = v
+	case "arch":
+		if nv := normArch(v); nv != "" {
+			s.Arch = nv
 		}
-	case "variant", "variant_pref":
-		if v != "" {
-			s.Variant = v
+	case "variant":
+		switch strings.ToLower(v) {
+		case "auto", "debug", "release", "any":
+			s.Variant = strings.ToLower(v)
 		}
-	case "source", "source_mode":
-		if v != "" {
-			s.Source = v
+	case "source":
+		switch strings.ToLower(v) {
+		case "auto", "actions", "releases":
+			s.Source = strings.ToLower(v)
 		}
-	case "downgrade", "downgrade_mode":
-		if v != "" {
-			s.Downgrade = v
+	case "downgrade":
+		switch strings.ToLower(v) {
+		case "auto", "allow":
+			s.Downgrade = strings.ToLower(v)
+		case "never", "skip":
+			s.Downgrade = "never"
 		}
-	case "package", "package_name":
-		setS(&s.PackageName)
-	case "limit", "run_limit":
-		var n int
-		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 {
+	case "package":
+		s.PackageName = v
+	case "limit":
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			if n > 200 {
+				n = 200
+			}
 			s.RunLimit = n
 		}
 	case "theme":
 		if v != "" {
 			s.Theme = v
 		}
-	case "no_open", "no-open":
+	case "no-open":
 		s.NoOpen = truthy(v)
-	case "keep_cache", "keep-cache":
+	case "keep-cache":
 		s.KeepCache = truthy(v)
+	case "keep":
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			s.KeepCount = n
+		}
 	case "watch":
 		s.Watch = truthy(v)
-	case "auto_refresh", "auto-refresh":
-		var n int
-		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 0 {
+	case "auto-refresh":
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			s.AutoRefreshSecs = n
 		}
+	case "pkg-check":
+		s.PkgCheck = truthy(v)
+	case "sig-check":
+		s.SigCheck = truthy(v)
+	case "verify-digest":
+		s.VerifyDigest = truthy(v)
+	case "verify-install":
+		s.VerifyInstall = truthy(v)
+	case "uninstall-first":
+		// Intentionally ignored even in config files: GHAPK never executes
+		// unattended package uninstallation or app-data erasure from config.
 	}
 }
 
+func normArch(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "arm64-v8a", "aarch64", "arm64":
+		return "arm64"
+	case "armeabi", "armeabi-v7a", "armv7":
+		return "armv7"
+	case "x64", "amd64", "x86_64":
+		return "x86_64"
+	case "x86", "auto", "any", "universal":
+		return strings.ToLower(strings.TrimSpace(v))
+	}
+	return ""
+}
+
 func truthy(v string) bool {
-	switch strings.ToLower(v) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "1", "true", "yes", "on", "y":
 		return true
 	}
@@ -230,10 +481,10 @@ func untruth(b bool) string {
 	return "0"
 }
 
-// SaveGlobal writes the global config file.
+// SaveGlobal writes the global config file atomically.
 func SaveGlobal(s Settings) error { return save(globalPath(), encode(s, false)) }
 
-// SaveRepo writes the per-repo config file.
+// SaveRepo writes the per-repo config file atomically.
 func SaveRepo(s Settings) error {
 	if s.Repo == "" {
 		return fmt.Errorf("no repo set")
@@ -261,17 +512,28 @@ func encode(s Settings, repoLevel bool) string {
 	if s.Workflow != "" {
 		kvline(&b, "workflow", s.Workflow)
 	}
+	if s.ArtifactName != "" {
+		kvline(&b, "artifact", s.ArtifactName)
+	}
 	if s.ArtifactPattern != "" {
 		kvline(&b, "artifact-pattern", s.ArtifactPattern)
 	}
 	if s.FilePattern != "" {
 		kvline(&b, "file", s.FilePattern)
 	}
+	if s.ExcludePattern != "" {
+		kvline(&b, "exclude", s.ExcludePattern)
+	}
 	if s.PackageName != "" {
 		kvline(&b, "package", s.PackageName)
 	}
+	kvline(&b, "pkg-check", untruth(s.PkgCheck))
+	kvline(&b, "sig-check", untruth(s.SigCheck))
+	kvline(&b, "verify-digest", untruth(s.VerifyDigest))
+	kvline(&b, "verify-install", untruth(s.VerifyInstall))
 	kvline(&b, "no-open", untruth(s.NoOpen))
 	kvline(&b, "keep-cache", untruth(s.KeepCache))
+	kvline(&b, "keep", fmt.Sprint(s.KeepCount))
 	kvline(&b, "watch", untruth(s.Watch))
 	return b.String()
 }
@@ -282,7 +544,11 @@ func save(path, body string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(body), 0o600)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(body), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // ───────────────────────── recents ─────────────────────────
@@ -362,7 +628,6 @@ func RenameRecent(old, new string) {
 			rs[i].Repo = new
 		}
 	}
-	// collapse any duplicate created by the rename
 	seen := map[string]bool{}
 	next := rs[:0]
 	for _, r := range rs {
@@ -390,7 +655,6 @@ func ToggleFavourite(repo string) bool {
 
 func saveRecents(rs []RecentRepo) {
 	var b strings.Builder
-	// favourites stay on top
 	sort.SliceStable(rs, func(i, j int) bool {
 		if rs[i].Favourite != rs[j].Favourite {
 			return rs[i].Favourite
