@@ -58,15 +58,20 @@ func (m *Model) openDoctor() tea.Cmd {
 		}
 		switch info.InstallVia {
 		case "termux-open":
-			add("ok", "installer", "termux-open")
+			add("ok", "installer", "termux-open (Android package installer prompt)")
 		case "am":
-			add("ok", "installer", "am start (VIEW intent)")
+			add("ok", "installer", "am start (Android VIEW intent prompt)")
 		case "adb":
-			add("warn", "installer", "adb (needs USB/network debugging)")
-		case "xdg-open":
-			add("warn", "installer", "xdg-open (desktop only)")
+			if info.ADBConnected {
+				add("ok", "installer", "adb (device connected)")
+			} else {
+				add("warn", "installer", "adb (no device attached — enable USB/wireless debugging)")
+			}
 		default:
-			add("err", "installer", "no install path found")
+			add("err", "installer", "no Android installer found (install adb on desktop or termux-tools on Termux)")
+		}
+		if info.HasRish {
+			add("ok", "shizuku", "rish connected")
 		}
 
 		if exec := os.Getenv("PREFIX"); exec != "" && strings.Contains(exec, "termux") {

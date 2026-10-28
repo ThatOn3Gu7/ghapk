@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ghapk/ghapk/internal/config"
+	"github.com/ghapk/ghapk/internal/device"
 	"github.com/ghapk/ghapk/internal/ghapi"
 )
 
@@ -23,13 +24,14 @@ type TaskState struct {
 	received int64
 	total    int64
 
-	phase   string // "downloading", "extracting", "installing", "done", "failed"
-	logs    []string
-	err     error
-	result  ghapi.ExtractedAPK
-	buttons []string
-	btnIdx  int
-	started time.Time
+	phase      string // "downloading", "extracting", "installing", "launched", "done", "failed"
+	logs       []string
+	err        error
+	result     ghapi.ExtractedAPK
+	installRes device.InstallResult
+	buttons    []string
+	btnIdx     int
+	started    time.Time
 
 	running bool // still streaming
 }
@@ -87,14 +89,22 @@ func (t *TaskState) downloadDone(msg DownloadDoneMsg) {
 
 var device_CanInstall bool // set each render from model
 
-func (t *TaskState) installDone(err error) {
+func (t *TaskState) installDone(res device.InstallResult, err error) {
 	t.running = false
-	if err != nil {
+	t.installRes = res
+	switch {
+	case err != nil || res.Outcome == device.OutcomeFailed:
 		t.phase = "failed"
-		t.err = err
-	} else {
+		if err != nil {
+			t.err = err
+		} else {
+			t.err = fmt.Errorf("installation failed")
+		}
+	case res.Outcome == device.OutcomeLaunched:
+		t.phase = "launched"
+	default:
 		t.phase = "done"
-		t.addLog("installer finished")
+		t.addLog("installation confirmed via " + res.Via)
 	}
 	t.buttons = []string{"Close"}
 }
@@ -162,9 +172,21 @@ func (t *TaskState) view(m *Model) string {
 	case "extracting":
 		b.WriteString(m.spin.View() + " " + st.Text.Render("picking the best APK out of the zip…") + "\n")
 	case "installing":
-		b.WriteString(m.spin.View() + " " + st.Text.Render("handing off to the package installer…") + "\n")
+		b.WriteString(m.spin.View() + " " + st.Text.Render("running Android installer…") + "\n")
+	case "launched":
+		via := t.installRes.Via
+		if via == "" {
+			via = "Android installer"
+		}
+		b.WriteString(st.Warn.Render("↗ installer launched (unconfirmed)") + " " +
+			st.Dim.Render("via "+via) + "\n")
+		b.WriteString(st.Muted.Render("Accept the prompt on your Android device — installation is not confirmed yet.") + "\n")
 	case "done":
-		b.WriteString(st.OK.Render(st.G.OK+" done") + " " +
+		label := "done"
+		if t.Kind == "install" && t.installRes.Confirmed() {
+			label = "installed"
+		}
+		b.WriteString(st.OK.Render(st.G.OK+" "+label) + " " +
 			st.Dim.Render("in "+time.Since(t.started).Round(time.Second).String()) + "\n")
 		if t.result.Path != "" {
 			b.WriteString(st.Accent.Render(filepath.Base(t.result.Path)) +
@@ -175,6 +197,9 @@ func (t *TaskState) view(m *Model) string {
 		b.WriteString(st.Err.Render(st.G.Fail+" failed") + "\n")
 		if t.err != nil {
 			b.WriteString(st.Warn.Render(t.err.Error()) + "\n")
+		}
+		if t.installRes.Diagnosis != "" && (t.err == nil || !strings.Contains(t.err.Error(), t.installRes.Diagnosis)) {
+			b.WriteString(st.Muted.Render(t.installRes.Diagnosis) + "\n")
 		}
 	}
 	if len(t.logs) > 0 {
@@ -239,8 +264,7 @@ func (m *Model) startInstall(path string) tea.Cmd {
 	device_CanInstall = m.dev.CanInstall
 	m.task = t
 	m.modal = ModalTask
-	allowDowngrade := m.settings.Downgrade != "never" && m.settings.Downgrade != ""
-	// auto = allow (like the script's --downgrade auto on adb path)
+	allowDowngrade := m.settings.Downgrade == "allow"
 	return tea.Batch(
 		installApkCmd(path, allowDowngrade, m.logCh),
 		waitInstallLog(m.logCh),

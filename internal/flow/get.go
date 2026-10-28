@@ -160,14 +160,24 @@ func Run(o GetOptions) int {
 	}
 	out("ghapk: apk %s (%s)", apk.Path, ghapi.HumanBytes(apk.Size))
 
-	// [6/6] hand off
+	// [6/6] hand off / install
 	if o.Install {
-		allowDowngrade := s.Downgrade != "never"
-		if err := device.Install(apk.Path, allowDowngrade, func(line string) {
+		if s.NoOpen {
+			out("ghapk: --no-open is set — skipping installer (APK saved at %s)", apk.Path)
+			return 0
+		}
+		allowDowngrade := s.Downgrade == "allow"
+		res, err := device.InstallAPK(apk.Path, allowDowngrade, func(line string) {
 			out("ghapk: installer: %s", line)
-		}); err != nil {
-			out("ghapk: installer failed: %v", err)
+		})
+		if err != nil || res.Outcome == device.OutcomeFailed {
+			out("ghapk: install failed: %v", err)
 			return 10
+		}
+		if res.Outcome == device.OutcomeLaunched {
+			out("ghapk: installer launched via %s — accept the prompt on your Android device (installation not yet confirmed)", res.Via)
+		} else {
+			out("ghapk: installed via %s (confirmed)", res.Via)
 		}
 	} else {
 		out("ghapk: pass --install to hand off to the package installer")

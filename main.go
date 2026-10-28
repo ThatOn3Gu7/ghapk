@@ -166,7 +166,18 @@ func doctorCmd() int {
 	} else {
 		fmt.Printf("  · %-12s %s — downloads OK, install needs adb\n", "device", d.Word())
 	}
-	check(d.InstallVia != "", "installer", d.InstallVia, "none found")
+	switch d.InstallVia {
+	case "adb":
+		if d.ADBConnected {
+			check(true, "installer", "adb (device connected)", "")
+		} else {
+			fmt.Printf("  ! %-12s %s\n", "installer", "adb installed (no device currently connected)")
+		}
+	case "termux-open", "am":
+		check(true, "installer", d.InstallVia+" (Android installer prompt)", "")
+	default:
+		check(false, "installer", "", "none found (install adb on desktop or termux-tools on Termux)")
+	}
 	dir := config.CacheDir()
 	if err := os.MkdirAll(dir, 0o755); err == nil {
 		check(true, "cache", dir, "")
