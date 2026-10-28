@@ -398,7 +398,7 @@ func TestLiveTeaProgramDirectInstallEndToEnd(t *testing.T) {
 	waitForOut("app-debug")
 	waitForOut("d:download")
 	_, _ = inW.Write([]byte("i"))
-	waitForOut("APK details checked after download")
+	waitForOut("unknown (package not known)")
 	_, _ = inW.Write([]byte("\r"))
 	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
@@ -417,7 +417,7 @@ func TestLiveTeaProgramDirectInstallEndToEnd(t *testing.T) {
 	}
 
 	// Wait for the background job to finish before quitting.
-	waitForOut("Job #1 · installed")
+	waitForOut("app-debug  installed")
 	_, _ = inW.Write([]byte("q"))
 	_ = inW.Close()
 

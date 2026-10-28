@@ -15,7 +15,6 @@ import (
 	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/ghapk/ghapk/internal/apk"
 	"github.com/ghapk/ghapk/internal/config"
 	"github.com/ghapk/ghapk/internal/device"
@@ -100,7 +99,8 @@ func (m *Model) startJob(spec jobSpec) tea.Cmd {
 	m.jobs = append(m.jobs, j)
 	m.focus = PanelDownloads
 	m.downloadFocus = 0
-	m.downloadDetail = false
+	m.downloadDetail = m.width < 80
+	m.downloadScroll = 0
 	m.rebuildDownloadLists()
 	m.jobList.SelectByID(j.id)
 	return tea.Batch(func() tea.Msg { runJob(j.id, ctx, spec, j.events); return nil }, waitJob(j.events))
@@ -564,7 +564,7 @@ func (m Model) downloadRects() downloadLayout {
 	}
 	w := m.width
 	if m.width >= 80 {
-		w = m.width * 42 / 100
+		w = 38
 	}
 	jh := h * 3 / 5
 	jh = max(3, min(h-3, jh))
@@ -581,132 +581,6 @@ func (m Model) selectedJob() *downloadJob {
 	}
 	id, _ := it.ID.(int)
 	return m.jobByID(id)
-}
-func (m Model) renderDownloads() string {
-	r := m.downloadRects()
-	if r.jobs.w == 0 {
-		return m.downloadDetailPanel(r.detail)
-	}
-	jobs := m.jobList
-	jobs.Focused = m.downloadFocus == 0
-	jobs.MaxShown = max(1, r.jobs.h-2)
-	saved := m.savedList
-	saved.Focused = m.downloadFocus == 1
-	saved.MaxShown = max(1, r.saved.h-2)
-	left := lipgloss.JoinVertical(lipgloss.Left, components.Panel{Title: "Jobs", Badge: fmt.Sprint(len(m.jobs)), Focused: jobs.Focused, Width: r.jobs.w, Height: r.jobs.h, Content: jobs.Render(m.st, r.jobs.w-4)}.Render(m.st), components.Panel{Title: "Saved APKs", Badge: fmt.Sprint(len(m.savedFiles)), Focused: saved.Focused, Width: r.saved.w, Height: r.saved.h, Content: saved.Render(m.st, r.saved.w-4)}.Render(m.st))
-	if r.detail.w == 0 {
-		return left
-	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, m.downloadDetailPanel(r.detail))
-}
-func (m Model) downloadDetailPanel(r rect) string {
-	j := m.selectedJob()
-	lines := []string{"Select a job to see its progress."}
-	if j != nil {
-		name := j.spec.choice.name()
-		if j.spec.savedPath != "" {
-			name = filepath.Base(j.spec.savedPath)
-		}
-		lines = []string{fmt.Sprintf("Job #%d · %s", j.id, j.status), "Source: " + j.spec.repo, "Artifact: " + name, "Stage: " + j.phase}
-		if j.got > 0 {
-			progress := humanSize(j.got)
-			if j.total > 0 {
-				progress += fmt.Sprintf(" / %s (%d%%)", humanSize(j.total), min(int64(100), j.got*100/j.total))
-			} else {
-				progress += " / unknown"
-			}
-			sec := time.Since(j.started).Seconds()
-			if sec > 0 && j.phase == "Download" && j.status == "running" {
-				rate := j.rate
-				if rate <= 0 {
-					rate = float64(j.got) / sec
-				}
-				progress += fmt.Sprintf(" · %s/s", humanSize(int64(rate)))
-				if j.total > j.got && rate > 0 {
-					progress += fmt.Sprintf(" · ~%s left", (time.Duration(float64(j.total-j.got)/rate) * time.Second).Round(time.Second))
-				}
-			}
-			lines = append(lines, progress)
-		}
-		lines = append(lines, "", "Steps:")
-		phases := []string{"Download", "Checksum", "Unpack", "Validate APK", "Save", "Installer", "Confirm on device"}
-		current := -1
-		for i, p := range phases {
-			if p == j.phase {
-				current = i
-			}
-		}
-		for i, p := range phases {
-			mark := "·"
-			if i < current || j.status == "done" && i <= 4 || j.status == "installed" {
-				mark = "✓"
-			}
-			if i == current && j.status == "running" {
-				mark = "→"
-			}
-			if !j.spec.install && i > 4 {
-				mark = "–"
-			}
-			if j.spec.savedPath != "" && (i == 0 || i == 1 || i == 2 || i == 4) {
-				mark = "–"
-			}
-			if j.spec.choice.release && !strings.HasSuffix(strings.ToLower(j.spec.choice.asset.Name), ".zip") && i == 2 {
-				mark = "–"
-			}
-			if i == 1 && j.meta.DigestStatus == apk.DigestUnverified {
-				p += " (unverified)"
-				mark = "–"
-			}
-			lines = append(lines, mark+" "+p)
-		}
-		if j.meta.HaveInfo {
-			lines = append(lines, "", fmt.Sprintf("%s v%s (%d)", j.meta.Info.Package, j.meta.Info.VersionName, j.meta.Info.VersionCode))
-		}
-		if j.meta.Cert.SHA256 != "" {
-			lines = append(lines, "Signing key ("+j.meta.Cert.Scheme+"): "+j.meta.Cert.SHA256)
-		}
-		if j.meta.InfoErr != "" {
-			lines = append(lines, "Manifest unavailable: "+j.meta.InfoErr)
-		}
-		if j.path != "" {
-			lines = append(lines, "APK: "+j.path)
-		}
-		if j.meta.LocalSHA256 != "" {
-			lines = append(lines, "SHA-256: "+j.meta.LocalSHA256, "Digest: "+string(j.meta.DigestStatus))
-		}
-		if len(j.logs) > 0 {
-			lines = append(lines, "", "Log:")
-			lines = append(lines, j.logs...)
-		}
-	}
-	// Wrap detail text at cell boundaries without losing any characters.
-	var wrapped []string
-	w := max(1, r.w-4)
-	for _, line := range lines {
-		line = safeJobText(line)
-		if line == "" {
-			wrapped = append(wrapped, "")
-			continue
-		}
-		var part strings.Builder
-		cols := 0
-		for _, ch := range line {
-			rw := components.VisibleWidth(string(ch))
-			if cols+rw > w && part.Len() > 0 {
-				wrapped = append(wrapped, part.String())
-				part.Reset()
-				cols = 0
-			}
-			part.WriteRune(ch)
-			cols += rw
-		}
-		wrapped = append(wrapped, part.String())
-	}
-
-	maxScroll := max(0, len(wrapped)-(r.h-2))
-	off := min(max(0, m.downloadScroll), maxScroll)
-	end := min(len(wrapped), off+max(0, r.h-2))
-	return components.Panel{Title: "Job detail", Badge: fmt.Sprintf("%d/%d", off+1, max(1, len(wrapped))), Width: r.w, Height: r.h, Focused: m.downloadDetail, Content: strings.Join(wrapped[off:end], "\n")}.Render(m.st)
 }
 func (m *Model) handleJobEvent(e jobEventMsg) tea.Cmd {
 	j := m.jobByID(e.id)
@@ -879,7 +753,7 @@ func (m *Model) downloadAction(key string) tea.Cmd {
 			if item, ok := m.savedList.Selected(); ok {
 				m.confirmTarget = item.ID.(string)
 				m.confirmKind = confirmDeleteSaved
-				m.confirm = components.Confirm{Title: "Delete saved APK?", Body: []string{safeJobText(filepath.Base(m.confirmTarget))}, Options: []string{"Delete", "Cancel"}, Cursor: 1}
+				m.confirm = components.Confirm{Title: "Delete saved APK?", Danger: true, Body: []string{safeJobText(filepath.Base(m.confirmTarget))}, Options: []string{"Delete", "Cancel"}, Cursor: 1}
 				m.modal = ModalConfirm
 			}
 		} else if j := m.selectedJob(); j != nil && j.status != "running" && j.status != "asking" && j.status != "cancelling" {

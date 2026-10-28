@@ -212,18 +212,20 @@ func TestPlanChoicesAndTouchOnPhone(t *testing.T) {
 			if !strings.Contains(view, "Download only") || !strings.Contains(view, "Cancel") {
 				t.Fatalf("buttons missing: %s", view)
 			}
-			lines, choices, buttons := m.plan.lines(&m)
-			_ = lines
-			if len(choices) < 2 {
+			layout := m.plan.layout(&m)
+			if len(layout.choices) < 2 {
 				t.Fatal("multiple choices missing")
 			}
 			box := m.modalBox()
-			x := (m.width-lipgloss.Width(box))/2 + 3
+			x := (m.width-lipgloss.Width(box))/2 + 2
 			y := (m.height-lipgloss.Height(box))/2 + 1
-			mm, _ = m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: y + choices[1]})
+			choiceHit := layout.choices[1]
+			mm, _ = m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: x + choiceHit.x, Y: y + choiceHit.y})
 			m = mm.(Model)
 			name := m.plan.choices[m.plan.selected].name()
-			mm, cmd = m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: y + buttons[1]})
+			layout = m.plan.layout(&m)
+			buttonHit := layout.buttons[1]
+			mm, cmd = m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: x + buttonHit.x, Y: y + buttonHit.y})
 			m = mm.(Model)
 			if cmd == nil || len(m.jobs) != 1 || m.jobs[0].spec.install || m.jobs[0].spec.choice.name() != name {
 				t.Fatal("touch download choice failed")
@@ -361,8 +363,8 @@ func TestSavedDeleteAndTouchScroll(t *testing.T) {
 	target := m.savedFiles[0].path
 	mm, _ := m.Update(key("x"))
 	m = mm.(Model)
-	if m.modal != ModalConfirm {
-		t.Fatal("delete must require confirmation")
+	if m.modal != ModalConfirm || !m.confirm.Danger {
+		t.Fatal("delete must require a destructive confirmation")
 	}
 	mm, _ = m.Update(keyOf("esc"))
 	m = mm.(Model)

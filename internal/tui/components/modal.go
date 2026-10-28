@@ -85,6 +85,7 @@ type Confirm struct {
 	Body    []string // pre-styled lines
 	Options []string // e.g. {"Download", "Install", "Cancel"}
 	Cursor  int
+	Danger  bool // destructive action: red frame and primary action
 }
 
 // ModalBox renders a bordered dialog without the surrounding whitespace.
@@ -200,6 +201,10 @@ func hex(d string) string {
 
 // Box draws the confirmation dialog and its buttons, without screen padding.
 func (c Confirm) Box(st theme.Styles, width int) string {
+	if c.Danger {
+		st.P.BorderFocus = st.P.Error
+		st.PanelTitleFoc = st.Err.Bold(true)
+	}
 	var b strings.Builder
 	for _, ln := range c.Body {
 		b.WriteString(ln + "\n")
@@ -208,7 +213,11 @@ func (c Confirm) Box(st theme.Styles, width int) string {
 	var btns []string
 	for i, opt := range c.Options {
 		if i == c.Cursor {
-			btns = append(btns, st.ButtonFocus.Render(opt))
+			selected := st.ButtonFocus
+			if c.Danger && i == 0 {
+				selected = selected.Background(st.P.Error)
+			}
+			btns = append(btns, selected.Render(opt))
 		} else {
 			btns = append(btns, st.ButtonBlur.Render(opt))
 		}
@@ -228,7 +237,11 @@ func (c Confirm) Box(st theme.Styles, width int) string {
 		btns = nil
 		for i, opt := range c.Options {
 			if i == c.Cursor {
-				btns = append(btns, st.ButtonFocus.Padding(0, 0).Render(opt))
+				selected := st.ButtonFocus.Padding(0, 0)
+				if c.Danger && i == 0 {
+					selected = selected.Background(st.P.Error)
+				}
+				btns = append(btns, selected.Render(opt))
 			} else {
 				btns = append(btns, st.ButtonBlur.Padding(0, 0).Render(opt))
 			}

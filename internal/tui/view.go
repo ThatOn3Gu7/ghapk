@@ -83,7 +83,7 @@ func (m Model) modalBox() string {
 		}
 	case ModalPlan:
 		if m.plan != nil {
-			return m.modalWindow("Install this build?", m.plan.view(&m))
+			return m.planBox()
 		}
 	case ModalDoctor:
 		if m.doctor != nil {
