@@ -473,6 +473,9 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.confirm.Cursor++
 			}
 		case "y":
+			if m.confirmKind == confirmSafetyOverride {
+				return m, nil // safety overrides require deliberate selection + Enter
+			}
 			m.confirm.Cursor = 0
 			return m, m.confirmAccept()
 		case "n":
@@ -564,6 +567,7 @@ const (
 	confirmDownloadInstall
 	confirmInstallExisting
 	confirmRemoveRepo
+	confirmSafetyOverride
 )
 
 // openRepoEditor opens the small modal that renames a repo entry.
@@ -679,6 +683,17 @@ func (m *Model) confirmAccept() tea.Cmd {
 	m.confirmKind = confirmDownload
 	target := m.confirmTarget
 	m.confirmTarget = ""
+	if kind == confirmSafetyOverride {
+		path := m.safetyInstallPath
+		allowDg := m.safetyAllowDowngrade
+		m.safetyInstallPath = ""
+		m.safetyAllowDowngrade = false
+		if choice == 0 && path != "" {
+			return m.executeInstall(path, allowDg, []string{"user confirmed safety override"})
+		}
+		m.toastf("install cancelled")
+		return nil
+	}
 	if kind == confirmRemoveRepo {
 		if choice == 0 && target != "" {
 			config.RemoveRecent(target)

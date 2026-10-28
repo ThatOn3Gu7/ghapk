@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ghapk/ghapk/internal/apk"
 	"github.com/ghapk/ghapk/internal/score"
 )
 
@@ -60,9 +63,11 @@ func defaultAtomicFS() atomicFS {
 }
 
 type streamOpts struct {
-	maxBytes int64
-	ghBin    string
-	fs       atomicFS
+	maxBytes       int64
+	ghBin          string
+	fs             atomicFS
+	expectedDigest string
+	skipDigest     bool
 }
 
 func defaultStreamOpts() streamOpts {
@@ -93,6 +98,9 @@ func DownloadArtifact(repo string, art Artifact, destZip string, prog Progress) 
 }
 
 func downloadArtifactWithOpts(opts streamOpts, repo string, art Artifact, destZip string, prog Progress) error {
+	if !opts.skipDigest && opts.expectedDigest == "" {
+		opts.expectedDigest = art.Digest
+	}
 	endpoint := fmt.Sprintf("repos/%s/actions/artifacts/%d/zip", repo, art.ID)
 	return streamWithOpts(opts, endpoint, destZip, art.SizeInBytes, prog, "api", endpoint)
 }
@@ -108,9 +116,23 @@ func downloadReleaseAssetWithOpts(opts streamOpts, repo string, asset ReleaseAss
 	if err != nil {
 		return err
 	}
+	if !opts.skipDigest && opts.expectedDigest == "" {
+		opts.expectedDigest = asset.Digest
+	}
 	endpoint := fmt.Sprintf("repos/%s/releases/assets/%d", repo, asset.ID)
 	return streamWithOpts(opts, endpoint, resolvedDest, asset.Size, prog,
 		"api", "-H", "Accept: application/octet-stream", endpoint)
+}
+
+// DigestStatusFor returns DigestVerified when a valid expected digest string is
+// present (having passed DownloadArtifact / DownloadReleaseAsset verification),
+// or DigestUnverified when GitHub published no digest.
+func DigestStatusFor(publishedDigest string) apk.DigestStatus {
+	_, present, err := apk.NormalizeExpectedSHA256(publishedDigest)
+	if err == nil && present {
+		return apk.DigestVerified
+	}
+	return apk.DigestUnverified
 }
 
 func streamWithOpts(opts streamOpts, endpoint, dest string, expected int64, prog Progress, ghArgs ...string) error {
@@ -133,6 +155,16 @@ func streamWithOpts(opts streamOpts, endpoint, dest string, expected int64, prog
 	}
 	if expected > opts.maxBytes {
 		return fmt.Errorf("download size (%d bytes) exceeds maximum allowed (%d bytes)", expected, opts.maxBytes)
+	}
+
+	var wantDigest string
+	var checkDigest bool
+	if !opts.skipDigest {
+		var derr error
+		wantDigest, checkDigest, derr = apk.NormalizeExpectedSHA256(opts.expectedDigest)
+		if derr != nil {
+			return fmt.Errorf("gh %s: %w", endpoint, derr)
+		}
 	}
 
 	if opts.ghBin == "gh" {
@@ -169,6 +201,7 @@ func streamWithOpts(opts streamOpts, endpoint, dest string, expected int64, prog
 		}
 		defer killAndWait()
 
+		hasher := sha256.New()
 		buf := make([]byte, 128*1024)
 		var got int64
 		tick := time.Now()
@@ -188,6 +221,7 @@ func streamWithOpts(opts streamOpts, endpoint, dest string, expected int64, prog
 					killAndWait()
 					return io.ErrShortWrite
 				}
+				_, _ = hasher.Write(buf[:n])
 				got += int64(n)
 				if prog != nil && time.Since(tick) > 120*time.Millisecond {
 					prog(got, expected)
@@ -214,6 +248,15 @@ func streamWithOpts(opts streamOpts, endpoint, dest string, expected int64, prog
 		if got == 0 {
 			return fmt.Errorf("gh %s: empty response (artifact may have expired)", endpoint)
 		}
+		if checkDigest {
+			gotDigest := hex.EncodeToString(hasher.Sum(nil))
+			if !strings.EqualFold(gotDigest, wantDigest) {
+				return fmt.Errorf(
+					"gh %s: SHA-256 mismatch against published digest (expected %.12s…, got %.12s…)",
+					endpoint, wantDigest, gotDigest,
+				)
+			}
+		}
 		if prog != nil {
 			prog(got, expected)
 		}
@@ -239,13 +282,15 @@ func (l *limitedBuffer) Write(p []byte) (int, error) {
 
 func (l *limitedBuffer) String() string { return l.buf.String() }
 
-// ExtractedAPK is what we pulled out of an artifact zip.
+// ExtractedAPK is what we pulled out of an artifact zip (or downloaded release asset).
 type ExtractedAPK struct {
-	Path      string
-	Name      string
-	Size      int64
-	Score     int
-	Candidate bool // false for files inside the zip that lost the ranking
+	Path         string
+	Name         string
+	Size         int64
+	Score        int
+	Candidate    bool           // false for files inside the zip that lost the ranking
+	Meta         apk.Inspection // parsed AndroidManifest.xml + signing cert + local SHA-256
+	DigestStatus apk.DigestStatus
 }
 
 func openZipReader(zipPath string) (*zip.ReadCloser, error) {
@@ -373,12 +418,15 @@ func extractBestAPKWithOpts(zipPath, outDir, filePattern string, p score.Prefs, 
 	if err != nil {
 		return ExtractedAPK{}, err
 	}
+	meta, _ := apk.Inspect(dest)
 	return ExtractedAPK{
-		Path:      dest,
-		Name:      best.leaf,
-		Size:      written,
-		Score:     best.score,
-		Candidate: true,
+		Path:         dest,
+		Name:         best.leaf,
+		Size:         written,
+		Score:        best.score,
+		Candidate:    true,
+		Meta:         meta,
+		DigestStatus: apk.DigestUnverified,
 	}, nil
 }
 

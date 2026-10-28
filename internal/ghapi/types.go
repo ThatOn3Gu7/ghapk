@@ -45,6 +45,7 @@ type Artifact struct {
 	ID                 int64     `json:"id"`
 	Name               string    `json:"name"`
 	SizeInBytes        int64     `json:"size_in_bytes"`
+	Digest             string    `json:"digest"`
 	Expired            bool      `json:"expired"`
 	CreatedAt          time.Time `json:"created_at"`
 	ExpiresAt          time.Time `json:"expires_at"`
@@ -66,10 +67,11 @@ type Branch struct {
 
 // Release asset (for the releases fallback).
 type ReleaseAsset struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
-	Size int64  `json:"size"`
-	URL  string `json:"url"`
+	ID     int64  `json:"id"`
+	Name   string `json:"name"`
+	Size   int64  `json:"size"`
+	Digest string `json:"digest"`
+	URL    string `json:"url"`
 	// Filled locally:
 	Score    int  `json:"-"`
 	Rejected bool `json:"-"`

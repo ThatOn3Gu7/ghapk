@@ -110,6 +110,8 @@ func getCmd(args []string) (int, tui.Options) {
 			fmt.Sscanf(strings.TrimPrefix(a, "--limit="), "%d", &settings.RunLimit)
 		case a == "--package" || strings.HasPrefix(a, "--package="):
 			settings.PackageName = val()
+		case a == "--downgrade" || strings.HasPrefix(a, "--downgrade="):
+			settings.Downgrade = val()
 		case a == "--theme" || strings.HasPrefix(a, "--theme="):
 			settings.Theme = val()
 		case a == "--no-open":

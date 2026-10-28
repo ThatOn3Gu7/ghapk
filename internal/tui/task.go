@@ -9,9 +9,12 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/ghapk/ghapk/internal/apk"
 	"github.com/ghapk/ghapk/internal/config"
 	"github.com/ghapk/ghapk/internal/device"
 	"github.com/ghapk/ghapk/internal/ghapi"
+	"github.com/ghapk/ghapk/internal/tui/components"
+	"github.com/ghapk/ghapk/internal/tui/theme"
 )
 
 // TaskState tracks a download/install operation shown in the task modal.
@@ -192,6 +195,7 @@ func (t *TaskState) view(m *Model) string {
 			b.WriteString(st.Accent.Render(filepath.Base(t.result.Path)) +
 				st.Muted.Render("  "+ghapi.HumanBytes(t.result.Size)) + "\n")
 			b.WriteString(st.Dim.Render(t.result.Path) + "\n")
+			renderAPKMetaLines(&b, st, t.result)
 		}
 	case "failed":
 		b.WriteString(st.Err.Render(st.G.Fail+" failed") + "\n")
@@ -251,24 +255,127 @@ func (m *Model) startDownload(withInstall bool) tea.Cmd {
 	)
 }
 
-// startInstall streams the installer handoff.
+// startInstall validates APK identity, signing continuity, and version safety
+// before streaming the installer handoff.
 func (m *Model) startInstall(path string) tea.Cmd {
 	if path == "" {
 		m.toastf("nothing downloaded yet")
 		return nil
 	}
+	meta := m.downloadedAPK.Meta
+	if m.downloadedAPK.Path != path || (!meta.HaveInfo && meta.InfoErr == "") {
+		if ins, err := apk.Inspect(path); err == nil {
+			meta = ins
+		}
+	}
+
+	hist, hasHist := config.History(m.settings.Repo)
+	expectPkg := m.settings.PackageName
+	if expectPkg == "" && hasHist {
+		expectPkg = hist.Pkg
+	}
+	queryPkg := expectPkg
+	if queryPkg == "" && meta.HaveInfo {
+		queryPkg = meta.Info.Package
+	}
+
+	instApp := m.instApp
+	instFound := m.instFound
+	if queryPkg != "" && (m.instPkg != queryPkg || !m.instFound) {
+		if app, found := device.QueryPackage(queryPkg); found || app.Queryable {
+			instApp = app
+			instFound = found
+			if m.instPkg == "" || m.instPkg == queryPkg {
+				m.instPkg = queryPkg
+				m.instApp = app
+				m.instFound = found
+			}
+		}
+	}
+
+	safety := apk.EvaluateSafety(meta, apk.SafetyInput{
+		ExpectedPackage: expectPkg,
+		InstalledFound:  instFound,
+		InstalledVCode:  instApp.VersionCode,
+		InstalledVName:  instApp.VersionName,
+		InstalledCert:   instApp.CertSHA256,
+		HistoryCert:     hist.Sig,
+		DeviceSDK:       m.dev.SDK,
+		DowngradeMode:   m.settings.Downgrade,
+		CheckPackage:    true,
+		CheckSignature:  true,
+	})
+
+	if safety.BlockedReason != "" {
+		t := newTask("Install blocked", filepath.Base(path), progressColor{m.st.P.Accent, m.st.P.AccentAlt})
+		t.Kind = "install"
+		t.fail(fmt.Errorf("%s", safety.BlockedReason))
+		m.task = t
+		m.modal = ModalTask
+		m.toastf("install blocked: downgrade policy")
+		return nil
+	}
+
+	if safety.NeedsConfirm {
+		var body []string
+		for _, w := range safety.Warnings {
+			body = append(body, m.st.Warn.Render("! "+w.Title))
+			body = append(body, w.Message)
+		}
+		m.safetyInstallPath = path
+		m.safetyAllowDowngrade = safety.IsDowngrade || m.settings.Downgrade == "allow"
+		m.confirmKind = confirmSafetyOverride
+		m.confirm = components.Confirm{
+			Title:   "Safety check before install",
+			Body:    body,
+			Options: []string{"Install anyway", "Cancel"},
+			Cursor:  1, // safe default: Cancel
+		}
+		m.modal = ModalConfirm
+		return nil
+	}
+
+	return m.executeInstall(path, safety.AllowDowngrade, safety.Notes)
+}
+
+func (m *Model) executeInstall(path string, allowDowngrade bool, notes []string) tea.Cmd {
 	m.logCh = make(chan tea.Msg, 64)
 	t := newTask("Installing", filepath.Base(path), progressColor{m.st.P.Accent, m.st.P.AccentAlt})
 	t.Kind = "install"
 	t.phase = "installing"
+	if m.downloadedAPK.Path == path {
+		t.result = m.downloadedAPK
+	}
+	for _, n := range notes {
+		t.addLog(n)
+	}
 	device_CanInstall = m.dev.CanInstall
 	m.task = t
 	m.modal = ModalTask
-	allowDowngrade := m.settings.Downgrade == "allow"
 	return tea.Batch(
 		installApkCmd(path, allowDowngrade, m.logCh),
 		waitInstallLog(m.logCh),
 	)
+}
+
+func renderAPKMetaLines(b *strings.Builder, st theme.Styles, res ghapi.ExtractedAPK) {
+	if res.Meta.HaveInfo {
+		inf := res.Meta.Info
+		ver := inf.VersionName
+		if ver == "" {
+			ver = "?"
+		}
+		b.WriteString(st.Muted.Render(fmt.Sprintf("pkg %s · v%s (%d)", inf.Package, ver, inf.VersionCode)) + "\n")
+	}
+	if res.Meta.Cert.SHA256 != "" {
+		b.WriteString(st.Dim.Render(fmt.Sprintf("key %.12s… (%s)", res.Meta.Cert.SHA256, res.Meta.Cert.Scheme)) + "\n")
+	}
+	switch res.DigestStatus {
+	case apk.DigestVerified:
+		b.WriteString(st.OK.Render(st.G.OK+" sha256 verified against GitHub digest") + "\n")
+	case apk.DigestUnverified:
+		b.WriteString(st.Dim.Render("digest unverified (GitHub published none)") + "\n")
+	}
 }
 
 func sanitize(s string) string {

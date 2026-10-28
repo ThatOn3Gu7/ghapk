@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/ghapk/ghapk/internal/apk"
 	"github.com/ghapk/ghapk/internal/device"
 	"github.com/ghapk/ghapk/internal/ghapi"
 )
@@ -90,6 +92,10 @@ type InstallLogMsg struct{ Line string }
 type InstallDoneMsg struct {
 	Result device.InstallResult
 	Err    error
+}
+type InstallVerifyMsg struct {
+	Pkg    string
+	Result device.VerifyResult
 }
 
 type ZipInspectedMsg struct {
@@ -212,8 +218,13 @@ func downloadApkCmd(repo string, art ghapi.Artifact, zipPath, outDir, filePatter
 			return nil
 		}
 		sd := scoreDeviceFrom(dev)
-		apk, err := ghapi.ExtractBestAPK(zipPath, outDir, filePattern, scorePrefsFrom(prefs), sd)
-		progCh <- DownloadDoneMsg{ZipPath: zipPath, APK: apk, Err: err}
+		apkOut, err := ghapi.ExtractBestAPK(zipPath, outDir, filePattern, scorePrefsFrom(prefs), sd)
+		if err == nil {
+			ds := ghapi.DigestStatusFor(art.Digest)
+			apkOut.DigestStatus = ds
+			apkOut.Meta.DigestStatus = ds
+		}
+		progCh <- DownloadDoneMsg{ZipPath: zipPath, APK: apkOut, Err: err}
 		return nil
 	}
 }
@@ -239,9 +250,19 @@ func downloadReleaseApkCmd(repo string, asset ghapi.ReleaseAsset, dest, filePatt
 		if fi, statErr := os.Lstat(target); statErr == nil && fi.Mode().IsRegular() {
 			size = fi.Size()
 		}
+		meta, _ := apk.Inspect(target)
+		ds := ghapi.DigestStatusFor(asset.Digest)
+		meta.DigestStatus = ds
 		progCh <- DownloadDoneMsg{
 			ZipPath: "",
-			APK:     ghapi.ExtractedAPK{Path: target, Name: filepath.Base(target), Size: size, Candidate: true},
+			APK: ghapi.ExtractedAPK{
+				Path:         target,
+				Name:         filepath.Base(target),
+				Size:         size,
+				Candidate:    true,
+				Meta:         meta,
+				DigestStatus: ds,
+			},
 		}
 		return nil
 	}
@@ -280,6 +301,15 @@ func waitInstallLog(logCh chan tea.Msg) tea.Cmd {
 			return InstallDoneMsg{}
 		}
 		return m
+	}
+}
+
+func verifyInstallCmd(pkg string, wantVCode int64, wait time.Duration) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), wait+2*time.Second)
+		defer cancel()
+		res := device.VerifyInstall(ctx, pkg, wantVCode, wait)
+		return InstallVerifyMsg{Pkg: pkg, Result: res}
 	}
 }
 

@@ -3,10 +3,13 @@ package device
 import (
 	"context"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ghapk/ghapk/internal/apk"
 )
 
 // InstalledApp is the version of a package currently on the device.
@@ -19,9 +22,11 @@ type InstalledApp struct {
 }
 
 var (
-	reVCode = regexp.MustCompile(`versionCode=(\d+)`)
-	reVName = regexp.MustCompile(`versionName=([^\s]+)`)
-	rePkg   = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$`)
+	reVCode    = regexp.MustCompile(`versionCode=(\d+)`)
+	reVName    = regexp.MustCompile(`versionName=([^\s]+)`)
+	reCodePath = regexp.MustCompile(`codePath=([^\s]+)`)
+	reCertHex  = regexp.MustCompile(`(?i)(?:sha-?256[:=\s]+|cert(?:ificate)?[:=\s]+)([0-9a-f]{64}|(?:[0-9a-f]{2}:){31}[0-9a-f]{2})`)
+	rePkg      = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$`)
 )
 
 // ValidPackage reports whether pkg is a syntactically valid Android Java
@@ -68,6 +73,9 @@ func QueryPackage(pkg string) (InstalledApp, bool) {
 		app, found := parseDumpsysPackage(pkg, out)
 		if found {
 			app.Queryable = true
+			if app.CertSHA256 == "" && onAndroid {
+				app.CertSHA256 = readInstalledAPKCert(out)
+			}
 			return app, true
 		}
 	}
@@ -90,11 +98,34 @@ func parseDumpsysPackage(pkg, out string) (InstalledApp, bool) {
 	if n := reVName.FindStringSubmatch(out); len(n) >= 2 {
 		name = n[1]
 	}
+	var certSHA string
+	if cm := reCertHex.FindStringSubmatch(out); len(cm) >= 2 {
+		certSHA = strings.ToLower(strings.ReplaceAll(cm[1], ":", ""))
+	}
 	return InstalledApp{
 		Package:     pkg,
 		VersionCode: code,
 		VersionName: name,
+		CertSHA256:  certSHA,
 	}, true
+}
+
+func readInstalledAPKCert(dumpsysOut string) string {
+	m := reCodePath.FindStringSubmatch(dumpsysOut)
+	if len(m) < 2 {
+		return ""
+	}
+	cp := strings.TrimSpace(m[1])
+	candidates := []string{cp}
+	if !strings.HasSuffix(strings.ToLower(cp), ".apk") {
+		candidates = []string{filepath.Join(cp, "base.apk"), cp}
+	}
+	for _, p := range candidates {
+		if c, err := apk.ReadCert(p); err == nil && c.SHA256 != "" {
+			return c.SHA256
+		}
+	}
+	return ""
 }
 
 var _ = exec.CommandContext
