@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ghapk/ghapk/internal/activity"
+	"github.com/ThatOn3Gu7/ghapk/internal/activity"
 )
 
 // Notify sends a completion notification through Termux:API when installed.

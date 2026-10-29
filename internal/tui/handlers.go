@@ -7,10 +7,10 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/ghapk/ghapk/internal/config"
-	"github.com/ghapk/ghapk/internal/ghapi"
-	"github.com/ghapk/ghapk/internal/tui/components"
-	"github.com/ghapk/ghapk/internal/tui/theme"
+	"github.com/ThatOn3Gu7/ghapk/internal/config"
+	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/theme"
 )
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

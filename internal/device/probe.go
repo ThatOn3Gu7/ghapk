@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ghapk/ghapk/internal/activity"
+	"github.com/ThatOn3Gu7/ghapk/internal/activity"
 )
 
 // Info describes the target device as well as we can tell.

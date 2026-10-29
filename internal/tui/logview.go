@@ -9,8 +9,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/ghapk/ghapk/internal/activity"
-	"github.com/ghapk/ghapk/internal/tui/components"
+	"github.com/ThatOn3Gu7/ghapk/internal/activity"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 )
 
 type logViewState struct {

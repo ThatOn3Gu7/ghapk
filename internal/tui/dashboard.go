@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ghapk/ghapk/internal/tui/components"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 )
 
 // renderDashboard draws header + panels + status bar.

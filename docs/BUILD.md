@@ -6,7 +6,7 @@ dependency directory. One file is the whole tool.
 
 ## Zero. Prerequisites
 
-- Go ≥ 1.24 installed (https://go.dev/dl). Nothing else — no CGO, no NDK,
+- Go ≥ 1.26 installed (https://go.dev/dl). Nothing else — no CGO, no NDK,
   no extra system libraries.
 - Optional: [UPX](https://upx.github.io) if you want the binary smaller.
 
@@ -71,12 +71,14 @@ Copy the right one to the device (e.g. `adb push ghapk-android-arm64
 `make release` in the repo does all of the above and writes
 `bin/ghapk-<os>-<arch>` plus `bin/sha256sums.txt`.
 
-## 4. Installing from a checkout
+## 4. Installing with Go
 
-The project uses local module replacements, so install from the checkout
-rather than using a remote `go install ...@latest` command:
+Install directly with Go, or build from a checkout:
 
 ```bash
+go install github.com/ThatOn3Gu7/ghapk@latest
+
+# Or, from a checkout:
 cd ghapk
 go install .
 ```

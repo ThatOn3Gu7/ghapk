@@ -3,7 +3,7 @@ package components
 import (
 	"strings"
 
-	"github.com/ghapk/ghapk/internal/tui/theme"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/theme"
 )
 
 // Item is one row in a List.

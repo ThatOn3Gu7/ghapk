@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/ghapk/ghapk/internal/activity"
-	"github.com/ghapk/ghapk/internal/config"
+	"github.com/ThatOn3Gu7/ghapk/internal/activity"
+	"github.com/ThatOn3Gu7/ghapk/internal/config"
 )
 
 // Run launches the interactive interface in the alternate screen buffer.

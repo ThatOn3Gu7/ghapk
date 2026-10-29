@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/ThatOn3Gu7/ghapk/releases"><img src="https://img.shields.io/github/v/release/ThatOn3Gu7/ghapk?color=a6e3a1&style=flat-square" alt="Latest Release"></a>
-  <a href="https://go.dev/"><img src="https://img.shields.io/badge/go-1.24-89dceb?style=flat-square&logo=go" alt="Go Version"></a>
+  <a href="https://go.dev/"><img src="https://img.shields.io/badge/go-1.26-89dceb?style=flat-square&logo=go" alt="Go Version"></a>
   <img src="https://img.shields.io/badge/license-MIT-f9e2af?style=flat-square" alt="License">
   <a href="https://termux.dev/"><img src="https://img.shields.io/badge/platform-Android%20%7C%20Linux%20%7C%20macOS-cba6f7?style=flat-square" alt="Platform"></a>
 </p>
@@ -99,7 +99,13 @@ Pre-compiled standalone binaries are available on the **[Releases](https://githu
 
 ### Install via Go
 
-With Go 1.24 or newer, install from a checkout (local replacements in this project mean `go install ...@latest` is not supported):
+With Go 1.26 or newer:
+
+```bash
+go install github.com/ThatOn3Gu7/ghapk@latest
+```
+
+Or install from a checkout:
 
 ```bash
 git clone https://github.com/ThatOn3Gu7/ghapk.git
@@ -262,7 +268,7 @@ ghapk/
 
 ## 🏗 Building from Source
 
-`ghapk` requires Go 1.24 or newer to build and does not require CGO.
+`ghapk` requires Go 1.26 or newer to build and does not require CGO.
 
 ```bash
 # Clone the repository

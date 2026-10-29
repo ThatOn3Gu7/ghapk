@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ghapk/ghapk/internal/activity"
+	"github.com/ThatOn3Gu7/ghapk/internal/activity"
 )
 
 type RateLimit struct {

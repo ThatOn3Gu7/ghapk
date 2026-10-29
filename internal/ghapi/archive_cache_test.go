@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ghapk/ghapk/internal/score"
+	"github.com/ThatOn3Gu7/ghapk/internal/score"
 )
 
 func TestNestedZipExtractionAndSecurityGuards(t *testing.T) {

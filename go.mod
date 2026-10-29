@@ -1,6 +1,6 @@
-module github.com/ghapk/ghapk
+module github.com/ThatOn3Gu7/ghapk
 
-go 1.24.0
+go 1.26.0
 
 require (
 	github.com/charmbracelet/bubbles v0.21.0
@@ -30,7 +30,3 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/text v0.22.0 // indirect
 )
-
-replace golang.org/x/sys => ./third_party/x-sys
-
-replace github.com/lucasb-eyer/go-colorful => ./third_party/go-colorful

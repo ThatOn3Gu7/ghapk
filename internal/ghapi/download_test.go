@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ghapk/ghapk/internal/score"
+	"github.com/ThatOn3Gu7/ghapk/internal/score"
 )
 
 type zipEntrySpec struct {
