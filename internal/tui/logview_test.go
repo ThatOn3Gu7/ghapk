@@ -206,3 +206,111 @@ func TestLogErrorIsVisible(t *testing.T) {
 		t.Fatalf("log error not visible: %s", v)
 	}
 }
+
+func TestBrowsingLogDoesNotCreateScrollEntries(t *testing.T) {
+	for _, size := range [][2]int{{32, 18}, {80, 26}} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			store, err := activity.Open(t.TempDir(), activity.DefaultMaxBytes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			for i := 0; i < 80; i++ {
+				if err := store.Write("job", fmt.Sprintf("existing entry %d", i)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			m := buildModel(t, size[0], size[1])
+			m.activity = store
+			mm, _ := m.Update(key("7"))
+			m = mm.(Model)
+			before, err := os.Stat(store.Path())
+			if err != nil {
+				t.Fatal(err)
+			}
+			count := len(store.Entries())
+			apply := func(msg tea.Msg) { mm, _ := m.Update(msg); m = mm.(Model) }
+			r := m.panelRects()[PanelLog]
+			x, y := r.x+2, r.y+2
+			apply(tea.MouseMsg{Type: tea.MouseWheelUp, X: x, Y: y})
+			if m.logState.follow {
+				t.Fatal("wheel failed to pause following")
+			}
+			start := m.logState.offset
+			apply(tea.MouseMsg{Type: tea.MouseWheelUp, X: x, Y: y})
+			if m.logState.offset >= start {
+				t.Fatal("wheel failed to scroll upwards")
+			}
+			for i := 0; i < 120; i++ {
+				apply(tea.MouseMsg{Type: tea.MouseWheelUp, X: x, Y: y})
+			}
+			if m.logState.offset != 0 {
+				t.Fatalf("did not reach top: %d", m.logState.offset)
+			}
+			for i := 0; i < 120; i++ {
+				apply(tea.MouseMsg{Type: tea.MouseWheelDown, X: x, Y: y})
+			}
+			bottom := m.logState.offset
+			for i := 0; i < 20; i++ {
+				apply(tea.MouseMsg{Type: tea.MouseWheelDown, X: x, Y: y})
+			}
+			if m.logState.offset != bottom {
+				t.Fatal("scrolling past bottom moved offset")
+			}
+			for _, k := range []tea.KeyMsg{
+				hintKey("g"), hintKey("G"), hintKey("f"), hintKey("up"), hintKey("down"), hintKey("j"), hintKey("k"),
+				{Type: tea.KeyPgUp}, {Type: tea.KeyPgDown}, {Type: tea.KeyCtrlU}, {Type: tea.KeyCtrlD},
+			} {
+				apply(k)
+			}
+			apply(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: x, Y: y + 3})
+			apply(tea.MouseMsg{Type: tea.MouseMotion, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion, X: x, Y: y})
+			apply(tea.MouseMsg{Type: tea.MouseRelease, Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease, X: x, Y: y})
+			sb := m.statusBar()
+			_, spans := sb.Layout(m.st)
+			for _, span := range spans {
+				if logNavigationKey(sb.Hints[span.Index].Action) {
+					apply(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: span.Start, Y: m.height - 1})
+				}
+			}
+			after, err := os.Stat(store.Path())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(store.Entries()) != count || after.Size() != before.Size() {
+				t.Fatalf("browsing grew log: %d -> %d entries, %d -> %d bytes", count, len(store.Entries()), before.Size(), after.Size())
+			}
+			apply(jobEventMsg{id: 8, log: "real activity still recorded"})
+			_, copyCmd := m.Update(key("y"))
+			if copyCmd == nil {
+				t.Fatal("copy no longer works")
+			}
+			apply(key("5"))
+			data, err := os.ReadFile(store.Path())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(data), "real activity still recorded") || !strings.Contains(string(data), "Opened Settings") || !strings.Contains(string(data), "key y") {
+				t.Fatal("meaningful activity no longer logged")
+			}
+		})
+	}
+}
+
+func TestWheelScrollOutsideLogIsNotRecorded(t *testing.T) {
+	store, err := activity.Open(t.TempDir(), activity.DefaultMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	m := buildModel(t, 80, 26)
+	m.activity = store
+	count := len(store.Entries())
+	for i := 0; i < 50; i++ {
+		mm, _ := m.Update(tea.MouseMsg{Type: tea.MouseWheelDown, X: 5, Y: 5})
+		m = mm.(Model)
+	}
+	if len(store.Entries()) != count {
+		t.Fatal("wheel scrolling outside Log generated entries")
+	}
+}
