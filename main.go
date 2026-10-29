@@ -65,10 +65,11 @@ func run(args []string) int {
 func getCmd(args []string) (int, tui.Options) {
 	settings := config.Load()
 	var (
-		yes     bool
-		install bool
-		dry     bool
-		printD  string
+		yes                                            bool
+		install                                        bool
+		dry                                            bool
+		printD                                         string
+		repoOverride, branchOverride, workflowOverride bool
 	)
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -85,10 +86,13 @@ func getCmd(args []string) (int, tui.Options) {
 		switch {
 		case a == "--repo" || strings.HasPrefix(a, "--repo="):
 			settings.Repo = val()
+			repoOverride = true
 		case a == "--workflow" || strings.HasPrefix(a, "--workflow="):
 			settings.Workflow = val()
+			workflowOverride = true
 		case a == "--branch" || strings.HasPrefix(a, "--branch="):
 			settings.Branch = val()
+			branchOverride = true
 		case a == "--artifact" || strings.HasPrefix(a, "--artifact="):
 			settings.ArtifactPattern = val()
 		case a == "--file" || strings.HasPrefix(a, "--file="):
@@ -140,7 +144,7 @@ func getCmd(args []string) (int, tui.Options) {
 			}
 		}
 	}
-	opts := tui.Options{Settings: settings}
+	opts := tui.Options{Settings: settings, RepoOverride: repoOverride, BranchOverride: branchOverride, WorkflowOverride: workflowOverride}
 	// if this parse came from "get", run the classic pipeline
 	if len(os.Args) > 1 && (os.Args[1] == "get" || os.Args[1] == "download") {
 		return flow.Run(flow.GetOptions{

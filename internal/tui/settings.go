@@ -147,11 +147,17 @@ func (s *SettingsUI) setValue(m *Model, key, raw string) {
 		}
 		st.Branch = setting
 		m.branchSel = setting
+		m.rebuildBranchList()
+		m.branchList.SelectByID(setting)
+		m.saveSelection(&setting, nil)
 	case "workflow":
 		if setting == "(any)" {
 			setting = ""
 		}
 		st.Workflow = setting
+		m.workflowSel = setting
+		m.selectWorkflowOption(setting)
+		m.saveSelection(nil, &setting)
 	case "artifact-pattern":
 		if setting == "(none)" {
 			setting = ""

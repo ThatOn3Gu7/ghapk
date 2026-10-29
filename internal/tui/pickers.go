@@ -233,9 +233,16 @@ func (rp *RepoPicker) handleKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 		m.modal = ModalNone
 		m.repoPicker = nil
 		if repo != m.settings.Repo {
-			m.setRepo(repo, true)
+			err := m.setRepo(repo, true)
 			m.toastf("repo: %s", repo)
+			if err != nil {
+				m.toastf("could not save selection: %s", shortErr(err))
+			}
 			return *m, tea.Batch(m.refreshAll()...)
+		}
+		config.TouchRecent(repo)
+		if err := config.RememberSelection(repo, true, nil, nil); err != nil {
+			m.toastf("could not save selection: %s", shortErr(err))
 		}
 		return *m, nil
 	}
@@ -437,12 +444,14 @@ func (fp *FilterPicker) handleKey(msg tea.KeyMsg, m *Model, onChoose func(val st
 		if sel, ok := fp.list.Selected(); ok {
 			val, _ := sel.ID.(string)
 			m.modal = ModalNone
-			return *m, onChoose(val)
+			cmd := onChoose(val)
+			return *m, cmd
 		}
 		q := strings.TrimSpace(fp.input.Value())
 		if q != "" && fp.customVerb != "" {
 			m.modal = ModalNone
-			return *m, onChoose(q)
+			cmd := onChoose(q)
+			return *m, cmd
 		}
 		return *m, nil
 	}
@@ -573,6 +582,9 @@ func (m *Model) buildWorkflowOptions() []pickerOption {
 			Label:  w.Name,
 			Detail: w.File(),
 		})
+	}
+	if m.settings.Workflow != "" && !seen[m.settings.Workflow] {
+		opts = append(opts, pickerOption{Value: m.settings.Workflow, Label: m.settings.Workflow, Detail: "current"})
 	}
 	return opts
 }
