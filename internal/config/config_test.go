@@ -125,3 +125,22 @@ func TestTrustedLayersRoundTripAndPrecedence(t *testing.T) {
 		t.Fatalf("unexpected history entry: %+v (ok=%v)", h, ok)
 	}
 }
+
+func TestFreshConfigHasNoDefaultRepository(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GHAPK_CONFIG_DIR", dir)
+	t.Setenv("GHAPK_REPO", "")
+	if repo := Defaults().Repo; repo != "" {
+		t.Fatalf("default repository = %q, want none", repo)
+	}
+	if repo := loadWithLocal(filepath.Join(dir, ".ghapk.conf"), "").Repo; repo != "" {
+		t.Fatalf("fresh config repository = %q, want none", repo)
+	}
+	if recent := LoadRecents(); len(recent) != 0 {
+		t.Fatalf("fresh config has recent repositories: %+v", recent)
+	}
+	selection, err := LoadSelections()
+	if err != nil || selection.LastRepo != "" || len(selection.Repos) != 0 {
+		t.Fatalf("fresh config has remembered selections: %+v, %v", selection, err)
+	}
+}

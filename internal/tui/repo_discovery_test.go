@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/ThatOn3Gu7/ghapk/internal/config"
 	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func runStartupCommand(t *testing.T, m Model, cmd tea.Cmd) Model {
@@ -326,5 +326,70 @@ func TestRepoPickerFooterVisibleDuringLoadingAndError(t *testing.T) {
 		if state == "error" && !strings.Contains(view, "Load failed") {
 			t.Fatal("error disappeared")
 		}
+	}
+}
+
+// A highlighted suggestion is not an active or remembered repository. In
+// particular, async Git and GitHub discovery must not choose one on behalf of
+// someone launching ghapk with no existing configuration.
+func TestFreshLaunchDoesNotSelectOrRememberDiscoveredRepos(t *testing.T) {
+	for _, gitBeforeAuth := range []bool{false, true} {
+		t.Run(fmt.Sprintf("git-before-auth=%t", gitBeforeAuth), func(t *testing.T) {
+			t.Setenv("GHAPK_CONFIG_DIR", t.TempDir())
+			t.Setenv("GHAPK_REPO", "")
+			m := New(Options{Settings: config.Defaults()})
+			mm, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 26})
+			m = mm.(Model)
+			if gitBeforeAuth {
+				mm, _ = m.Update(GitRemoteMsg{Repo: "local/project"})
+				m = mm.(Model)
+			}
+			mm, _ = m.Update(AuthCheckedMsg{Version: "2", User: "tester"})
+			m = mm.(Model)
+			if m.modal != ModalPickRepo || m.repoPicker == nil {
+				t.Fatal("fresh launch should open the repository picker")
+			}
+			mm, _ = m.Update(UserReposMsg{Seq: m.userReposSeq, List: []ghapi.Repo{{FullName: "account/project"}}})
+			m = mm.(Model)
+			if !gitBeforeAuth {
+				mm, _ = m.Update(GitRemoteMsg{Repo: "local/project"})
+				m = mm.(Model)
+			}
+			if m.settings.Repo != "" {
+				t.Fatalf("discovery selected a repository without consent: %q", m.settings.Repo)
+			}
+			if len(m.repoPicker.list.Items) != 2 || m.repoPicker.list.Items[0].Detail != "git remote" || m.repoPicker.list.Items[1].Detail != "yours" {
+				t.Fatalf("discovery should show its sources: %+v", m.repoPicker.list.Items)
+			}
+			if recent := config.LoadRecents(); len(recent) != 0 {
+				t.Fatalf("discovery saved a recent repository: %+v", recent)
+			}
+			selection, err := config.LoadSelections()
+			if err != nil || selection.LastRepo != "" || len(selection.Repos) != 0 {
+				t.Fatalf("discovery saved a selection: %+v, %v", selection, err)
+			}
+			// Cancel and restart without choosing: the picker should still open.
+			mm, _ = m.Update(keyOf("esc"))
+			m = mm.(Model)
+			if m.settings.Repo != "" {
+				t.Fatalf("cancelling selected %q", m.settings.Repo)
+			}
+			m = startSelectionSession(t, Options{Settings: config.Defaults()})
+			if m.settings.Repo != "" || m.modal != ModalPickRepo {
+				t.Fatal("restart chose a repo without a prior selection")
+			}
+			// An explicit choice should still be persisted and restored.
+			mm, _ = m.Update(UserReposMsg{Seq: m.userReposSeq, List: []ghapi.Repo{{FullName: "account/project"}}})
+			m = mm.(Model)
+			m.repoPicker.list.SelectByID("account/project")
+			m = pressEnter(m)
+			if m.settings.Repo != "account/project" {
+				t.Fatalf("explicit choice not selected: %q", m.settings.Repo)
+			}
+			m = startSelectionSession(t, Options{Settings: config.Defaults()})
+			if m.settings.Repo != "account/project" {
+				t.Fatalf("explicit choice not restored: %q", m.settings.Repo)
+			}
+		})
 	}
 }

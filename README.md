@@ -170,6 +170,8 @@ precedence for that launch.
 
 On a fresh start, the repository picker loads all repositories accessible to the authenticated `gh` account, including private and organization repositories where authorized. No local clone is required. Tap a repository to choose it, swipe to scroll, or type to filter or enter `owner/repo`. If loading fails, tap retry or press `Ctrl+R`.
 
+There is no preloaded demo repository. The picker can show your accessible GitHub repositories, recent choices, and the current checkout’s GitHub origin (marked `git remote`); the Repos screen can also suggest that origin with a `(git)` label. These are suggestions, not an active selection until you choose one. On later launches, ghapk can restore a previous selection or use a repo from your config, `GHAPK_REPO`, or `--repo`.
+
 During installation, ghapk compares the APK's actual package and version code with the device. A matching version code prompts **Keep APK, skip install** or **Reinstall**; it does not mean the files are identical. Different package IDs (such as debug and release variants) are separate apps. If signing keys differ, Android may reject an update; when local Shizuku can verify the installed app, ghapk can offer an explicitly confirmed uninstall first. **Uninstalling erases that app's data.** It is never automatic. If checks cannot be performed, the Downloads log says so. An Android installer handoff is not reported as a confirmed reinstall based on an unchanged version code.
 
 When several APKs in an archive rank equally, choose which one to extract instead of silently guessing. Safety questions use numbered options; use ↑/↓ and Enter, or tap an option. Swipe or use Page Down to read a long warning before proceeding.
