@@ -254,10 +254,10 @@ func (m Model) renderShimmerLogo(w int, totalBannerH ...int) string {
 func (m Model) reposContent(w, h int, mm *Model) string {
 	l := m.repos
 	if len(l.Items) == 0 {
-		return m.emptyState("📂", "No repositories added", "Press 'R' to pick a repository\nor 'e' to add one manually", "press 'R' or 'e'", w, h)
+		return m.emptyState("📂", "No repositories added", "Pick or add a repository", "press "+m.keyName("dashboard", "R"), w, h)
 	}
 	if len(l.Filtered()) == 0 {
-		return m.emptyState("🔍 ∅", "No matching repositories", fmt.Sprintf("No repos match %q", l.Filter), "press Esc to clear filter", w, h)
+		return m.emptyState("🔍 ∅", "No matching repositories", fmt.Sprintf("No repos match %q", l.Filter), "press "+m.keyName("filter", "esc")+" to clear filter", w, h)
 	}
 
 	bannerH, listH, branchH := reposBranchSplit(h, len(l.Items), len(m.branchList.Items), w)
@@ -447,13 +447,13 @@ func (m Model) workflowsContent(w, h int, mm *Model) string {
 	l := m.workflows
 	st := m.st
 	if m.settings.Repo == "" {
-		return m.emptyState("📁", "No repository chosen", "Pick a repository to see workflows", "press 'R' to choose", w, h)
+		return m.emptyState("📁", "No repository chosen", "Pick a repository to see workflows", "press "+m.keyName("dashboard", "R")+" to choose", w, h)
 	}
 	if len(l.Items) == 0 {
-		return m.emptyState("⚙ ∅", "No workflows found", "No .github/workflows/*.yml found\nin this repository", "press 'r' to refresh", w, h)
+		return m.emptyState("⚙ ∅", "No workflows found", "No .github/workflows/*.yml found\nin this repository", "press "+m.keyName("dashboard", "r")+" to refresh", w, h)
 	}
 	if len(l.Filtered()) == 0 {
-		return m.emptyState("🔍 ∅", "No matching workflows", fmt.Sprintf("No workflows match %q", l.Filter), "press Esc to clear filter", w, h)
+		return m.emptyState("🔍 ∅", "No matching workflows", fmt.Sprintf("No workflows match %q", l.Filter), "press "+m.keyName("filter", "esc")+" to clear filter", w, h)
 	}
 
 	listH, subH := flowsSplit(h, len(l.Items))
@@ -688,17 +688,17 @@ func runsSplit(h int, count ...int) (listH, subH int) {
 func (m Model) runsContent(w, h int, mm *Model) string {
 	st := m.st
 	if m.settings.Repo == "" {
-		return m.emptyState("📁", "No repository chosen", "Pick a repository to see runs", "press 'R' to choose", w, h)
+		return m.emptyState("📁", "No repository chosen", "Pick a repository to see runs", "press "+m.keyName("dashboard", "R")+" to choose", w, h)
 	}
 	if !m.runsLoaded {
 		return centerEmpty(m.spin.View()+" "+st.Accent.Render("Loading workflow runs…")+"\n\n"+st.Dim.Render("fetching from GitHub"), w, h)
 	}
 	l := m.runs
 	if len(l.Items) == 0 {
-		return m.emptyState("⚡ ∅", "No workflow runs yet", "Push a commit or trigger a workflow\non GitHub to see runs here", "press 'r' to refresh", w, h)
+		return m.emptyState("⚡ ∅", "No workflow runs yet", "Push a commit or trigger a workflow\non GitHub to see runs here", "press "+m.keyName("dashboard", "r")+" to refresh", w, h)
 	}
 	if len(l.Filtered()) == 0 {
-		return m.emptyState("🔍 ∅", "No matching runs", fmt.Sprintf("No runs match filter %q", l.Filter), "press Esc to clear filter", w, h)
+		return m.emptyState("🔍 ∅", "No matching runs", fmt.Sprintf("No runs match filter %q", l.Filter), "press "+m.keyName("filter", "esc")+" to clear filter", w, h)
 	}
 
 	listH, subH := runsSplit(h, len(l.Items))
@@ -933,7 +933,7 @@ func artSplit(h int, count ...int) (listH, subH int) {
 func (m Model) artsContent(w, h int, mm *Model) string {
 	st := m.st
 	if m.settings.Repo == "" {
-		return m.emptyState("📁", "No repository chosen", "Pick a repository to see artifacts", "press 'R' to choose", w, h)
+		return m.emptyState("📁", "No repository chosen", "Pick a repository to see artifacts", "press "+m.keyName("dashboard", "R")+" to choose", w, h)
 	}
 	if m.usingReleaseAssets() {
 		rels := m.rankedReleases()
@@ -946,7 +946,7 @@ func (m Model) artsContent(w, h int, mm *Model) string {
 			l.Items = syncItems
 		}
 		if len(l.Filtered()) == 0 {
-			return m.emptyState("🔍 ∅", "No matching release assets", fmt.Sprintf("No assets match %q", l.Filter), "press Esc to clear filter", w, h)
+			return m.emptyState("🔍 ∅", "No matching release assets", fmt.Sprintf("No assets match %q", l.Filter), "press "+m.keyName("filter", "esc")+" to clear filter", w, h)
 		}
 		listH, subH := artSplit(h, len(rels))
 		if listH < 3 {
@@ -987,7 +987,7 @@ func (m Model) artsContent(w, h int, mm *Model) string {
 
 	r, ok := m.selectedRun()
 	if !ok {
-		return m.emptyState("📦 ⊘", "No run selected", "Select a workflow run in the Runs tab\nto view downloadable APKs", "press '3' or Tab to switch to Runs", w, h)
+		return m.emptyState("📦 ⊘", "No run selected", "Select a workflow run in the Runs tab\nto view downloadable APKs", "press "+m.keyName("dashboard", "3")+" or "+m.keyName("dashboard", "tab")+" to switch to Runs", w, h)
 	}
 	if m.fetching[r.ID] {
 		return centerEmpty(m.spin.View()+" "+st.Accent.Render("Loading artifacts…")+"\n\n"+st.Dim.Render(fmt.Sprintf("fetching for run #%d", r.RunNumber)), w, h)
@@ -1001,7 +1001,7 @@ func (m Model) artsContent(w, h int, mm *Model) string {
 	}
 	l := m.arts
 	if len(l.Filtered()) == 0 {
-		return m.emptyState("🔍 ∅", "No matching artifacts", fmt.Sprintf("No artifacts match %q", l.Filter), "press Esc to clear filter", w, h)
+		return m.emptyState("🔍 ∅", "No matching artifacts", fmt.Sprintf("No artifacts match %q", l.Filter), "press "+m.keyName("filter", "esc")+" to clear filter", w, h)
 	}
 	listH, subH := artSplit(h, len(arts))
 	if listH < 3 {
@@ -1190,9 +1190,9 @@ func (m Model) renderSetup() string {
 		b.WriteString("    other           https://cli.github.com\n\n")
 	} else {
 		b.WriteString(st.Warn.Render(" "+st.G.Fail+" gh is installed but not authenticated") + "\n\n")
-		b.WriteString("  Run in another terminal (or suspend with ctrl+z):\n\n")
+		b.WriteString("  Run in another terminal:\n\n")
 		b.WriteString(st.Bold.Render("    gh auth login") + "\n\n")
 	}
-	b.WriteString(st.Muted.Render("  r  re-check      q  quit") + "\n")
+	b.WriteString(st.Muted.Render("  "+m.keyName("setup", "r")+"  re-check      "+m.keyName("setup", "q")+"  quit") + "\n")
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, b.String())
 }

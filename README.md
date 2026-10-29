@@ -272,6 +272,35 @@ Settings can also be customized directly via configuration files:
 - **Local Workspace Config:** `.ghapk.conf`
 - **Downloaded APK Storage:** `~/.cache/ghapk/apk/`
 
+### Custom key bindings
+
+On the first TUI launch, ghapk creates `~/.config/twinpane/keybinding.json`.
+Edit existing entries and restart ghapk to use them. `XDG_CONFIG_HOME` changes
+the parent config directory; `GHAPK_CONFIG_DIR` places the file directly in
+that directory. For example, changing `"repo_picker": "R"` in `dashboard` to
+`"repo_picker": "z"` makes `z` open the repository picker. Each entry is one
+key or chord, not a list or a sequence. Keys are case-sensitive: use `A` for
+Shift+A, `space`, `enter`, `up`, `f2`, `ctrl+k`, or `alt+x`, for example.
+Terminal support for particular chords varies. Some combinations are the same
+as another key in a terminal (for example, Ctrl+I is Tab and Ctrl+M is Enter);
+they are treated as the same key for conflict checks.
+
+Sections separate screens and dialogs; a key may be reused in different
+contexts, but conflicting bindings in the same context are rejected. Dashboard
+bindings apply to dashboard screens unless that screen's section overrides the
+same action. `text_editing` applies to text widgets unless a picker intercepts
+that key; filter editing has its own section. The file contains the existing
+actions and their alternative shortcuts, not a way to create new actions.
+Plain printable keys are reserved for typing in text fields. Ctrl+C always
+remains an emergency quit, even when other shortcuts are customized.
+
+Invalid JSON, unknown actions, duplicate/conflicting keys, and unsupported or
+multi-key values stop the TUI with an error naming the problem; your file is
+not overwritten. To swap two shortcuts, change both entries before restarting.
+Fix the file or remove it to regenerate defaults. Help and touch hints show
+customized keys where space permits; long tab shortcuts may be omitted from the
+tab labels on narrow screens but still work.
+
 ### Activity log
 
 The **Log** tab (7) shows timestamped activity and job steps across sessions,

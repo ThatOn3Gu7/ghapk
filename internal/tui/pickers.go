@@ -316,7 +316,8 @@ func (rp *RepoPicker) view(m *Model) string {
 		status = "Load failed · tap retry: " + rp.errMsg
 	}
 	lines = append(lines, m.st.Dim.Render(components.Clamp(status, width)))
-	lines = append(lines, m.st.Dim.Render(repoChooseHint+repoHintSeparator+repoCancelHint))
+	choose, cancel := m.repoPickerHints()
+	lines = append(lines, m.st.Dim.Render(choose+repoHintSeparator+cancel))
 	return strings.Join(lines, "\n")
 }
 
@@ -477,7 +478,12 @@ func (fp *FilterPicker) view(m *Model) string {
 	if fp.errMsg != "" && len(fp.options) <= 1 {
 		b.WriteString(st.Warn.Render("  "+fp.errMsg) + "\n")
 	}
-	b.WriteString(st.Dim.Render("↑/↓ select · type to filter · enter choose · esc close") + "\n")
+	up, down := m.keyName("filter_picker", "up"), m.keyName("filter_picker", "down")
+	arrows := up + "/" + down
+	if up == "up" && down == "down" {
+		arrows = "↑/↓"
+	}
+	b.WriteString(st.Dim.Render(arrows+" select · type to filter · "+m.keyName("filter_picker", "enter")+" choose · "+m.keyName("filter_picker", "esc")+" close") + "\n")
 	w := 56
 	if m.width-16 < w {
 		w = m.width - 16
@@ -616,4 +622,18 @@ func (m *Model) rememberRunBranches(runs []ghapi.Run) {
 			seen[run.HeadBranch] = true
 		}
 	}
+}
+
+func (m Model) repoPickerHints() (string, string) {
+	choose, cancel := repoChooseHint, repoCancelHint
+	if k := m.keyName("repo_picker", "enter"); k != "enter" {
+		choose = k + " choose"
+	}
+	if k := m.keyName("repo_picker", "esc"); k != "esc" {
+		cancel = k + " cancel"
+	}
+	if components.VisibleWidth(choose+repoHintSeparator+cancel) > max(1, m.modalWindowWidth()-4) {
+		return "choose", "cancel"
+	}
+	return choose, cancel
 }

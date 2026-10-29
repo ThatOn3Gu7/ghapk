@@ -209,6 +209,7 @@ func (m Model) deviceLines(w int) []string {
 	}
 	section("Files")
 	row("config", config.Dir(), st.Text)
+	row("keys", KeybindingPath(), st.Text)
 	cache := config.CacheDir()
 	if c.cacheOK {
 		cache += " (" + humanSize(c.cacheBytes) + ")"

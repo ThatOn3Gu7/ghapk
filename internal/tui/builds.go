@@ -101,7 +101,7 @@ func (m Model) buildRuns(r rect) string {
 		items = append(items, it)
 	}
 	l.Items = items
-	l.Empty = "No builds found. Press R to choose a repository."
+	l.Empty = "No builds found. Press " + m.keyName("dashboard", "R") + " to choose a repository."
 	if m.settings.Repo != "" && !m.runsLoaded {
 		l.Empty = m.spin.View() + " loading builds…"
 	}
@@ -124,7 +124,7 @@ func (m Model) buildArtifacts(r rect) string {
 		l.Empty = "Choose a repository first (R)."
 	}
 	if run, ok := m.selectedRun(); ok && m.artifactErrors[run.ID] != "" {
-		l.Empty = "Couldn't load artifacts. Press r to retry."
+		l.Empty = "Couldn't load artifacts. Press " + m.keyName("dashboard", "r") + " to retry."
 	}
 
 	if run, ok := m.selectedRun(); ok && run.Active() && len(l.Items) == 0 && !m.fetching[run.ID] && m.artifactErrors[run.ID] == "" {

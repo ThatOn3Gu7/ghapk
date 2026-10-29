@@ -60,6 +60,7 @@ type Options struct {
 	CLIOverrides     map[string]string
 	Activity         *activity.Store
 	LogError         string
+	KeyBindings      *KeyBindings
 }
 
 // Model is the root Bubble Tea model.
@@ -80,6 +81,7 @@ type Model struct {
 
 	// data
 	settings config.Settings
+	bindings *KeyBindings
 	activity *activity.Store
 	logError string
 	logState *logViewState
@@ -251,6 +253,9 @@ type Model struct {
 
 // New builds the root model.
 func New(opts Options) Model {
+	if opts.KeyBindings == nil {
+		opts.KeyBindings = defaultKeyBindings()
+	}
 	th := theme.New(theme.Get(opts.Settings.Theme))
 	applyGlyphs(&th, opts.Settings.Glyphs)
 	sp := spinner.New()
@@ -261,6 +266,7 @@ func New(opts Options) Model {
 		screen:         ScreenBoot,
 		opts:           opts,
 		settings:       opts.Settings,
+		bindings:       opts.KeyBindings,
 		activity:       opts.Activity,
 		logError:       opts.LogError,
 		logState:       &logViewState{follow: true},
@@ -269,7 +275,7 @@ func New(opts Options) Model {
 		runCache:       map[int64][]ghapi.Artifact{},
 		fetching:       map[int64]bool{},
 		artifactErrors: map[int64]string{},
-		repos:          components.List{Empty: "  no recent repos — press R"},
+		repos:          components.List{Empty: "  no recent repos"},
 		workflows:      components.List{Empty: "  no workflows found"},
 		runs:           components.List{Empty: "  no runs yet"},
 		wfPaths:        map[string]string{},
@@ -285,6 +291,7 @@ func New(opts Options) Model {
 	}
 	m.settingsUI = NewSettingsUI(&m)
 	m.refreshSaved()
+	m.repos.Empty = "  no recent repos — press " + m.keyName("dashboard", "R")
 	m.loadRecents("")
 	m.updateListBounds()
 	return m
@@ -482,7 +489,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.quitAfterJobs {
 			return m, nil
 		}
-		return m.handleKey(msg)
+		translated, ok := m.translateKey(msg)
+		if !ok {
+			return m, nil
+		}
+		return m.handleKey(translated)
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd

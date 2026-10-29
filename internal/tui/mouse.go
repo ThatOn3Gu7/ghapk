@@ -664,9 +664,10 @@ func (m Model) handleRepoPickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.Type == tea.MouseLeft && msg.Action == tea.MouseActionPress {
 		hintY := status.y + 1
-		chooseWidth := components.VisibleWidth(repoChooseHint)
+		choose, cancel := m.repoPickerHints()
+		chooseWidth := components.VisibleWidth(choose)
 		cancelX := status.x + chooseWidth + components.VisibleWidth(repoHintSeparator)
-		cancelWidth := components.VisibleWidth(repoCancelHint)
+		cancelWidth := components.VisibleWidth(cancel)
 		if msg.Y == hintY && msg.X >= status.x && msg.X < status.x+chooseWidth {
 			rp.touchActive = false
 			return rp.handleKey(tea.KeyMsg{Type: tea.KeyEnter}, &m)
