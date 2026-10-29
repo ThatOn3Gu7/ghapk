@@ -276,7 +276,8 @@ Settings can also be customized directly via configuration files:
 
 The **Log** tab (7) shows timestamped activity and job steps across sessions,
 grouped by date. Use the arrow keys or swipe to scroll, `f` to follow new
-entries, and `y` to copy the last 60 entries. The private log is stored at
+entries, and `y` to copy the last 60 entries. Browsing the log does not add
+scroll entries. The private log is stored at
 `~/.config/ghapk/activity.log` (or under `GHAPK_CONFIG_DIR` / `XDG_CONFIG_HOME`)
 and keeps the newest entries when it reaches 1 MiB. Log-file errors are shown in the Log tab.
 

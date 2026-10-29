@@ -16,6 +16,9 @@ func (m Model) auditInput(msg tea.Msg) {
 	switch v := msg.(type) {
 	case tea.KeyMsg:
 		k := v.String()
+		if m.browsingLog() && logNavigationKey(k) {
+			return
+		}
 		textInput := m.filterMode || m.modal == ModalPickRepo || m.modal == ModalPickBranch || m.modal == ModalPickWorkflow || m.modal == ModalEditRepo || (m.focus == PanelSettings && m.settingsUI != nil && m.settingsUI.editing)
 		if textInput && (len(v.Runes) > 0 || k == "space" || k == "backspace" || k == "delete") {
 			return
@@ -25,7 +28,15 @@ func (m Model) auditInput(msg tea.Msg) {
 		}
 		_ = m.activity.Write("input", fmt.Sprintf("key %s (panel=%s, dialog=%d)", k, PanelNames[m.activeTab()], m.modal))
 	case tea.MouseMsg:
-		if v.Action == tea.MouseActionPress || v.Type == tea.MouseWheelUp || v.Type == tea.MouseWheelDown {
+		// Scrolling is high-volume input, not an activity worth persisting.
+		// In the Log pane it would also generate more entries to scroll through.
+		if v.Type == tea.MouseWheelUp || v.Type == tea.MouseWheelDown {
+			return
+		}
+		if m.browsingLog() && m.logBrowsePointer(v) {
+			return
+		}
+		if v.Action == tea.MouseActionPress {
 			_ = m.activity.Write("input", fmt.Sprintf("pointer %s at %d,%d (panel=%s)", v.String(), v.X, v.Y, PanelNames[m.activeTab()]))
 		}
 	case jobEventMsg:
@@ -133,4 +144,38 @@ func (m Model) auditSetting(key, scope, op string) {
 	if m.activity != nil {
 		_ = m.activity.Write("settings", strings.Join([]string{op, key, "scope=" + scope}, " "))
 	}
+}
+
+// Log navigation must not write to the log it is navigating. Keep meaningful
+// actions such as switching panels, opening dialogs, and copying the log.
+func (m Model) browsingLog() bool {
+	return m.screen == ScreenDashboard && m.modal == ModalNone && m.activeTab() == PanelLog
+}
+
+func logNavigationKey(key string) bool {
+	switch key {
+	case "j", "down", "k", "up", "pgdown", "ctrl+d", "pgup", "ctrl+u", "g", "G", "f":
+		return true
+	}
+	return false
+}
+
+func (m Model) logBrowsePointer(msg tea.MouseMsg) bool {
+	if msg.Action != tea.MouseActionPress {
+		return false
+	}
+	r := m.panelRects()[PanelLog]
+	if r.contains(msg.X, msg.Y) && msg.Y > r.y && msg.Y < r.y+r.h-1 {
+		return true // swipe start (and a tap on the log's content)
+	}
+	if msg.Y == m.height-1 {
+		sb := m.statusBar()
+		_, spans := sb.Layout(m.st)
+		for _, span := range spans {
+			if msg.X >= span.Start && msg.X < span.End {
+				return logNavigationKey(sb.Hints[span.Index].Action)
+			}
+		}
+	}
+	return false
 }
