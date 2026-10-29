@@ -159,7 +159,15 @@ func (m Model) renderStatusBar() string {
 // statusBar is the single source for displayed hints and their key actions.
 func (m Model) statusBar() components.StatusBar {
 	hints := []components.Hint{}
-	add := func(k, d, action string) { hints = append(hints, components.Hint{Key: k, Desc: d, Action: action}) }
+	add := func(k, d, action string) {
+		if physical := m.keyName(m.keyContext(), action); physical != action && !(action == " " && physical == "space") {
+			k = physical
+		}
+		if k == "→/v" && m.keyName(m.keyContext(), "v") != "v" {
+			k = m.keyName(m.keyContext(), "right") + "/" + m.keyName(m.keyContext(), "v")
+		}
+		hints = append(hints, components.Hint{Key: k, Desc: d, Action: action})
+	}
 	if m.focus == PanelSettings && m.settingsUI != nil && m.settingsUI.editing {
 		add("enter", "save", "enter")
 		add("esc", "cancel", "esc")
@@ -308,12 +316,24 @@ func (m Model) tabLabels() (map[PanelID]string, bool) {
 	if total+2 <= m.width {
 		return labels, false
 	}
-	labels = map[PanelID]string{PanelRepos: "1 Repo", PanelWorkflows: "2 Flow", PanelRuns: "3 Build", PanelDownloads: "4 DL", PanelSettings: "5 Set", PanelDevice: "6 Dev", PanelLog: "7 Log"}
+	short := []string{"Repo", "Flow", "Build", "DL", "Set", "Dev", "Log"}
 	if m.width < 48 {
-		labels = map[PanelID]string{PanelRepos: "1 Rp", PanelWorkflows: "2 Fl", PanelRuns: "3 Bd", PanelDownloads: "4 Dl", PanelSettings: "5 St", PanelDevice: "6 Dv", PanelLog: "7 Lg"}
+		short = []string{"Rp", "Fl", "Bd", "Dl", "St", "Dv", "Lg"}
 	}
+	separator := " "
 	if m.width < 36 {
-		labels = map[PanelID]string{PanelRepos: "1Rp", PanelWorkflows: "2Fl", PanelRuns: "3Bd", PanelDownloads: "4Dl", PanelSettings: "5St", PanelDevice: "6Dv", PanelLog: "7Lg"}
+		separator = ""
+	}
+	total = len(FocusOrder) - 1 + 2
+	for i, p := range FocusOrder {
+		labels[p] = m.keyName("dashboard", fmt.Sprint(i+1)) + separator + short[i]
+		total += components.VisibleWidth(labels[p])
+	}
+	if total > m.width {
+		// Long customized shortcuts need not make the clickable tabs overflow.
+		for i, p := range FocusOrder {
+			labels[p] = []string{"Rp", "Fl", "Bd", "Dl", "St", "Dv", "Lg"}[i]
+		}
 	}
 
 	return labels, false
@@ -363,7 +383,7 @@ func (m Model) compactTabLabel(p PanelID) string {
 			i = x
 		}
 	}
-	l := fmt.Sprintf("%d %s", i+1, panelShort(p))
+	l := fmt.Sprintf("%s %s", m.keyName("dashboard", fmt.Sprint(i+1)), panelShort(p))
 	if n != "" {
 		l += " (" + n + ")"
 	}

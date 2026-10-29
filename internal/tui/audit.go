@@ -16,8 +16,11 @@ func (m Model) auditInput(msg tea.Msg) {
 	switch v := msg.(type) {
 	case tea.KeyMsg:
 		k := v.String()
-		if m.browsingLog() && logNavigationKey(k) {
-			return
+		if m.browsingLog() {
+			translated, handled := m.translateKey(v)
+			if !handled || logNavigationKey(translated.String()) {
+				return
+			}
 		}
 		textInput := m.filterMode || m.modal == ModalPickRepo || m.modal == ModalPickBranch || m.modal == ModalPickWorkflow || m.modal == ModalEditRepo || (m.focus == PanelSettings && m.settingsUI != nil && m.settingsUI.editing)
 		if textInput && (len(v.Runes) > 0 || k == "space" || k == "backspace" || k == "delete") {

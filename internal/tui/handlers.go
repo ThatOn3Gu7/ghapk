@@ -173,14 +173,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "B":
 		if m.settings.Repo == "" {
-			m.toastf("set a repository first (R)")
+			m.toastf("set a repository first (%s)", m.keyName("dashboard", "R"))
 			return m, nil
 		}
 		return m, m.openBranchPicker()
 
 	case "W":
 		if m.settings.Repo == "" {
-			m.toastf("set a repository first (R)")
+			m.toastf("set a repository first (%s)", m.keyName("dashboard", "R"))
 			return m, nil
 		}
 		return m, m.openWorkflowPicker()
@@ -206,7 +206,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "r":
 		if m.settings.Repo == "" {
-			m.toastf("no repository — press R")
+			m.toastf("no repository — press %s", m.keyName("dashboard", "R"))
 			return m, nil
 		}
 		m.toastf("refreshing…")

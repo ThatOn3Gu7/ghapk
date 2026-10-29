@@ -51,7 +51,7 @@ func (m Model) helpLayout() (viewport.Model, []int) {
 			appendLine(fmt.Sprintf("  %s %s", st.Hotkey.Render(fmt.Sprintf("%-12s", k)), st.Muted.Render(d)))
 			return
 		}
-		if width < 42 {
+		if width < 42 || components.VisibleWidth(k) > 15 {
 			writeText(k, 2, st.Hotkey.Render)
 			writeText(d, 4, st.Muted.Render)
 			return
@@ -70,56 +70,77 @@ func (m Model) helpLayout() (viewport.Model, []int) {
 	writeText("finds the newest build of your app in GitHub Actions,\nscores its artifacts for your device, downloads and installs it.", 0, st.Muted.Render)
 	entry++
 
+	keys := func(original, ctx string, actions ...string) string {
+		var names []string
+		changed := false
+		for _, a := range actions {
+			n := m.keyName(ctx, a)
+			names = append(names, n)
+			if n != a {
+				changed = true
+			}
+		}
+		if !changed {
+			return original
+		}
+		return strings.Join(names, " / ")
+	}
 	h1("Moving around")
-	row("tab / shift+tab", "cycle panels")
-	row("1 … 7", "jump to Repos, Flows, Builds, Downloads, Settings, Device, Log")
-	row("enter", "select a repo, branch or workflow; enter again to move on")
-	row("j / k · ↑ / ↓", "move in a list")
-	row("ctrl+d / ctrl+u", "page a list")
-	row("g / G", "first / last row")
-	row("enter / →", "open a build’s artifacts; enter installs the selected artifact")
-	row("← / esc", "return to the build list")
+	row(keys("tab / shift+tab", "dashboard", "tab", "shift+tab"), "cycle panels")
+	row(keys("1 … 7", "dashboard", "1", "2", "3", "4", "5", "6", "7"), "jump to Repos, Flows, Builds, Downloads, Settings, Device, Log")
+	row(keys("enter", "dashboard", "enter"), "select a repo, branch or workflow; "+m.keyName("dashboard", "enter")+" again to move on")
+	row(keys("j / k · ↑ / ↓", "dashboard", "j", "k", "up", "down"), "move in a list")
+	row(keys("ctrl+d / ctrl+u", "dashboard", "ctrl+d", "ctrl+u"), "page a list")
+	row(keys("g / G", "dashboard", "g", "G"), "first / last row")
+	row(keys("enter / →", "dashboard", "enter", "right"), "open a build’s artifacts; "+m.keyName("dashboard", "enter")+" installs the selected artifact")
+	row(keys("← / esc", "dashboard", "left", "esc"), "return to the build list")
 	row("mouse", "click focuses & selects, click again opens, wheel scrolls")
 	row("touch", "tap the repo name or bottom hints; swipe to scroll help")
 
 	h1("Doing things")
-	row("d", "download the selected artifact")
-	row("i", "check the device and choose Install or Download only")
-	row("o", "open the selected run in the browser")
-	row("O", "open the download folder")
-	row("r", "refresh runs, workflows, releases")
-	row("w", "watch mode — auto-refresh while builds run")
-	row("/", "filter the focused list")
-	row("f", "star/unstar a recent repository")
-	row("e", "edit the highlighted repo entry")
-	row("x", "remove it from the recents file")
+	row(keys("d", "dashboard", "d"), "download the selected artifact")
+	row(keys("i", "dashboard", "i"), "check the device and choose Install or Download only")
+	row(keys("o", "dashboard", "o"), "open the selected run in the browser")
+	row(keys("O", "dashboard", "O"), "open the download folder")
+	row(keys("r", "dashboard", "r"), "refresh runs, workflows, releases")
+	row(keys("w", "dashboard", "w"), "watch mode — auto-refresh while builds run")
+	row(keys("/", "dashboard", "/"), "filter the focused list")
+	row(keys("f", "dashboard", "f"), "star/unstar a recent repository")
+	row(keys("e", "dashboard", "e"), "edit the highlighted repo entry")
+	row(keys("x", "dashboard", "x"), "remove it from the recents file")
 
 	h1("Downloads")
-	row("enter", "view job detail, or install a selected saved APK")
-	row("s / esc", "focus saved APKs / return to jobs")
-	row("c", "cancel the selected job (installer handoff cannot be undone)")
-	row("x / X", "remove a finished job / remove all finished jobs")
-	row("x", "delete the selected saved APK after confirmation")
+	row(keys("enter", "downloads", "enter"), "view job detail, or install a selected saved APK")
+	row(keys("s / esc", "downloads", "s", "esc"), "focus saved APKs / return to jobs")
+	row(keys("c", "downloads", "c"), "cancel the selected job (installer handoff cannot be undone)")
+	row(keys("x / X", "downloads", "x", "X"), "remove a finished job / remove all finished jobs")
+	row(keys("x", "downloads", "x"), "delete the selected saved APK after confirmation")
 	row("touch", "tap rows and hints; swipe lists or job details")
 
 	h1("Device")
-	row("j / k · ↑ / ↓", "scroll the device and setup details")
-	row("r", "re-check device, tools and GitHub rate limit")
+	row(keys("j / k · ↑ / ↓", "device", "j", "k", "up", "down"), "scroll the device and setup details")
+	row(keys("r", "device", "r"), "re-check device, tools and GitHub rate limit")
 	row("touch", "swipe the device details to scroll")
 
 	h1("Pickers & screens")
-	row("R", "repository picker (recents, yours, GitHub search)")
-	row("B", "branch picker (filter + default/protected/PR branches)")
-	row("W", "workflow picker outside Help (filter by name or .yml)")
-	row("Settings pane", "enter changes, d resets, s switches save scope")
-	row("Log pane", "scroll with arrows or swipe; f follows, y copies recent entries")
-	row("t", "cycle theme")
-	row("D", "doctor — environment health check")
-	row("?", "this help")
+	row(keys("R", "dashboard", "R"), "repository picker (recents, yours, GitHub search)")
+	row(keys("B", "dashboard", "B"), "branch picker (filter + default/protected/PR branches)")
+	row(keys("W", "dashboard", "W"), "workflow picker outside Help (filter by name or .yml)")
+	row("Settings pane", fmt.Sprintf("%s changes, %s resets, %s switches save scope", m.keyName("settings", "enter"), m.keyName("settings", "d"), m.keyName("settings", "s")))
+	row("Log pane", fmt.Sprintf("scroll with %s / %s or swipe; %s follows, %s copies recent entries", m.keyName("log", "up"), m.keyName("log", "down"), m.keyName("log", "f"), m.keyName("log", "y")))
+	row(keys("t", "dashboard", "t"), "cycle theme")
+	row(keys("D", "dashboard", "D"), "doctor — environment health check")
+	row(keys("?", "dashboard", "?"), "this help")
 
+	row("Bindings", "Screen-specific keys are listed in keybinding.json; restart after editing.")
 	h1("Sessions")
-	row("ctrl+z", "suspend to the shell, fg to come back")
-	row("q / ctrl+c", "quit — your terminal is restored, nothing is cleared")
+	row(keys("ctrl+z", "dashboard", "ctrl+z"), "suspend to the shell, fg to come back")
+	row(keys("q / ctrl+c", "dashboard", "q")+func() string {
+		if m.keyName("dashboard", "q") != "q" {
+			return " / ctrl+c"
+		}
+		return ""
+	}(), "quit — your terminal is restored, nothing is cleared")
 
 	h1("How artifacts are picked")
 	writeText(`Every artifact of a run is scored for your device:
@@ -198,12 +219,18 @@ func (m Model) helpBounds() rect {
 	return rect{x: max(0, (m.width-boxWidth)/2) + 3, y: max(0, (m.height-boxHeight)/2) + 1, w: max(1, boxWidth-6), h: m.helpVP.Height}
 }
 
-func (m Model) helpTitle() string {
+func (m Model) helpWrapHint() string {
+	state := "on"
 	if m.helpWrapOff {
-		return "Help · W:wrap off"
+		state = "off"
 	}
-	return "Help · W:wrap on"
+	hint := m.keyName("help", "W") + ":wrap " + state
+	if components.VisibleWidth("Help · "+hint) > max(1, m.modalWindowWidth()-4) {
+		return "wrap " + state
+	}
+	return hint
 }
+func (m Model) helpTitle() string { return "Help · " + m.helpWrapHint() }
 
 func (m *Model) toggleHelpWrap() {
 	m.helpWrapOff = !m.helpWrapOff
@@ -214,13 +241,11 @@ func (m *Model) toggleHelpWrap() {
 func (m Model) helpWrapBounds() rect {
 	box := m.modalBox()
 	first := components.StripANSI(strings.Split(box, "\n")[0])
-	idx := strings.Index(first, "W:wrap ")
+	hint := m.helpWrapHint()
+	idx := strings.Index(first, hint)
 	if idx < 0 {
 		return rect{}
 	}
-	width := len("W:wrap on")
-	if m.helpWrapOff {
-		width = len("W:wrap off")
-	}
+	width := components.VisibleWidth(hint)
 	return rect{x: max(0, (m.width-lipgloss.Width(box))/2) + components.VisibleWidth(first[:idx]), y: max(0, (m.height-lipgloss.Height(box))/2), w: width, h: 1}
 }

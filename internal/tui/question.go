@@ -35,13 +35,13 @@ func (m Model) jobQuestionBox() string {
 	var body []string
 	body = append(body, lines[start:end]...)
 	if len(lines) > rows {
-		body = append(body, m.st.Dim.Render(fmt.Sprintf("%d/%d · swipe or PgDn", end, len(lines))))
+		body = append(body, m.st.Dim.Render(fmt.Sprintf("%d/%d · swipe or %s", end, len(lines), m.keyName("confirm", "pgdown"))))
 	} else {
 		body = append(body, "")
 	}
 	body = append(body, "")
 	for i, opt := range m.confirm.Options {
-		label := fmt.Sprintf("%d  %s", i+1, opt)
+		label := m.questionOptionLabel(i, opt)
 		style := m.st.ButtonBlur.Padding(0, 0)
 		if i == m.confirm.Cursor {
 			style = m.st.ButtonFocus.Padding(0, 0)
@@ -51,7 +51,8 @@ func (m Model) jobQuestionBox() string {
 		}
 		body = append(body, style.Render(label))
 	}
-	body = append(body, m.st.Dim.Render("↵ choose · Esc cancel"))
+	choose, cancel := m.questionHints()
+	body = append(body, m.st.Dim.Render(choose+" · "+cancel))
 	return components.QuestionBox(m.st, m.width, m.confirm.Title, strings.Join(body, "\n"))
 }
 
@@ -115,16 +116,17 @@ func (m Model) jobQuestionHit(x, y int) int {
 	}
 	bottom := (m.height-lipgloss.Height(box))/2 + lipgloss.Height(box) - 1
 	index := y - (bottom - 1 - len(m.confirm.Options))
-	if index >= 0 && index < len(m.confirm.Options) && strings.Contains(plain, fmt.Sprintf("%d  %s", index+1, m.confirm.Options[index])) {
+	if index >= 0 && index < len(m.confirm.Options) && strings.Contains(plain, m.questionOptionLabel(index, m.confirm.Options[index])) {
 		return index
 	}
 	if y != bottom-1 {
 		return -1
 	}
+	choose, cancel := m.questionHints()
 	for _, h := range []struct {
 		label  string
 		result int
-	}{{"↵ choose", -2}, {"Esc cancel", -3}} {
+	}{{choose, -2}, {cancel, -3}} {
 		if pos := strings.Index(plain, h.label); pos >= 0 {
 			col := components.VisibleWidth(plain[:pos])
 			if x >= col && x < col+components.VisibleWidth(h.label) {
@@ -133,4 +135,27 @@ func (m Model) jobQuestionHit(x, y int) int {
 		}
 	}
 	return -1
+}
+
+func (m Model) questionOptionLabel(i int, option string) string {
+	key := m.keyName("confirm", fmt.Sprint(i+1))
+	label := key + "  " + option
+	// Long key names must not wrap a safety choice or move its touch target.
+	if key != fmt.Sprint(i+1) && components.VisibleWidth(label) > max(1, min(m.width-2, 70)-6) {
+		label = "*  " + option
+	}
+	return label
+}
+func (m Model) questionHints() (string, string) {
+	choose, cancel := "↵ choose", "Esc cancel"
+	if k := m.keyName("confirm", "enter"); k != "enter" {
+		choose = k + " choose"
+	}
+	if k := m.keyName("confirm", "esc"); k != "esc" {
+		cancel = k + " cancel"
+	}
+	if components.VisibleWidth(choose+" · "+cancel) > max(1, min(m.width-2, 70)-6) {
+		return "choose", "cancel"
+	}
+	return choose, cancel
 }

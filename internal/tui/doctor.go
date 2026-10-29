@@ -97,7 +97,7 @@ func (m *Model) openDoctor() tea.Cmd {
 				add("err", "repo "+repo, "not reachable — private? typo? token scope?")
 			}
 		} else {
-			add("skip", "repo", "none selected yet (press R)")
+			add("skip", "repo", "none selected yet (press "+m.keyName("dashboard", "R")+")")
 		}
 
 		add("ok", "runtime", fmt.Sprintf("go %s · %s/%s", runtime.Version(), runtime.GOOS, runtime.GOARCH))
@@ -139,7 +139,7 @@ func (d DoctorState) view(m *Model) string {
 		}
 		b.WriteString(fmt.Sprintf(" %s  %-14s %s\n", icon, r.name, st.Muted.Render(r.info)))
 	}
-	b.WriteString("\n" + st.Dim.Render("r re-run · esc close") + "\n")
+	b.WriteString("\n" + st.Dim.Render(m.keyName("doctor", "r")+" re-run · "+m.keyName("doctor", "esc")+" close") + "\n")
 	return b.String()
 }
 

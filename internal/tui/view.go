@@ -76,7 +76,7 @@ func (m Model) modalBox() string {
 		}
 	case ModalEditRepo:
 		body := m.editInput.View() + "\n\n" +
-			m.st.Dim.Render("enter saves as owner/repo · esc cancels")
+			m.st.Dim.Render(m.keyName("editor", "enter")+" saves as owner/repo · "+m.keyName("editor", "esc")+" cancels")
 		return m.modalWindow("Edit repository", body)
 	case ModalConfirm:
 		if m.confirmKind == confirmJobSafety {

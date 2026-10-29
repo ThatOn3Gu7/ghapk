@@ -12,6 +12,12 @@ import (
 // When the user quits, the terminal is restored untouched — the shell is
 // exactly where they left it, the way lazygit exits.
 func Run(opts Options) error {
+	path := KeybindingPath()
+	keys, err := LoadKeyBindings(path)
+	if err != nil {
+		return fmt.Errorf("key bindings (%s): %w; fix the file or remove it to restore defaults", path, err)
+	}
+	opts.KeyBindings = keys
 	store, logErr := activity.Open(config.Dir(), activity.DefaultMaxBytes)
 	if logErr != nil {
 		opts.LogError = logErr.Error()
