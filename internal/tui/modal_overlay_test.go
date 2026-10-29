@@ -15,7 +15,7 @@ import (
 func TestModalOverlaysPreserveDimDashboard(t *testing.T) {
 	withTrueColor(t)
 	for _, name := range theme.Order {
-		for _, kind := range []ModalKind{ModalHelp, ModalSettings, ModalPickRepo, ModalPickBranch, ModalPickWorkflow, ModalEditRepo, ModalConfirm, ModalTask, ModalDoctor} {
+		for _, kind := range []ModalKind{ModalHelp, ModalPickRepo, ModalPickBranch, ModalPickWorkflow, ModalEditRepo, ModalConfirm, ModalTask, ModalDoctor} {
 			t.Run(fmt.Sprintf("%s/%d", name, kind), func(t *testing.T) {
 				m := buildModel(t, 120, 50)
 				m.applyTheme(name)
@@ -23,8 +23,6 @@ func TestModalOverlaysPreserveDimDashboard(t *testing.T) {
 				case ModalHelp:
 					m.helpVP = m.buildHelp()
 					m.helpVP.Height = 10
-				case ModalSettings:
-					m.settingsUI = NewSettingsUI(&m)
 				case ModalPickRepo:
 					m.openRepoPicker()
 				case ModalPickBranch:

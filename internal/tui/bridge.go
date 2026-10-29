@@ -18,5 +18,9 @@ func scorePrefsFrom(p archPrefs) score.Prefs {
 }
 
 func prefsFromSettings(s config.Settings) score.Prefs {
-	return score.Prefs{Arch: s.Arch, Variant: s.Variant}
+	arch := s.Arch
+	if s.AllArch {
+		arch = "any"
+	}
+	return score.Prefs{Arch: arch, Variant: s.Variant}
 }

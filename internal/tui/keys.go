@@ -18,7 +18,6 @@ var (
 	KeyRepoPicker  = "R"
 	KeyBranch      = "B"
 	KeyWatch       = "w"
-	KeySettings    = "s"
 	KeyTheme       = "t"
 	KeyDoctor      = "D"
 	KeySuspend     = "ctrl+z"
@@ -27,7 +26,7 @@ var (
 // FocusOrder is the tab-cycle order. Artifacts are a focus within Builds,
 // not a separate screen.
 var FocusOrder = []PanelID{
-	PanelRepos, PanelWorkflows, PanelRuns, PanelDownloads, PanelDevice,
+	PanelRepos, PanelWorkflows, PanelRuns, PanelDownloads, PanelDevice, PanelSettings,
 }
 
 // PanelID identifies a dashboard panel.
@@ -40,6 +39,7 @@ const (
 	PanelArtifacts
 	PanelDevice
 	PanelDownloads
+	PanelSettings
 	NumPanels
 )
 
@@ -51,4 +51,5 @@ var PanelNames = map[PanelID]string{
 	PanelArtifacts: "Artifacts",
 	PanelDevice:    "Device",
 	PanelDownloads: "Downloads",
+	PanelSettings:  "Settings",
 }

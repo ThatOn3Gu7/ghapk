@@ -95,15 +95,13 @@ func itoa(i int) string {
 func TestNoLineOverflowModals(t *testing.T) {
 	sizes := []struct{ w, h int }{{120, 40}, {97, 31}, {80, 26}, {64, 18}, {130, 42}}
 	for _, s := range sizes {
-		for _, modal := range []ModalKind{ModalHelp, ModalSettings, ModalPickRepo, ModalPickBranch, ModalConfirm, ModalTask, ModalDoctor} {
+		for _, modal := range []ModalKind{ModalHelp, ModalPickRepo, ModalPickBranch, ModalConfirm, ModalTask, ModalDoctor} {
 			lines := renderAt(t, s.w, s.h, func(m *Model) {
 				m.modal = modal
 				switch modal {
 				case ModalHelp:
 					m.helpVP = m.buildHelp()
 					m.helpVP.Height = s.h - 10
-				case ModalSettings:
-					m.settingsUI = NewSettingsUI(m)
 				case ModalPickRepo:
 					m.openRepoPicker()
 				case ModalPickBranch:

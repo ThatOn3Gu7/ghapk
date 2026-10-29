@@ -136,7 +136,10 @@ type ZipInspectedMsg struct {
 	Err   error
 }
 
-type RefreshTickMsg struct{ At time.Time }
+type RefreshTickMsg struct {
+	At  time.Time
+	Seq int
+}
 type ShimmerTickMsg struct{ At time.Time }
 type ClearToastMsg struct{}
 
@@ -421,12 +424,12 @@ func openURL(url string) tea.Cmd {
 	}
 }
 
-func refreshTickCmd(secs int) tea.Cmd {
+func refreshTickCmd(secs, seq int) tea.Cmd {
 	if secs <= 0 {
 		return nil
 	}
 	return tea.Tick(time.Duration(secs)*time.Second, func(t time.Time) tea.Msg {
-		return RefreshTickMsg{At: t}
+		return RefreshTickMsg{At: t, Seq: seq}
 	})
 }
 

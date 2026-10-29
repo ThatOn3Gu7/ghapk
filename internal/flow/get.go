@@ -30,8 +30,17 @@ type GetOptions struct {
 
 // Run executes the condensed pipeline, returning exit codes that match the
 // spirit of the script's EX_* constants.
-func Run(o GetOptions) int {
+func Run(o GetOptions) (code int) {
 	s := o.Settings
+	if !o.DryRun {
+		defer func() {
+			message := "Download completed"
+			if code != 0 {
+				message = fmt.Sprintf("Download failed (exit %d)", code)
+			}
+			device.Notify(s.NotifyOn, s.Speak, s.Toast, code == 0, "GH APK", message)
+		}()
+	}
 	out := func(format string, a ...any) { fmt.Fprintf(os.Stderr, format+"\n", a...) }
 
 	// [1/6] preflight
@@ -50,6 +59,9 @@ func Run(o GetOptions) int {
 	dev := device.Probe()
 	sd := score.Device{ABIs: dev.ABIs, SDK: dev.SDK}
 	prefs := score.Prefs{Arch: s.Arch, Variant: s.Variant}
+	if s.AllArch {
+		prefs.Arch = "any"
+	}
 
 	// [2/6] repo
 	repo := s.Repo
@@ -248,6 +260,15 @@ func Run(o GetOptions) int {
 	}
 
 	// [6/6] hand off / install
+	if s.OutputDir != "" {
+		copyPath, err := ghapi.CopyAPK(context.Background(), apkOut.Path, s.OutputDir)
+		if err != nil {
+			out("ghapk: output copy failed (APK remains cached): %v", err)
+			return 9
+		}
+		out("ghapk: copied APK to %s", copyPath)
+	}
+
 	if o.Install {
 		if s.NoOpen {
 			out("ghapk: --no-open is set — skipping installer (APK saved at %s)", apkOut.Path)
@@ -290,6 +311,9 @@ func Run(o GetOptions) int {
 			return 11
 		}
 		for _, w := range safety.Warnings {
+			if w.Kind == apk.WarnSameVersion && !s.IdenticalCheck {
+				continue
+			}
 			out("ghapk: warning (%s): %s", w.Kind, w.Message)
 			if w.Kind == apk.WarnDowngrade && strings.ToLower(s.Downgrade) != "allow" {
 				out("ghapk: refusing automatic downgrade under downgrade=%s — pass --downgrade=allow to confirm downgrade", s.Downgrade)
@@ -311,8 +335,8 @@ func Run(o GetOptions) int {
 		if res.Outcome == device.OutcomeLaunched {
 			out("ghapk: installer launched via %s — accept the prompt on your Android device", res.Via)
 			if s.VerifyInstall && queryPkg != "" && apkOut.Meta.HaveInfo && instApp.Queryable && !(instFound && (instApp.VersionCode <= 0 || apkOut.Meta.Info.VersionCode <= 0 || instApp.VersionCode == apkOut.Meta.Info.VersionCode)) {
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				vr := device.VerifyInstall(ctx, queryPkg, apkOut.Meta.Info.VersionCode, 25*time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.InstallWait+5)*time.Second)
+				vr := device.VerifyInstall(ctx, queryPkg, apkOut.Meta.Info.VersionCode, time.Duration(s.InstallWait)*time.Second)
 				cancel()
 				switch vr.Outcome {
 				case device.VerifyConfirmed:

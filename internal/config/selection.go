@@ -114,3 +114,36 @@ func writeSelections(s Selections) error {
 	}
 	return os.Rename(path, selectionPath())
 }
+
+// ClearRememberedFilter lets an explicit Settings edit take effect on the
+// next launch instead of being shadowed by an older picker selection.
+func ClearRememberedFilter(repo, key string) error {
+	if !validRepoHint(repo) {
+		return fmt.Errorf("invalid repository")
+	}
+	if key != "branch" && key != "workflow" {
+		return fmt.Errorf("invalid filter")
+	}
+	selectionMu.Lock()
+	defer selectionMu.Unlock()
+	s, err := loadSelections()
+	if err != nil {
+		return err
+	}
+	r := strings.ToLower(repo)
+	v, ok := s.Repos[r]
+	if !ok {
+		return nil
+	}
+	if key == "branch" {
+		v.Branch = nil
+	} else {
+		v.Workflow = nil
+	}
+	if v.Branch == nil && v.Workflow == nil {
+		delete(s.Repos, r)
+	} else {
+		s.Repos[r] = v
+	}
+	return writeSelections(s)
+}

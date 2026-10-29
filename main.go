@@ -52,7 +52,10 @@ func run(args []string) int {
 		}
 	}
 	// default: launch the TUI, honouring CLI flags as session overrides
-	_, opts := getCmd(args)
+	code, opts := getCmd(args)
+	if code != 0 {
+		return code
+	}
 	if err := tui.Run(opts); err != nil {
 		fmt.Fprintln(os.Stderr, "ghapk:", err)
 		return 1
@@ -71,8 +74,14 @@ func getCmd(args []string) (int, tui.Options) {
 		printD                                         string
 		repoOverride, branchOverride, workflowOverride bool
 	)
+	seen := map[string]bool{}
+	flagKeys := map[string]string{"--repo": "repo", "--branch": "branch", "--workflow": "workflow", "--artifact": "artifact-pattern", "--file": "file", "--exclude": "exclude", "--source": "source", "--arch": "arch", "--variant": "variant", "--limit": "limit", "--package": "package", "--downgrade": "downgrade", "--theme": "theme", "--no-open": "no-open", "--watch": "watch", "--out": "out", "--keep": "keep", "--refresh": "auto-refresh", "--install-wait": "install-wait", "--notify-on": "notify-on", "--glyphs": "glyphs", "--all-arch": "all-arch", "--no-identical-check": "identical-check", "--no-pkg-check": "pkg-check", "--no-sig-check": "sig-check", "--no-verify-install": "verify-install", "--no-verify-digest": "verify-digest", "--no-mouse": "mouse", "--ascii": "glyphs", "--unicode": "glyphs", "--speak": "speak", "--toast": "toast", "--no-notify": "notify-on"}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		name := strings.SplitN(a, "=", 2)[0]
+		if k, ok := flagKeys[name]; ok {
+			seen[k] = true
+		}
 		val := func() string {
 			if strings.Contains(a, "=") {
 				return strings.SplitN(a, "=", 2)[1]
@@ -101,21 +110,26 @@ func getCmd(args []string) (int, tui.Options) {
 			settings.ExcludePattern = val()
 		case a == "--source" || strings.HasPrefix(a, "--source="):
 			settings.Source = val()
-		case a == "--arch":
-			i++
-			settings.Arch = args[i]
-		case strings.HasPrefix(a, "--arch="):
-			settings.Arch = strings.TrimPrefix(a, "--arch=")
-		case a == "--variant":
-			i++
-			settings.Variant = args[i]
-		case strings.HasPrefix(a, "--variant="):
-			settings.Variant = strings.TrimPrefix(a, "--variant=")
-		case a == "--limit":
-			i++
-			fmt.Sscanf(args[i], "%d", &settings.RunLimit)
-		case strings.HasPrefix(a, "--limit="):
-			fmt.Sscanf(strings.TrimPrefix(a, "--limit="), "%d", &settings.RunLimit)
+		case name == "--arch" || name == "--variant" || name == "--limit" || name == "--out" || name == "--keep" || name == "--refresh" || name == "--install-wait" || name == "--notify-on" || name == "--glyphs":
+			value := val()
+			if value == "" && name != "--out" {
+				fmt.Fprintf(os.Stderr, "ghapk: %s requires a value\n", name)
+				return 2, tui.Options{}
+			}
+			if err := config.SetValue(&settings, flagKeys[name], value); err != nil {
+				fmt.Fprintf(os.Stderr, "ghapk: %s: %v\n", name, err)
+				return 2, tui.Options{}
+			}
+		case name == "--all-arch" || name == "--speak" || name == "--toast":
+			_ = config.SetValue(&settings, flagKeys[name], "1")
+		case name == "--no-identical-check" || name == "--no-pkg-check" || name == "--no-sig-check" || name == "--no-verify-install" || name == "--no-verify-digest" || name == "--no-mouse":
+			_ = config.SetValue(&settings, flagKeys[name], "0")
+		case name == "--ascii":
+			settings.Glyphs = "ascii"
+		case name == "--unicode":
+			settings.Glyphs = "unicode"
+		case name == "--no-notify":
+			settings.NotifyOn = "never"
 		case a == "--package" || strings.HasPrefix(a, "--package="):
 			settings.PackageName = val()
 		case a == "--downgrade" || strings.HasPrefix(a, "--downgrade="):
@@ -144,7 +158,11 @@ func getCmd(args []string) (int, tui.Options) {
 			}
 		}
 	}
-	opts := tui.Options{Settings: settings, RepoOverride: repoOverride, BranchOverride: branchOverride, WorkflowOverride: workflowOverride}
+	overrides := map[string]string{}
+	for k := range seen {
+		overrides[k] = config.Value(settings, k)
+	}
+	opts := tui.Options{Settings: settings, RepoOverride: repoOverride, BranchOverride: branchOverride, WorkflowOverride: workflowOverride, CLIOverrides: overrides}
 	// if this parse came from "get", run the classic pipeline
 	if len(os.Args) > 1 && (os.Args[1] == "get" || os.Args[1] == "download") {
 		return flow.Run(flow.GetOptions{
@@ -215,6 +233,13 @@ COMMON FLAGS (TUI session or get)
   --limit N                scan the N newest runs (default 20)
   --package NAME           track the installed version of com.example.app
   --theme NAME             action|mocha|emerald|paper
+  --out DIR                copy APKs to DIR as well as the cache
+  --all-arch               offer APKs for all architectures
+  --refresh SECONDS        auto-refresh interval (0 disables)
+  --install-wait SECONDS   wait for installation verification
+  --notify-on POLICY       always|success|failure|never
+  --ascii / --unicode      choose interface symbols
+  --no-mouse               disable mouse and touch
 
 get ONLY
   -i, --install            hand the APK to the system installer
@@ -222,7 +247,7 @@ get ONLY
       --dry-run            resolve and print the plan, fetch nothing
       --print-path         print where the APK would land
 
-IN THE TUI press ? for the full key list, s for settings.
+IN THE TUI press ? for the full key list; Settings is the sixth panel.
 Config: ~/.config/ghapk/config and repos/<owner>_<repo>.conf
 (KEY=VALUE lines — same format as the original script).`))
 }
