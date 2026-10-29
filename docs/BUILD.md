@@ -6,7 +6,7 @@ dependency directory. One file is the whole tool.
 
 ## Zero. Prerequisites
 
-- Go ≥ 1.22 installed (https://go.dev/dl). Nothing else — no CGO, no NDK,
+- Go ≥ 1.24 installed (https://go.dev/dl). Nothing else — no CGO, no NDK,
   no extra system libraries.
 - Optional: [UPX](https://upx.github.io) if you want the binary smaller.
 
@@ -17,8 +17,8 @@ cd ghapk
 go build -o ghapk .
 ```
 
-That's it: `./ghapk` is a self-contained executable (~8–9 MB) that runs
-with no other files. Move it anywhere, rename it, put it on your PATH:
+That's it: `./ghapk` is a self-contained executable. Accessing GitHub still
+requires the authenticated `gh` CLI. Move it anywhere, rename it, put it on your PATH:
 
 ```bash
 mv ghapk ~/.local/bin/        # or /usr/local/bin, or ~/bin on Termux
@@ -27,7 +27,7 @@ mv ghapk ~/.local/bin/        # or /usr/local/bin, or ~/bin on Termux
 ## 2. A stripped, smaller single file
 
 Two linker flags remove the symbol table and debug info; trimming the
-build path makes it reproducible:
+build path removes local source paths:
 
 ```bash
 go build -trimpath -ldflags="-s -w" -o ghapk .
@@ -39,7 +39,7 @@ Optional shrink on top of that with UPX (typically −60 %):
 upx --best --lzma ghapk
 ```
 
-Result: a ~2–3 MB single file.
+The resulting size varies by version and target.
 
 ## 3. Cross-compiling — the binary must match the machine
 
@@ -51,7 +51,7 @@ CGO off by default for cross builds):
 # your phone running Termux (arm64)
 GOOS=android GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o ghapk-android-arm64 .
 
-# 32-bit ARM Linux (Raspberry Pi etc.)
+# 64-bit ARM Linux (Raspberry Pi etc.)
 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o ghapk-linux-arm64 .
 
 # everyday x86_64 Linux
@@ -71,19 +71,18 @@ Copy the right one to the device (e.g. `adb push ghapk-android-arm64
 `make release` in the repo does all of the above and writes
 `bin/ghapk-<os>-<arch>` plus `bin/sha256sums.txt`.
 
-## 4. Installing from source without a folder
+## 4. Installing from a checkout
 
-You don't even need to keep the source checkout: `go install` compiles
-and drops the finished binary into `$(go env GOPATH)/bin`:
+The project uses local module replacements, so install from the checkout
+rather than using a remote `go install ...@latest` command:
 
 ```bash
-go install github.com/ghapk/ghapk@latest     # once published
-# or from a local checkout:
-cd ghapk && go install .
+cd ghapk
+go install .
 ```
 
-Add `~/go/bin` (or `$PREFIX/bin` on Termux, which `go` already uses) to
-your PATH and `ghapk` is just a command.
+Add `$(go env GOPATH)/bin` to your PATH. You can remove the checkout after
+installation. The installed binary still needs an authenticated `gh` CLI.
 
 ## 5. On Termux specifically
 
@@ -111,17 +110,19 @@ cp /sdcard/ghapk $PREFIX/bin/ghapk && chmod +x $PREFIX/bin/ghapk
 > ELF with the old section flags — current Go versions are clean; if in
 > doubt prefer the `android` target.
 
-## 6. Distribution as a GitHub release (optional)
+## 6. Distribution as a GitHub release
 
-Very meta, but fitting: tag a commit and attach the `bin/` files:
+`make release` builds six binaries and their `sha256sums.txt`. Set `VERSION`
+when building a different version, for example `make release VERSION=4.3.0`.
 
-```bash
-git tag v4.0.0 && git push --tags
-gh release create v4.0.0 bin/* --title "ghapk v4.0.0"
-```
-
-Users then download one file for their platform and run it. No
-packaging system required anywhere in the pipeline.
+The release workflow runs for `v*` tags or by manual dispatch with an existing tag. Add handwritten
+notes at `docs/releases/<tag>.md` before tagging. It builds the same six targets,
+packages the checked-out source, and includes its SHA-256 in `sha256sums.txt`.
+If a release for that tag already exists, the workflow leaves it and its assets
+untouched; publish or update those assets manually instead. For a manual
+release, build from the exact committed target, add a source archive and its
+checksum, then use `gh release create` with `--target` and `--notes-file`.
+Review the tag, notes, assets, and checksums before publishing.
 
 ## 7. What "single executable" cannot remove
 

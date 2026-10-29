@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/ThatOn3Gu7/ghapk/releases"><img src="https://img.shields.io/github/v/release/ThatOn3Gu7/ghapk?color=a6e3a1&style=flat-square" alt="Latest Release"></a>
   <a href="https://go.dev/"><img src="https://img.shields.io/badge/go-1.24-89dceb?style=flat-square&logo=go" alt="Go Version"></a>
-  <a href="https://github.com/ThatOn3Gu7/ghapk/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-f9e2af?style=flat-square" alt="License"></a>
+  <img src="https://img.shields.io/badge/license-MIT-f9e2af?style=flat-square" alt="License">
   <a href="https://termux.dev/"><img src="https://img.shields.io/badge/platform-Android%20%7C%20Linux%20%7C%20macOS-cba6f7?style=flat-square" alt="Platform"></a>
 </p>
 
@@ -19,16 +19,16 @@
 
 ## ⚡ What is ghapk?
 
-Testing Android apps built with **GitHub Actions** usually means endless friction: opening your phone's browser, authenticating to GitHub, finding the workflow run, downloading a multi-hundred megabyte zip file, extracting the `.apk`, finding it in your file manager, and manually installing it.
+Testing Android apps built with **GitHub Actions or Releases** usually means endless friction: opening your phone's browser, authenticating to GitHub, finding the workflow run, downloading a multi-hundred megabyte zip file, extracting the `.apk`, finding it in your file manager, and manually installing it.
 
 **`ghapk` eliminates all of that.**
 
 With a single keyboard shortcut or touch tap from your terminal, `ghapk`:
-1. Discovers the latest successful GitHub Actions workflow runs for your repository.
+1. Finds GitHub Actions artifacts or APKs attached to GitHub Releases.
 2. Inspects your actual physical device hardware (CPU architecture / ABI, Android SDK level, debug/release preference).
 3. Evaluates and scores every available artifact to automatically pick the optimal build for your device.
-4. Streams and extracts the APK directly.
-5. Hands the APK off to Android's native package installer (or `xdg-open` on desktop).
+4. Downloads and extracts the APK, including from nested ZIP archives.
+5. Optionally hands the APK to Android's package installer or installs to a connected Android device with `adb`.
 
 All through a sleek, reactive, **LazyGit-style Terminal User Interface (TUI)** that cleans up after itself and leaves your terminal scrollback untouched.
 
@@ -86,7 +86,7 @@ ghapk
 
 ## 📦 Pre-Built Binaries
 
-Pre-compiled standalone binaries with zero external runtime dependencies are available on the **[Releases](https://github.com/ThatOn3Gu7/ghapk/releases)** page:
+Pre-compiled standalone binaries are available on the **[Releases](https://github.com/ThatOn3Gu7/ghapk/releases)** page:
 
 | Platform | Architecture | Target File |
 | :--- | :--- | :--- |
@@ -99,11 +99,15 @@ Pre-compiled standalone binaries with zero external runtime dependencies are ava
 
 ### Install via Go
 
-If you have Go installed:
+With Go 1.24 or newer, install from a checkout (local replacements in this project mean `go install ...@latest` is not supported):
 
 ```bash
-go install github.com/ThatOn3Gu7/ghapk@latest
+git clone https://github.com/ThatOn3Gu7/ghapk.git
+cd ghapk
+go install .
 ```
+
+Ensure `$(go env GOPATH)/bin` is on your PATH. The binary still needs the authenticated `gh` CLI to access GitHub.
 
 ---
 
@@ -150,7 +154,7 @@ precedence for that launch.
 | `B` | Switch the Actions branch filter (release assets are not branch-filtered) |
 | `r` | Refresh current view from GitHub API |
 | `w` | Toggle watch mode (live polling for running CI workflows) |
-| `/` | Real-time fuzzy filter within current panel |
+| `/` | Real-time case-insensitive substring filter within current panel |
 | `f` | Star / favorite a repository |
 | `s` | In Downloads, focus saved APKs; in Settings, switch save scope |
 | `t` | Cycle color theme (`action`, `mocha`, `emerald`, `paper`) |
@@ -194,6 +198,32 @@ ghapk get --repo ThatOn3Gu7/Nazo --dry-run
 ghapk doctor
 ```
 
+`get` downloads by default; `-i` requests installation. `--no-open` skips
+installation in CLI mode, while an explicit TUI Install still works. `--yes`
+accepts non-downgrade safety warnings, but cannot override a blocked install;
+automatic downgrades require `--downgrade=allow`. A handoff that cannot be
+verified is reported as unconfirmed, not as a confirmed install. Progress, messages and the resulting APK path are printed to stderr.
+
+Useful options (also available to the TUI unless noted):
+
+| Option | Purpose |
+| :--- | :--- |
+| `--source auto\|actions\|releases` | Choose Actions, release assets, or fallback |
+| `--branch`, `--workflow` | Filter Actions runs |
+| `--artifact PATTERN`, `--exclude PATTERN` | Filter names: Actions uses case-insensitive substring matching; Releases uses case-insensitive globs |
+| `--file GLOB` | Match files in archives, e.g. `--file '*release*.apk'` |
+| `--out DIR` | Also copy the APK to a directory |
+| `--keep N`, `--refresh SECONDS` | Control cache retention and refresh interval |
+| `--watch`, `--limit N` | Watch for runs or limit the number scanned |
+| `--package NAME`, `--downgrade auto\|allow\|never` | Package and downgrade safety policy |
+| `--no-pkg-check`, `--no-sig-check`, `--no-verify-digest`, `--no-verify-install`, `--no-identical-check` | Disable individual checks; use with care |
+| `--all-arch`, `--ascii`, `--unicode`, `--no-mouse` | Override device or interface preferences |
+| `--install-wait SECONDS`, `--notify-on POLICY`, `--no-notify`, `--speak`, `--toast` | Installation verification and Termux notifications |
+| `get --dry-run` | Resolve a plan without downloading |
+| `get --print-path` | Use the APK cache as the output directory (the resulting path is logged to stderr) |
+
+Run `ghapk help` for a quick usage summary.
+
 ---
 
 ## 🛠 Project Structure
@@ -203,8 +233,10 @@ ghapk/
 ├── assets/                  # Branding, icons, logos, and previews
 │   ├── logo.png             # High-resolution badge icon
 │   └── logo.svg             # Crisp vector graphic badge
-├── cmd/ or root             # Application entrypoint (main.go)
+├── main.go                  # Application entrypoint
 ├── internal/
+│   ├── activity/            # Persistent activity log
+│   ├── apk/                 # APK metadata and installation safety
 │   ├── config/              # Persistent configuration (~/.config/ghapk/)
 │   ├── device/              # Android & host probing (ABI, SDK, dumpsys, getprop)
 │   ├── flow/                # Headless one-shot CLI execution (ghapk get)
@@ -218,7 +250,8 @@ ghapk/
 │       ├── mouse.go         # Terminal mouse & touch event translation
 │       └── view.go          # Screen composition & responsive breakpoints
 ├── docs/
-│   └── BUILD.md             # In-depth single-executable compilation guide
+│   ├── BUILD.md             # Compilation and release guide
+│   └── releases/            # Handwritten release notes
 ├── .github/workflows/
 │   └── release.yml          # Automated CI cross-platform build & release
 ├── Makefile                 # Easy developer build automation
@@ -229,7 +262,7 @@ ghapk/
 
 ## 🏗 Building from Source
 
-`ghapk` is written in standard Go (≥ 1.22) with zero CGO dependencies.
+`ghapk` requires Go 1.24 or newer to build and does not require CGO.
 
 ```bash
 # Clone the repository
@@ -258,7 +291,7 @@ everywhere. Changes are saved immediately; source labels show which layer wins.
 CLI flags and environment variables override saved values. Touch works for
 selecting and scrolling; tap a selected row again to change it.
 
-Most Claude-inspired settings are available, including selection and safety,
+Settings include selection and safety,
 output copies, refresh, notifications, glyphs, mouse and theme. The per-pick
 remember policy and watch timeout are not yet available; the install plan and
 its confirmations remain in place. Unattended `uninstall-first` remains
@@ -271,6 +304,36 @@ Settings can also be customized directly via configuration files:
 - **Per-Repository Config:** `~/.config/ghapk/repos/<owner>_<repo>.conf`
 - **Local Workspace Config:** `.ghapk.conf`
 - **Downloaded APK Storage:** `~/.cache/ghapk/apk/`
+
+Configuration files contain `KEY=VALUE` lines. Precedence is: command-line
+flags, nonempty `GHAPK_*` environment variables, your per-repository config,
+your global config, then safe workspace/repository hints and defaults. For
+example, `GHAPK_SOURCE=releases` corresponds to `source=releases`. A local
+`.ghapk.conf` or a repository’s `.github/ghapk.conf` can suggest only repo,
+branch, workflow, artifact, file, exclude, and source selection; it cannot
+turn off safety checks, set output paths, or trigger uninstalls. Remembered TUI
+selections are stored separately and explicit CLI/environment selections win.
+`GHAPK_CONFIG_DIR` overrides the config directory; otherwise `XDG_CONFIG_HOME`
+changes its parent. `GHAPK_CACHE_DIR`, then `CACHE_DIR`, then `XDG_CACHE_HOME`
+change the cache location.
+
+**Source** in Settings can be `actions`, `releases`, or `auto`: auto uses
+Actions where available and falls back to release assets. A release asset can
+be an APK or a ZIP containing APKs; Actions artifacts are archives. Branch
+filters apply to Actions, not releases. Archive extraction has size and path
+safety limits. With digest verification enabled, ghapk checks a SHA-256 digest
+when GitHub supplies one and reports unverified when it doesn't. Cached
+archives are reused only when validated; disabling verification weakens this
+check. The one-line installer separately verifies the binary against the
+release's `sha256sums.txt` when the file, a matching entry, and a SHA-256
+tool are available. Otherwise the installer proceeds without verification.
+To request a particular release, pipe the installer into
+`GHAPK_VERSION=v4.3.0 bash`.
+
+Termux notifications require the relevant Termux:API app and command-line tools.
+Settings can choose when to notify and optionally speak or show a toast; absent
+helpers are skipped. Use `ghapk doctor` to check GitHub authentication and
+installer availability.
 
 ### Custom key bindings
 
@@ -338,4 +401,4 @@ unconfirmed unless installation can actually be verified on the device.
 
 ## 📄 License
 
-MIT &copy; [ThatOn3Gu7](https://github.com/ThatOn3Gu7)
+The project is described as MIT &copy; [ThatOn3Gu7](https://github.com/ThatOn3Gu7); the repository currently does not include a LICENSE file.

@@ -28,8 +28,8 @@ const (
 )
 
 // appVersion is a var so the Makefile can inject it:
-// go build -ldflags="-X main.appVersion=4.0.0"
-var appVersion = "4.0.0"
+// go build -ldflags="-X main.appVersion=4.3.0"
+var appVersion = "4.3.0"
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -226,7 +226,7 @@ COMMON FLAGS (TUI session or get)
   --repo owner/name        repository to pull artifacts from
   --workflow NAME          restrict to one workflow
   --branch NAME            restrict to one branch
-  --artifact PATTERN       artifact name glob, e.g. "*debug*"
+  --artifact PATTERN       filter Actions names or release asset globs
   --file PATTERN           file glob inside the zip
   --arch PREF              auto|any|arm64|armv7|x86_64|x86|universal
   --variant PREF           auto|debug|release|any
@@ -243,9 +243,9 @@ COMMON FLAGS (TUI session or get)
 
 get ONLY
   -i, --install            hand the APK to the system installer
-  -y, --yes                never ask
+  -y, --yes                accept non-downgrade warnings
       --dry-run            resolve and print the plan, fetch nothing
-      --print-path         print where the APK would land
+      --print-path         use the APK cache as the output directory
 
 IN THE TUI press ? for the full key list; Settings is the fifth panel; Log is the seventh.
 Config: ~/.config/ghapk/config and repos/<owner>_<repo>.conf

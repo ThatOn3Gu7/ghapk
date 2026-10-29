@@ -5,7 +5,7 @@
 set -euo pipefail
 
 REPO="ThatOn3Gu7/ghapk"
-DEFAULT_TAG="v4.2.6"
+DEFAULT_TAG="v4.3.0"
 INSTALL_NAME="ghapk"
 
 # Determine terminal color support
