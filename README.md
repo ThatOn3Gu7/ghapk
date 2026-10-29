@@ -294,10 +294,18 @@ Detailed instructions on compiler optimization, UPX compression, and distributio
 ## ⚙ Configuration
 
 Open **Settings** from its tab (or press `5`). Enter changes a setting, `d`
-removes the override at the chosen scope, and `s` switches between this repo and
-everywhere. Changes are saved immediately; source labels show which layer wins.
-CLI flags and environment variables override saved values. Touch works for
-selecting and scrolling; tap a selected row again to change it.
+removes the override at the chosen scope, and `s` (or a tap on the `save:`
+badge or `s scope` footer) switches the selected setting between global and
+this repo. Selection rules such as branch, workflow and file patterns default to
+this repo; theme, glyphs, notifications and other general preferences default to
+global. The save scope applies to the selected setting and is remembered for
+the current session. Changes are saved immediately. The `[repo]`, `[global]`,
+`[env]` and `[cli]` labels show the active value's source; repo overrides take
+precedence over global settings, and environment variables and CLI flags win
+over both. Existing repo overrides are preserved: to use the global value for
+one, select that setting, switch to `this repo`, and press `d` (or tap `d reset`).
+The `t` theme shortcut saves using the Theme setting's chosen scope. Touch works
+for selecting and scrolling; tap a selected row again to change it.
 
 Settings include selection and safety,
 output copies, refresh, notifications, glyphs, mouse and theme. The per-pick

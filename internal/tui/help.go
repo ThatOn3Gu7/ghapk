@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 )
 
 func (m Model) buildHelp() viewport.Model {
@@ -126,9 +126,9 @@ func (m Model) helpLayout() (viewport.Model, []int) {
 	row(keys("R", "dashboard", "R"), "repository picker (recents, yours, GitHub search)")
 	row(keys("B", "dashboard", "B"), "branch picker (filter + default/protected/PR branches)")
 	row(keys("W", "dashboard", "W"), "workflow picker outside Help (filter by name or .yml)")
-	row("Settings pane", fmt.Sprintf("%s changes, %s resets, %s switches save scope", m.keyName("settings", "enter"), m.keyName("settings", "d"), m.keyName("settings", "s")))
+	row("Settings pane", fmt.Sprintf("%s changes, %s resets, %s switches global / repo for the selected setting; tap the scope badge too", m.keyName("settings", "enter"), m.keyName("settings", "d"), m.keyName("settings", "s")))
 	row("Log pane", fmt.Sprintf("scroll with %s / %s or swipe; %s follows, %s copies recent entries", m.keyName("log", "up"), m.keyName("log", "down"), m.keyName("log", "f"), m.keyName("log", "y")))
-	row(keys("t", "dashboard", "t"), "cycle theme")
+	row(keys("t", "dashboard", "t"), "cycle and save theme using its Settings scope")
 	row(keys("D", "dashboard", "D"), "doctor — environment health check")
 	row(keys("?", "dashboard", "?"), "this help")
 

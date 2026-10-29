@@ -5,12 +5,12 @@ import (
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ThatOn3Gu7/ghapk/internal/config"
 	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/theme"
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -186,10 +186,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.openWorkflowPicker()
 
 	case "t":
-		next := theme.Next(m.settings.Theme)
-		m.applyTheme(next)
-		m.toastf("theme: %s", next)
-		return m, nil
+		// The shortcut uses the same scope and persistence as the Theme row.
+		row := SettingRow{Key: "theme", Label: "Theme"}
+		next := theme.Next(m.settingsUI.targetValue(&m, row))
+		cmd := m.settingsUI.changeRow(&m, row, &next)
+		return m, cmd
 
 	case "w":
 		m.settings.Watch = !m.settings.Watch

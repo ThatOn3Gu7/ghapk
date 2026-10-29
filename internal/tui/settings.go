@@ -3,12 +3,13 @@ package tui
 import (
 	"strings"
 
+	"github.com/ThatOn3Gu7/ghapk/internal/config"
+	"github.com/ThatOn3Gu7/ghapk/internal/device"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/ThatOn3Gu7/ghapk/internal/config"
-	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 )
 
 type SettingRow struct {
@@ -55,10 +56,11 @@ type settingsLine struct {
 	row    int
 }
 type SettingsUI struct {
-	cursor, offset               int
-	global, editing, drag, moved bool
-	dragY                        int
-	input                        textinput.Model
+	cursor, offset       int
+	editing, drag, moved bool
+	dragY                int
+	input                textinput.Model
+	scopeOverrides       map[string]bool // true means global; per setting for this session
 }
 
 func NewSettingsUI(m *Model) *SettingsUI {
@@ -87,11 +89,45 @@ func (s *SettingsUI) lineIndex() int {
 	}
 	return 0
 }
-func (s *SettingsUI) scope(m *Model) string {
-	if s.global || m.settings.Repo == "" {
-		return "everywhere"
+
+// Scope defaults follow what the setting describes: repo-specific selection
+// rules stay with a repo; interface, notifications, and policies are global.
+func defaultGlobalScope(key string) bool {
+	switch key {
+	case "branch", "workflow", "source", "artifact", "artifact-pattern", "file", "exclude", "package":
+		return false
+	default:
+		return true
+	}
+}
+func (s *SettingsUI) globalFor(m *Model, key string) bool {
+	if m.settings.Repo == "" {
+		return true
+	}
+	if global, ok := s.scopeOverrides[key]; ok {
+		return global
+	}
+	return defaultGlobalScope(key)
+}
+func (s *SettingsUI) scopeFor(m *Model, key string) string {
+	if s.globalFor(m, key) {
+		return "global"
 	}
 	return "this repo"
+}
+func (s *SettingsUI) scope(m *Model) string {
+	return s.scopeFor(m, settingRows[s.cursor].Key)
+}
+func (s *SettingsUI) targetValue(m *Model, row SettingRow) string {
+	repo := ""
+	if !s.globalFor(m, row.Key) {
+		repo = m.settings.Repo
+		// Picker choices are the current per-repo branch/workflow value.
+		if (row.Key == "branch" || row.Key == "workflow") && s.source(m, row.Key) != "env" && s.source(m, row.Key) != "cli" {
+			return config.Value(m.settings, row.Key)
+		}
+	}
+	return config.Value(config.LoadSavedScope(repo), row.Key)
 }
 func (s *SettingsUI) source(m *Model, key string) string {
 	if _, ok := m.opts.CLIOverrides[key]; ok {
@@ -135,9 +171,11 @@ func (s *SettingsUI) adjust(m *Model) {
 	}
 }
 func (s *SettingsUI) change(m *Model, raw *string) tea.Cmd {
-	row := settingRows[s.cursor]
+	return s.changeRow(m, settingRows[s.cursor], raw)
+}
+func (s *SettingsUI) changeRow(m *Model, row SettingRow, raw *string) tea.Cmd {
 	scope := ""
-	if s.scope(m) == "this repo" {
+	if s.scopeFor(m, row.Key) == "this repo" {
 		scope = m.settings.Repo
 	}
 	if raw != nil {
@@ -152,11 +190,11 @@ func (s *SettingsUI) change(m *Model, raw *string) tea.Cmd {
 		op = "reset"
 	}
 	if err := config.SaveSetting(scope, row.Key, raw); err != nil {
-		m.auditSetting(row.Key, s.scope(m), "save failed")
+		m.auditSetting(row.Key, s.scopeFor(m, row.Key), "save failed")
 		m.toastf("save failed: %s", err)
 		return nil
 	}
-	m.auditSetting(row.Key, s.scope(m), op)
+	m.auditSetting(row.Key, s.scopeFor(m, row.Key), op)
 	isFilter := row.Key == "branch" || row.Key == "workflow"
 	preserveSelection := isFilter && scope == "" && config.HasRepoSetting(m.settings.Repo, row.Key)
 	if isFilter && m.settings.Repo != "" && !preserveSelection {
@@ -181,7 +219,7 @@ func (s *SettingsUI) change(m *Model, raw *string) tea.Cmd {
 	if (scope == "" && src == "repo") || src == "env" || src == "cli" {
 		m.toastf("saved; %s override is active", src)
 	} else {
-		m.toastf("saved %s (%s)", row.Label, s.scope(m))
+		m.toastf("saved %s (%s)", row.Label, s.scopeFor(m, row.Key))
 	}
 	switch row.Key {
 	case "theme", "glyphs":
@@ -199,7 +237,11 @@ func (s *SettingsUI) change(m *Model, raw *string) tea.Cmd {
 		m.workflowSel = m.settings.Workflow
 		m.selectWorkflowOption(m.workflowSel)
 	case "package":
-		m.instPkg = m.settings.PackageName
+		if m.instPkg != m.settings.PackageName {
+			m.instPkg = m.settings.PackageName
+			m.instApp = device.InstalledApp{}
+			m.instFound = false
+		}
 		return queryPackageCmd(m.instPkg)
 	case "auto-refresh", "watch":
 		m.refreshSecs = m.settings.AutoRefreshSecs
@@ -255,14 +297,19 @@ func (s *SettingsUI) handleKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 		if m.settings.Repo == "" {
 			m.toastf("select a repo for repo-specific settings")
 		} else {
-			s.global = !s.global
+			key := settingRows[s.cursor].Key
+			if s.scopeOverrides == nil {
+				s.scopeOverrides = make(map[string]bool)
+			}
+			s.scopeOverrides[key] = !s.globalFor(m, key)
+			m.toastf("%s: save to %s", settingRows[s.cursor].Label, s.scope(m))
 		}
 	case "d":
 		cmd := s.change(m, nil)
 		return *m, cmd
 	case "enter", " ", "right", "l", "left", "h":
 		row := settingRows[s.cursor]
-		cur := config.Value(m.settings, row.Key)
+		cur := s.targetValue(m, row)
 		if row.Kind == "text" || row.Kind == "int" {
 			s.editing = true
 			s.input.SetValue(cur)
@@ -352,15 +399,24 @@ func (s *SettingsUI) render(m *Model, h int) string {
 		}
 		list = append(list, line)
 	}
-	listBox := components.Panel{Title: "Settings", Badge: "saving: " + s.scope(m), Focused: true, Width: listW, Height: listH, Content: strings.Join(list, "\n")}.Render(m.st)
+	listBox := components.Panel{Title: "Settings", Badge: "save: " + s.scope(m), Focused: true, Width: listW, Height: listH, Content: strings.Join(list, "\n")}.Render(m.st)
 	row := settingRows[s.cursor]
-	detail := "  " + m.st.Bold.Render(row.Label) + "\n" + ansi.Wrap("  "+row.Hint, max(1, innerW-2), "") + "\n  default: " + config.Value(config.Defaults(), row.Key)
+	target := s.targetValue(m, row)
+	if target == "" {
+		target = "—"
+	}
+	source := sources[row.Key]
+	if source == "" {
+		source = "default"
+	}
+	summary := "  save " + s.scope(m) + ": " + target + "\n  active [" + source + "]: " + s.value(m, row)
+	detail := "  " + m.st.Bold.Render(row.Label) + "\n" + summary + "\n" + ansi.Wrap("  "+row.Hint, max(1, innerW-2), "") + "\n  default: " + config.Value(config.Defaults(), row.Key)
 	if len(row.Values) > 0 {
 		detail += "\n  choices: " + strings.Join(row.Values, ", ")
 	}
 	if wide {
 		dw := w - listW
-		detail = "  " + row.Label + "\n" + ansi.Wrap("  "+row.Hint, max(1, dw-4), "") + "\n  default: " + config.Value(config.Defaults(), row.Key)
+		detail = "  " + row.Label + "\n" + summary + "\n" + ansi.Wrap("  "+row.Hint, max(1, dw-4), "") + "\n  default: " + config.Value(config.Defaults(), row.Key)
 		if len(row.Values) > 0 {
 			detail += "\n" + ansi.Wrap("  choices: "+strings.Join(row.Values, ", "), max(1, dw-4), "")
 		}

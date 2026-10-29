@@ -268,6 +268,12 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.activeTab() == PanelSettings && !m.settingsUI.editing {
 		s := m.settingsUI
+		// The save-scope badge is also tappable, in addition to the footer hint.
+		badgeStart := 2 + components.VisibleWidth(" Settings ")
+		badgeEnd := badgeStart + components.VisibleWidth("save: "+s.scope(&m))
+		if msg.Type == tea.MouseLeft && msg.Action == tea.MouseActionPress && msg.Y == 2 && msg.X >= badgeStart && msg.X < badgeEnd {
+			return s.handleKey(hintKey("s"), &m)
+		}
 		if msg.Y >= 3 && msg.Y < 3+s.listHeight(&m) && (m.width < 96 || msg.X < m.width*58/100) {
 			switch msg.Type {
 			case tea.MouseWheelUp:

@@ -103,6 +103,25 @@ func oneOf(v string, options ...string) bool {
 	return false
 }
 
+// LoadSavedScope returns the value to edit at a particular scope, before
+// environment and CLI overrides. An empty repo means the global layer only.
+func LoadSavedScope(repo string) Settings {
+	s := Defaults()
+	global := readKV(globalPath())
+	safe, _ := SanitizeUntrustedRepoConfig(readKV(".ghapk.conf"))
+	seen := map[string]bool{}
+	for k := range global {
+		seen[k] = true
+	}
+	applyUntrustedHints(&s, safe, seen)
+	applyTop(&s, global)
+	if validRepoHint(repo) {
+		applyTop(&s, readKV(RepoPath(repo)))
+		s.Repo = repo
+	}
+	return s
+}
+
 // SettingSource identifies trusted precedence; workspace hints are lowest.
 func SettingSources(repo string) map[string]string {
 	sources := map[string]string{}

@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ThatOn3Gu7/ghapk/internal/config"
 	"github.com/ThatOn3Gu7/ghapk/internal/score"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/theme"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func rowIndex(key string) int {
@@ -25,34 +25,36 @@ func TestSettingsPanelScopesResetAndPrecedence(t *testing.T) {
 	m := buildModel(t, 40, 24)
 	m.focus = PanelSettings
 	m.settingsUI.cursor = rowIndex("theme")
-	mm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = mm.(Model)
-	if m.settings.Theme != "mocha" || config.LoadForRepo(m.settings.Repo).Theme != "mocha" {
-		t.Fatalf("repo save not applied: %s", m.settings.Theme)
+	if m.settingsUI.scope(&m) != "global" {
+		t.Fatal("theme must default to global")
 	}
-	mm, _ = m.Update(key("s"))
-	m = mm.(Model)
-	mm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = mm.(Model)
-	if config.Load().Theme != "emerald" || m.settings.Theme != "mocha" {
-		t.Fatalf("global vs repo precedence: global %s active %s", config.Load().Theme, m.settings.Theme)
+	m = updateKey(t, m, "enter")
+	if m.settings.Theme != "mocha" || config.LoadForRepo("other/repo").Theme != "mocha" || config.HasRepoSetting(m.settings.Repo, "theme") {
+		t.Fatalf("global theme not applied: %s", m.settings.Theme)
 	}
-	mm, _ = m.Update(key("s"))
-	m = mm.(Model)
-	mm, _ = m.Update(key("d"))
-	m = mm.(Model)
-	if m.settings.Theme != "emerald" {
+	m = updateKey(t, m, "s")
+	m = updateKey(t, m, "enter")
+	if config.LoadSavedScope("").Theme != "mocha" || m.settings.Theme != "emerald" {
+		t.Fatalf("repo override: global %s active %s", config.LoadSavedScope("").Theme, m.settings.Theme)
+	}
+	m = updateKey(t, m, "s")
+	m = updateKey(t, m, "enter") // global mocha -> emerald
+	m = updateKey(t, m, "enter") // global emerald -> paper, despite repo override
+	if config.LoadSavedScope("").Theme != "paper" || m.settings.Theme != "emerald" || !strings.Contains(m.toast, "repo override") {
+		t.Fatalf("global vs repo precedence: global %s active %s, %s", config.LoadSavedScope("").Theme, m.settings.Theme, m.toast)
+	}
+	m = updateKey(t, m, "s")
+	m = updateKey(t, m, "d")
+	if m.settings.Theme != "paper" {
 		t.Fatalf("reset did not reveal global: %s", m.settings.Theme)
 	}
-	t.Setenv("GHAPK_THEME", "paper")
-	mm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = mm.(Model)
-	if m.settings.Theme != "paper" || !strings.Contains(m.toast, "env override") {
+	t.Setenv("GHAPK_THEME", "mocha")
+	m = updateKey(t, m, "enter")
+	if m.settings.Theme != "mocha" || !strings.Contains(m.toast, "env override") {
 		t.Fatalf("env override ignored: %s %s", m.settings.Theme, m.toast)
 	}
 	m.opts.CLIOverrides = map[string]string{"theme": "action"}
-	mm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = mm.(Model)
+	m = updateKey(t, m, "enter")
 	if m.settings.Theme != "action" || !strings.Contains(m.toast, "cli override") {
 		t.Fatalf("cli override ignored: %s %s", m.settings.Theme, m.toast)
 	}

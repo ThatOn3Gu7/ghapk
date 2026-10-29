@@ -75,3 +75,31 @@ func TestNewSettingsValidationAndUntrustedBoundary(t *testing.T) {
 		t.Fatalf("untrusted settings applied: %+v %v", s, blocked)
 	}
 }
+
+func TestLoadSavedScopeIgnoresHigherOverrides(t *testing.T) {
+	t.Setenv("GHAPK_CONFIG_DIR", t.TempDir())
+	t.Setenv("GHAPK_REPO", "other/repo")
+	t.Setenv("GHAPK_THEME", "action")
+	global, local := "mocha", "paper"
+	if err := SaveSetting("", "theme", &global); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSetting("acme/one", "theme", &local); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadSavedScope("").Theme; got != "mocha" {
+		t.Fatalf("global edit target = %q", got)
+	}
+	if got := LoadSavedScope("acme/one").Theme; got != "paper" {
+		t.Fatalf("repo edit target = %q", got)
+	}
+	if got := LoadForRepo("acme/one").Theme; got != "action" {
+		t.Fatalf("environment effective value = %q", got)
+	}
+	if err := SaveSetting("acme/one", "theme", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := LoadSavedScope("acme/one").Theme; got != "mocha" {
+		t.Fatalf("reset inherited = %q", got)
+	}
+}

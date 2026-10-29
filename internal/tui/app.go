@@ -379,6 +379,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			v.refreshSeq++
 			cmd = tea.Batch(cmd, refreshTickCmd(v.effectiveRefreshSecs(), v.refreshSeq))
 		}
+		if v.settings.Repo != m.settings.Repo {
+			if v.settings.Mouse != m.settings.Mouse {
+				if v.settings.Mouse {
+					cmd = tea.Batch(cmd, tea.EnableMouseCellMotion)
+				} else {
+					cmd = tea.Batch(cmd, tea.DisableMouse)
+				}
+			}
+			if v.instPkg != m.instPkg && v.instPkg != "" {
+				cmd = tea.Batch(cmd, queryPackageCmd(v.instPkg))
+			}
+		}
 		if v.focus != m.focus || v.settings.Repo != m.settings.Repo || (m.deviceHistoryLoaded && !v.deviceHistoryLoaded) || (m.deviceHistoryLoading && !v.deviceHistoryLoading) {
 			cmd = tea.Batch(cmd, v.ensureDeviceHistory())
 		}
@@ -395,6 +407,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.effectiveRefreshSecs() != m.effectiveRefreshSecs() && v.refreshSeq == m.refreshSeq {
 			v.refreshSeq++
 			cmd = tea.Batch(cmd, refreshTickCmd(v.effectiveRefreshSecs(), v.refreshSeq))
+		}
+		if v.settings.Repo != m.settings.Repo {
+			if v.settings.Mouse != m.settings.Mouse {
+				if v.settings.Mouse {
+					cmd = tea.Batch(cmd, tea.EnableMouseCellMotion)
+				} else {
+					cmd = tea.Batch(cmd, tea.DisableMouse)
+				}
+			}
+			if v.instPkg != m.instPkg && v.instPkg != "" {
+				cmd = tea.Batch(cmd, queryPackageCmd(v.instPkg))
+			}
 		}
 		if v.focus != m.focus || v.settings.Repo != m.settings.Repo || (m.deviceHistoryLoaded && !v.deviceHistoryLoaded) || (m.deviceHistoryLoading && !v.deviceHistoryLoading) {
 			cmd = tea.Batch(cmd, v.ensureDeviceHistory())
@@ -993,19 +1017,22 @@ func startupRepo(opts Options) (string, error) {
 	return repo, selectionErr
 }
 
-// prepareStartupGlyphs loads the restored repo's effective glyph preference
-// before Bubble Tea renders anything. Other repo settings are still applied
-// when the dashboard is bootstrapped after authentication.
+// prepareStartupGlyphs loads the restored repo's interface preferences before
+// Bubble Tea renders anything or enables mouse reporting.
 func prepareStartupGlyphs(opts Options) Options {
 	repo, _ := startupRepo(opts)
 	if repo == "" {
 		return opts
 	}
 	settings := config.LoadForRepo(repo)
-	if value, ok := opts.CLIOverrides["glyphs"]; ok {
-		_ = config.SetValue(&settings, "glyphs", value)
+	for _, key := range []string{"glyphs", "theme", "mouse"} {
+		if value, ok := opts.CLIOverrides[key]; ok {
+			_ = config.SetValue(&settings, key, value)
+		}
 	}
 	opts.Settings.Glyphs = settings.Glyphs
+	opts.Settings.Theme = settings.Theme
+	opts.Settings.Mouse = settings.Mouse
 	return opts
 }
 
@@ -1046,8 +1073,7 @@ func (m *Model) bootstrapDashboard() tea.Cmd {
 }
 
 // setRepo switches the active repository, invalidating cached data.
-// Per-repo config re-applies on top, but session-live choices
-// (theme, watch) survive.
+// Per-repo overrides are applied on top of global settings.
 func (m *Model) setRepo(repo string, persist bool) error {
 	m.navRepo = ""
 	m.repoBranchFocused = false
@@ -1087,6 +1113,11 @@ func (m *Model) setRepo(repo string, persist bool) error {
 	}
 	m.applyTheme(m.settings.Theme)
 	m.refreshSecs = m.settings.AutoRefreshSecs
+	if m.instPkg != m.settings.PackageName {
+		m.instPkg = m.settings.PackageName
+		m.instApp = device.InstalledApp{}
+		m.instFound = false
+	}
 	m.branchSel = m.settings.Branch
 	m.workflowSel = m.settings.Workflow
 	m.branchLoading = true
