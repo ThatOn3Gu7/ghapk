@@ -56,6 +56,7 @@ type jobEventMsg struct {
 	meta       apk.Inspection
 	status     string
 	handoff    bool
+	transient  bool // raw installer output is displayed but not persisted
 }
 type jobQuestionMsg struct {
 	id      int
@@ -98,6 +99,9 @@ func waitJob(ch <-chan tea.Msg) tea.Cmd {
 }
 func (m *Model) startJob(spec jobSpec) tea.Cmd {
 	m.nextJobID++
+	if m.activity != nil {
+		_ = m.activity.Write("job", fmt.Sprintf("job #%d started: %s (install=%t)", m.nextJobID, spec.choice.name(), spec.install))
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	j := &downloadJob{id: m.nextJobID, spec: spec, ctx: ctx, cancel: cancel, events: make(chan tea.Msg, 64), status: "running", phase: "Queued", started: time.Now()}
 	m.jobs = append(m.jobs, j)
@@ -454,7 +458,9 @@ func runJob(id int, ctx context.Context, s jobSpec, ch chan tea.Msg) {
 	}
 	emit("Installer", "Handing APK to Android installer; cancellation cannot undo handoff")
 	result.handoff = true
-	res, err := device.InstallAPKContext(ctx, path, allow, func(line string) { emit("", line) })
+	res, err := device.InstallAPKContext(ctx, path, allow, func(line string) {
+		emitJob(ctx, ch, jobEventMsg{id: id, log: line, transient: true})
+	})
 	if err != nil {
 		fail(err)
 		return
@@ -751,6 +757,9 @@ func (m *Model) answerJobQuestion(choice int) {
 	j := m.jobByID(m.jobQuestionID)
 	m.jobQuestionID = 0
 	if j != nil && j.question != nil {
+		if m.activity != nil && choice >= 0 && choice < len(j.question.options) {
+			_ = m.activity.Write("choice", fmt.Sprintf("job #%d: %s", j.id, j.question.options[choice]))
+		}
 		j.question.reply <- choice
 		j.question = nil
 		if j.ctx.Err() != nil {

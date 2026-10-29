@@ -247,7 +247,7 @@ get ONLY
       --dry-run            resolve and print the plan, fetch nothing
       --print-path         print where the APK would land
 
-IN THE TUI press ? for the full key list; Settings is the sixth panel.
+IN THE TUI press ? for the full key list; Settings is the fifth panel; Log is the seventh.
 Config: ~/.config/ghapk/config and repos/<owner>_<repo>.conf
 (KEY=VALUE lines — same format as the original script).`))
 }

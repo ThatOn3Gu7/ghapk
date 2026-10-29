@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/ghapk/ghapk/internal/activity"
 )
 
 // Notify sends a completion notification through Termux:API when installed.
@@ -32,7 +34,7 @@ func Notify(policy string, speak, toast, success bool, title, message string) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		_ = exec.CommandContext(ctx, p, args...).Run()
+		_ = activity.CommandContext(ctx, p, args...).Run()
 	}
 	title = strings.ReplaceAll(title, "\x00", "")
 	message = strings.ReplaceAll(message, "\x00", "")

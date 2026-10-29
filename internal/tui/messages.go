@@ -11,6 +11,8 @@ import (
 	"github.com/ghapk/ghapk/internal/apk"
 	"github.com/ghapk/ghapk/internal/device"
 	"github.com/ghapk/ghapk/internal/ghapi"
+
+	"github.com/ghapk/ghapk/internal/activity"
 )
 
 // ───────────────────────────── messages ─────────────────────────────
@@ -213,11 +215,11 @@ func fetchLocalBranchesCmd(repo string) tea.Cmd {
 		result := LocalBranchesMsg{Repo: repo}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		out, err := exec.CommandContext(ctx, "git", "remote", "get-url", "origin").Output()
+		out, err := activity.CommandContext(ctx, "git", "remote", "get-url", "origin").Output()
 		if err != nil || !strings.EqualFold(parseGitRemote(string(out)), repo) {
 			return result
 		}
-		out, err = exec.CommandContext(ctx, "git", "for-each-ref", "--format=%(refname:short)", "refs/heads/").Output()
+		out, err = activity.CommandContext(ctx, "git", "for-each-ref", "--format=%(refname:short)", "refs/heads/").Output()
 		if err != nil {
 			return result
 		}
@@ -416,7 +418,10 @@ func openURL(url string) tea.Cmd {
 			{"am", "start", "-a", "android.intent.action.VIEW", "-d", url},
 		} {
 			if _, err := exec.LookPath(c[0]); err == nil {
-				_ = exec.Command(c[0], c[1:]...).Start()
+				cmd := activity.Command(c[0], c[1:]...)
+				if err := cmd.Start(); err == nil {
+					go func() { _ = cmd.Wait() }()
+				}
 				return nil
 			}
 		}
@@ -441,7 +446,7 @@ func shimmerTickCmd() tea.Cmd {
 
 func detectGitRepoCmd() tea.Cmd {
 	return func() tea.Msg {
-		out, err := exec.Command("git", "remote", "get-url", "origin").Output()
+		out, err := activity.Command("git", "remote", "get-url", "origin").Output()
 		if err != nil {
 			return nil
 		}

@@ -7,10 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/ghapk/ghapk/internal/activity"
 )
 
 // InstallOutcome distinguishes positively confirmed installation from an
@@ -315,7 +316,7 @@ func firstMatchingLine(out, needleLower string) string {
 }
 
 func defaultInstallExec(ctx context.Context, name string, args []string, onLine func(string)) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := activity.CommandContext(ctx, name, args...)
 	cmd.WaitDelay = time.Second
 	pr, pw := io.Pipe()
 	cmd.Stdout = pw

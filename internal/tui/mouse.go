@@ -138,6 +138,17 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.screen != ScreenDashboard {
 		return m, nil
 	}
+	if m.logState.dragging {
+		if msg.Action == tea.MouseActionRelease || msg.Type == tea.MouseRelease {
+			m.logState.dragging = false
+			return m, nil
+		}
+		if msg.Action == tea.MouseActionMotion && msg.Button == tea.MouseButtonLeft {
+			m.scrollLog(m.logState.dragY - msg.Y)
+			m.logState.dragY = msg.Y
+			return m, nil
+		}
+	}
 	if m.settingsUI != nil && m.settingsUI.drag {
 		if msg.Action == tea.MouseActionRelease || msg.Type == tea.MouseRelease {
 			s := m.settingsUI
@@ -232,6 +243,25 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				m.wfYAMLFocused = false
 				m.buildDetail = false
 				m.updateListBounds()
+				return m, nil
+			}
+		}
+	}
+	if m.activeTab() == PanelLog {
+		r := m.panelRects()[PanelLog]
+		if r.contains(msg.X, msg.Y) && msg.Y > r.y && msg.Y < r.y+r.h-1 {
+			switch msg.Type {
+			case tea.MouseWheelUp:
+				m.scrollLog(-3)
+				return m, nil
+			case tea.MouseWheelDown:
+				m.scrollLog(3)
+				return m, nil
+			case tea.MouseLeft:
+				if msg.Action == tea.MouseActionPress {
+					m.logState.dragging = true
+					m.logState.dragY = msg.Y
+				}
 				return m, nil
 			}
 		}

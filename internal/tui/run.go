@@ -4,12 +4,27 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/ghapk/ghapk/internal/activity"
+	"github.com/ghapk/ghapk/internal/config"
 )
 
 // Run launches the interactive interface in the alternate screen buffer.
 // When the user quits, the terminal is restored untouched — the shell is
 // exactly where they left it, the way lazygit exits.
 func Run(opts Options) error {
+	store, logErr := activity.Open(config.Dir(), activity.DefaultMaxBytes)
+	if logErr != nil {
+		opts.LogError = logErr.Error()
+	} else {
+		opts.Activity = store
+		activity.SetActive(store)
+	}
+	defer func() {
+		activity.SetActive(nil)
+		if store != nil {
+			_ = store.Close()
+		}
+	}()
 	m := New(opts)
 	options := []tea.ProgramOption{tea.WithAltScreen()}
 	if opts.Settings.Mouse {

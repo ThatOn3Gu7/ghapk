@@ -191,6 +191,11 @@ func (m Model) statusBar() components.StatusBar {
 					add("→/v", "view yaml", "right")
 				}
 			}
+		case PanelLog:
+			add("f", "follow", "f")
+			add("y", "copy", "y")
+			add("↑", "up", "up")
+			add("↓", "down", "down")
 		case PanelSettings:
 			add("↵", "change", "enter")
 			add("d", "reset", "d")
@@ -275,6 +280,8 @@ func (m Model) renderCompact(h int) string {
 		return tabBar + "\n" + m.renderBuilds()
 	case PanelDownloads:
 		return tabBar + "\n" + m.renderDownloads()
+	case PanelLog:
+		return tabBar + "\n" + m.renderLog(bodyH)
 	case PanelSettings:
 		if m.settingsUI == nil {
 			m.settingsUI = NewSettingsUI(&m)
@@ -301,10 +308,14 @@ func (m Model) tabLabels() (map[PanelID]string, bool) {
 	if total+2 <= m.width {
 		return labels, false
 	}
-	labels = map[PanelID]string{PanelRepos: "1 Repo", PanelRuns: "3 Build", PanelWorkflows: "2 Flow", PanelDownloads: "4 DL", PanelDevice: "5 Dev", PanelSettings: "6 Set"}
-	if m.width < 41 {
-		labels = map[PanelID]string{PanelRepos: "1 Rp", PanelWorkflows: "2 Fl", PanelRuns: "3 Bd", PanelDownloads: "4 Dl", PanelDevice: "5 Dv", PanelSettings: "6 St"}
+	labels = map[PanelID]string{PanelRepos: "1 Repo", PanelWorkflows: "2 Flow", PanelRuns: "3 Build", PanelDownloads: "4 DL", PanelSettings: "5 Set", PanelDevice: "6 Dev", PanelLog: "7 Log"}
+	if m.width < 48 {
+		labels = map[PanelID]string{PanelRepos: "1 Rp", PanelWorkflows: "2 Fl", PanelRuns: "3 Bd", PanelDownloads: "4 Dl", PanelSettings: "5 St", PanelDevice: "6 Dv", PanelLog: "7 Lg"}
 	}
+	if m.width < 36 {
+		labels = map[PanelID]string{PanelRepos: "1Rp", PanelWorkflows: "2Fl", PanelRuns: "3Bd", PanelDownloads: "4Dl", PanelSettings: "5St", PanelDevice: "6Dv", PanelLog: "7Lg"}
+	}
+
 	return labels, false
 }
 
@@ -373,6 +384,8 @@ func panelShort(p PanelID) string {
 		return "Downloads"
 	case PanelSettings:
 		return "Settings"
+	case PanelLog:
+		return "Log"
 	default:
 		return "Device"
 	}

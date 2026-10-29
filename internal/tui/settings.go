@@ -147,10 +147,16 @@ func (s *SettingsUI) change(m *Model, raw *string) tea.Cmd {
 			return nil
 		}
 	}
+	op := "changed"
+	if raw == nil {
+		op = "reset"
+	}
 	if err := config.SaveSetting(scope, row.Key, raw); err != nil {
+		m.auditSetting(row.Key, s.scope(m), "save failed")
 		m.toastf("save failed: %s", err)
 		return nil
 	}
+	m.auditSetting(row.Key, s.scope(m), op)
 	isFilter := row.Key == "branch" || row.Key == "workflow"
 	preserveSelection := isFilter && scope == "" && config.HasRepoSetting(m.settings.Repo, row.Key)
 	if isFilter && m.settings.Repo != "" && !preserveSelection {

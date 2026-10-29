@@ -13,6 +13,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/ghapk/ghapk/internal/activity"
 )
 
 var (
@@ -46,13 +48,13 @@ func AuthStatus() (user string, err error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", "auth", "status")
+	cmd := activity.CommandContext(ctx, "gh", "auth", "status")
 	if out, err2 := cmd.CombinedOutput(); err2 != nil {
 		return "", fmt.Errorf("%w: %s", ErrNoAuth, firstLine(string(out)))
 	}
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel2()
-	cmd = exec.CommandContext(ctx2, "gh", "api", "user", "--jq", ".login")
+	cmd = activity.CommandContext(ctx2, "gh", "api", "user", "--jq", ".login")
 	out, err2 := cmd.Output()
 	if err2 != nil {
 		return "", ErrNoAuth
@@ -79,7 +81,7 @@ func api(v any, timeout time.Duration, endpoint string, args ...string) error {
 	full := append([]string{"api", endpoint}, args...)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", full...)
+	cmd := activity.CommandContext(ctx, "gh", full...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -109,7 +111,7 @@ func rawAPI(timeout time.Duration, endpoint string, args ...string) (string, err
 	full := append([]string{"api", endpoint}, args...)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", full...)
+	cmd := activity.CommandContext(ctx, "gh", full...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -126,7 +128,7 @@ func rawAPI(timeout time.Duration, endpoint string, args ...string) (string, err
 func quickCmd(timeout time.Duration, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := activity.CommandContext(ctx, name, args...)
 	out, err := cmd.Output()
 	return strings.TrimSpace(string(out)), err
 }

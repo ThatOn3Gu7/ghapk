@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ghapk/ghapk/internal/activity"
 	"github.com/ghapk/ghapk/internal/apk"
 	"github.com/ghapk/ghapk/internal/score"
 )
@@ -322,7 +323,7 @@ func streamWithOpts(opts streamOpts, endpoint, dest string, expected int64, prog
 		}
 		ctx, cancel := context.WithTimeout(parent, 30*time.Minute)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, opts.ghBin, ghArgs...)
+		cmd := activity.CommandContext(ctx, opts.ghBin, ghArgs...)
 		cmd.WaitDelay = time.Second
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {

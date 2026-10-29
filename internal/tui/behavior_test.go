@@ -87,7 +87,7 @@ func TestMouseCompactTabs(t *testing.T) {
 // The tab cycle must match the visual order of the compact tabs:
 // repos → flows → builds → downloads → device. Artifacts live inside Builds.
 func TestFocusRingOrder(t *testing.T) {
-	want := []PanelID{PanelRepos, PanelWorkflows, PanelRuns, PanelDownloads, PanelDevice, PanelSettings}
+	want := []PanelID{PanelRepos, PanelWorkflows, PanelRuns, PanelDownloads, PanelSettings, PanelDevice, PanelLog}
 	if len(FocusOrder) != len(want) {
 		t.Fatalf("FocusOrder len = %d", len(FocusOrder))
 	}

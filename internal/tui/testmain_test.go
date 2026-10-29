@@ -14,6 +14,8 @@ func TestMain(m *testing.M) {
 	for _, key := range []string{"GHAPK_CONFIG_DIR", "GHAPK_REPO", "GHAPK_BRANCH", "GHAPK_WORKFLOW"} {
 		_ = os.Unsetenv(key)
 	}
+	_ = os.Setenv("TERM", "xterm-256color")
+	_ = os.Setenv("GHAPK_ASCII", "")
 	_ = os.Setenv("XDG_CONFIG_HOME", dir)
 	_ = os.Setenv("GHAPK_CACHE_DIR", filepath.Join(dir, "cache"))
 	_ = os.Setenv("GHAPK_HISTORY", filepath.Join(dir, "history.json"))

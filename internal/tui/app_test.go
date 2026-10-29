@@ -133,10 +133,10 @@ func TestHelpAndSettings(t *testing.T) {
 	if mo.modal != ModalNone {
 		t.Fatal("s opened an overlay")
 	}
-	mm, _ = mo.Update(key("6"))
+	mm, _ = mo.Update(key("5"))
 	mo = mm.(Model)
 	if mo.focus != PanelSettings || mo.modal != ModalNone {
-		t.Fatal("6 did not open settings pane")
+		t.Fatal("5 did not open settings pane")
 	}
 	if !strings.Contains(mo.View(), "Settings") {
 		t.Error("settings pane missing")
