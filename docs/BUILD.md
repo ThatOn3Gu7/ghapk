@@ -119,8 +119,8 @@ The release workflow runs for `v*` tags or by manual dispatch on the desired tar
 notes at `docs/releases/<tag>.md` before tagging. It builds the same six targets,
 packages the checked-out source, and includes its SHA-256 in `sha256sums.txt`.
 If a release for that tag already exists, the workflow leaves it and its assets
-untouched by default. To upload to an existing draft, use manual dispatch with
-`upload_draft` enabled; the draft must target the exact commit being built.
+untouched by default. A tag push can upload to a draft targeting that exact
+commit; for manual dispatch, enable `upload_draft` and target that same commit.
 Published releases are never overwritten. For a manual
 release, build from the exact committed target, add a source archive and its
 checksum, then use `gh release create` with `--target` and `--notes-file`.
