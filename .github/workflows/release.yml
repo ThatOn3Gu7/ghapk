@@ -88,12 +88,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
           UPLOAD_DRAFT: ${{ inputs.upload_draft }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           existing=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
             --jq '.[] | select(.tag_name == env.TAG) | if .draft then "draft:" + .target_commitish else "published" end')
           if [ -z "$existing" ]; then
             echo "upload=true" >> "$GITHUB_OUTPUT"
-          elif [ "$existing" = "draft:$GITHUB_SHA" ] && [ "$UPLOAD_DRAFT" = "true" ]; then
+          elif [ "$existing" = "draft:$GITHUB_SHA" ] && { [ "$UPLOAD_DRAFT" = "true" ] || [ "$EVENT_NAME" = "push" ]; }; then
             echo "upload=true" >> "$GITHUB_OUTPUT"
           else
             echo "Existing release left untouched: $existing"
