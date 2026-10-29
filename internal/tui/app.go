@@ -204,6 +204,12 @@ type Model struct {
 	downloadTouchLastY, downloadTouchArea, downloadTouchIndex int
 	downloadTouchWasFocused                                   bool
 	jobQuestionID                                             int
+	jobQuestionScroll                                         int
+	jobQuestionTouch, jobQuestionMoved                        bool
+	jobQuestionTouchY, jobQuestionTouchChoice                 int
+	installBaselineFound, installBaselineQueryable            bool
+	installBaselineCode                                       int64
+	installBaselinePackage                                    string
 	// task progress channel (kept so we can re-arm waitProgress)
 	progCh chan tea.Msg
 	logCh  chan tea.Msg
@@ -737,8 +743,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		var cmds []tea.Cmd
 		meta := m.downloadedAPK.Meta
-		pkg := m.instPkg
-		if pkg == "" && meta.HaveInfo {
+		pkg := ""
+		if meta.HaveInfo {
 			pkg = meta.Info.Package
 			m.instPkg = pkg
 		}
@@ -751,7 +757,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case msg.Result.Outcome == device.OutcomeLaunched:
 			m.toastf("installer launched (%s) — confirm on device", msg.Result.Via)
-			if m.settings.VerifyInstall && pkg != "" && meta.HaveInfo {
+			if m.settings.VerifyInstall && pkg != "" && meta.HaveInfo && m.installBaselineQueryable && !(m.installBaselineFound && m.installBaselinePackage == pkg && (m.installBaselineCode <= 0 || meta.Info.VersionCode <= 0 || m.installBaselineCode == meta.Info.VersionCode)) {
 				cmds = append(cmds, verifyInstallCmd(pkg, meta.Info.VersionCode, 30*time.Second))
 			}
 		default:

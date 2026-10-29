@@ -2,6 +2,9 @@ package device
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/hex"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -26,6 +29,7 @@ var (
 	reVName    = regexp.MustCompile(`versionName=([^\s]+)`)
 	reCodePath = regexp.MustCompile(`codePath=([^\s]+)`)
 	reCertHex  = regexp.MustCompile(`(?i)(?:sha-?256[:=\s]+|cert(?:ificate)?[:=\s]+)([0-9a-f]{64}|(?:[0-9a-f]{2}:){31}[0-9a-f]{2})`)
+	reSigDER   = regexp.MustCompile(`(?i)signatures:\s*\[([0-9a-f]+)\]`)
 	rePkg      = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$`)
 )
 
@@ -61,6 +65,10 @@ func QueryPackageContext(ctx context.Context, pkg string) (InstalledApp, bool) {
 		)
 	}
 	cmds = append(cmds, probeCmd{"adb", []string{"shell", "dumpsys", "package", pkg}})
+	if onAndroid {
+		cmds = append(cmds, probeCmd{"rish", []string{"-c", "pm list packages --show-versioncode " + pkg}}, probeCmd{"pm", []string{"list", "packages", "--show-versioncode", pkg}})
+	}
+	cmds = append(cmds, probeCmd{"adb", []string{"shell", "pm", "list", "packages", "--show-versioncode", pkg}})
 
 	queryable := false
 	for _, c := range cmds {
@@ -83,6 +91,9 @@ func QueryPackageContext(ctx context.Context, pkg string) (InstalledApp, bool) {
 			queryable = true
 		}
 		app, found := parseDumpsysPackage(pkg, out)
+		if strings.Contains(strings.Join(c.args, " "), "list packages") {
+			app, found = parsePackageList(pkg, out)
+		}
 		if found {
 			app.Queryable = true
 			if app.CertSHA256 == "" && onAndroid {
@@ -92,6 +103,25 @@ func QueryPackageContext(ctx context.Context, pkg string) (InstalledApp, bool) {
 		}
 	}
 	return InstalledApp{Package: pkg, Queryable: queryable}, false
+}
+
+// A filtered pm list can include similarly named packages. Only an exact
+// package line is evidence, and an empty list is not proof of absence.
+func parsePackageList(pkg, out string) (InstalledApp, bool) {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != "package:"+pkg {
+			continue
+		}
+		app := InstalledApp{Package: pkg}
+		for _, field := range fields[1:] {
+			if strings.HasPrefix(field, "versionCode:") {
+				app.VersionCode, _ = strconv.ParseInt(strings.TrimPrefix(field, "versionCode:"), 10, 64)
+			}
+		}
+		return app, true
+	}
+	return InstalledApp{Package: pkg}, false
 }
 
 func parseDumpsysPackage(pkg, out string) (InstalledApp, bool) {
@@ -113,6 +143,16 @@ func parseDumpsysPackage(pkg, out string) (InstalledApp, bool) {
 	var certSHA string
 	if cm := reCertHex.FindStringSubmatch(out); len(cm) >= 2 {
 		certSHA = strings.ToLower(strings.ReplaceAll(cm[1], ":", ""))
+	}
+	if certSHA == "" {
+		if m := reSigDER.FindStringSubmatch(out); len(m) == 2 && len(m[1]) >= 64 && len(m[1]) <= 32768 {
+			if der, err := hex.DecodeString(m[1]); err == nil {
+				if _, err = x509.ParseCertificate(der); err == nil {
+					sum := sha256.Sum256(der)
+					certSHA = hex.EncodeToString(sum[:])
+				}
+			}
+		}
 	}
 	return InstalledApp{
 		Package:     pkg,

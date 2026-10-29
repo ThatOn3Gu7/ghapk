@@ -58,16 +58,20 @@ type jobEventMsg struct {
 	handoff    bool
 }
 type jobQuestionMsg struct {
-	id     int
-	safety apk.SafetyAssessment
-	reply  chan bool
+	id      int
+	title   string
+	body    []string
+	options []string
+	danger  int // index of destructive option; -1 when none
+	reply   chan int
 }
 type jobFinishedMsg struct {
-	id           int
-	err          error
-	status, path string
-	meta         apk.Inspection
-	handoff      bool
+	id               int
+	err              error
+	status, path     string
+	meta             apk.Inspection
+	handoff          bool
+	uninstallStarted bool
 }
 type savedAPK struct {
 	path string
@@ -127,6 +131,21 @@ func runJob(id int, ctx context.Context, s jobSpec, ch chan tea.Msg) {
 	}()
 	emit := func(phase, log string) { emitJob(ctx, ch, jobEventMsg{id: id, phase: phase, log: log}) }
 	fail := func(err error) { result.err = err; result.status = "failed" }
+	ask := func(title, body string, options []string, danger int) (int, bool) {
+		reply := make(chan int, 1)
+		if !emitJob(ctx, ch, jobQuestionMsg{id: id, title: title, body: []string{body}, options: options, danger: danger, reply: reply}) {
+			return 0, false
+		}
+		select {
+		case choice := <-reply:
+			if choice < 0 || choice >= len(options) {
+				return 0, true
+			}
+			return choice, true
+		case <-ctx.Done():
+			return 0, false
+		}
+	}
 	path := s.savedPath
 	var meta apk.Inspection
 	if path == "" {
@@ -239,7 +258,25 @@ func runJob(id int, ctx context.Context, s jobSpec, ch chan tea.Msg) {
 		if iszip {
 			emit("Unpack", "Safely extracting best matching APK")
 			var out ghapi.ExtractedAPK
-			out, err = ghapi.ExtractBestAPKContext(ctx, download, filepath.Join(work, "extracted"), s.settings.FilePattern, s.settings.ExcludePattern, prefsFromSettings(s.settings), scoreDeviceFrom(s.dev))
+			out, err = ghapi.ExtractBestAPKContextChoice(ctx, download, filepath.Join(work, "extracted"), s.settings.FilePattern, s.settings.ExcludePattern, prefsFromSettings(s.settings), scoreDeviceFrom(s.dev), func(candidates []ghapi.APKCandidate) (int, error) {
+				for i := 0; i < len(candidates); {
+					c := candidates[i]
+					body := fmt.Sprintf("Several APKs rank equally. Candidate %d of %d: %s (%s). Select this APK or look at the next one.", i+1, len(candidates), c.Name, ghapi.HumanBytes(int64(c.Size)))
+					choice, ok := ask("Several APKs", body, []string{"Cancel", "Next APK", "Use this APK"}, -1)
+					if !ok {
+						return -1, ctx.Err()
+					}
+					switch choice {
+					case 0:
+						return -1, errors.New("no APK selected")
+					case 1:
+						i = (i + 1) % len(candidates)
+					case 2:
+						return i, nil
+					}
+				}
+				return -1, errors.New("no APK selected")
+			})
 			if err != nil {
 				fail(err)
 				return
@@ -341,7 +378,7 @@ func runJob(id int, ctx context.Context, s jobSpec, ch chan tea.Msg) {
 	if ctx.Err() != nil {
 		return
 	}
-	safety := apk.EvaluateSafety(meta, apk.SafetyInput{ExpectedPackage: expected, InstalledFound: found, InstalledVCode: installed.VersionCode, InstalledVName: installed.VersionName, InstalledCert: installed.CertSHA256, HistoryCert: hist.Sig, DeviceSDK: s.dev.SDK, DowngradeMode: s.settings.Downgrade, CheckPackage: s.settings.PkgCheck, CheckSignature: s.settings.SigCheck})
+	safety := apk.EvaluateSafety(meta, apk.SafetyInput{ExpectedPackage: expected, InstalledFound: found, InstalledQueryable: installed.Queryable, InstalledVCode: installed.VersionCode, InstalledVName: installed.VersionName, InstalledCert: installed.CertSHA256, HistoryCert: hist.Sig, HistoryPackage: hist.Pkg, DeviceSDK: s.dev.SDK, DowngradeMode: s.settings.Downgrade, CheckPackage: s.settings.PkgCheck, CheckSignature: s.settings.SigCheck})
 	for _, n := range safety.Notes {
 		emit("", n)
 	}
@@ -350,22 +387,60 @@ func runJob(id int, ctx context.Context, s jobSpec, ch chan tea.Msg) {
 		return
 	}
 	allow := safety.AllowDowngrade
-	if safety.NeedsConfirm {
-		reply := make(chan bool, 1)
-		if !emitJob(ctx, ch, jobQuestionMsg{id: id, safety: safety, reply: reply}) {
+
+	uninstallFirst := false
+	// Ask separately, as the reference does, so the user can read every risk.
+	// The APK is already saved before any of these choices.
+	for _, w := range safety.Warnings {
+		if w.Blocked {
+			continue
+		}
+		options := []string{"Cancel", "Install anyway"}
+		danger := -1
+		if w.Kind == apk.WarnSameVersion {
+			options = []string{"Keep APK, skip install", "Reinstall"}
+			if uninstallFirst {
+				continue
+			}
+		} else if w.Kind == apk.WarnSignatureMismatch && found && installed.CertSHA256 != "" &&
+			meta.Cert.SHA256 != "" && !strings.EqualFold(installed.CertSHA256, meta.Cert.SHA256) && s.dev.OS == "android" && s.dev.HasRish {
+			options = append(options, "Uninstall first")
+			danger = 2
+		}
+		choice, ok := ask(w.Title, w.Message, options, danger)
+		if !ok {
 			return
 		}
-		select {
-		case yes := <-reply:
-			if !yes {
-				fail(errors.New("installation cancelled at safety warning"))
-				return
-			}
-			allow = safety.IsDowngrade || allow
-		case <-ctx.Done():
+		if choice == 0 {
+			emit("Skipped", "APK kept; installation skipped")
+			result.status = "done"
 			return
+		}
+		if choice == 2 && danger == 2 {
+			uninstallFirst = true
+		}
+		if w.Kind == apk.WarnDowngrade {
+			allow = true
 		}
 	}
+	if uninstallFirst {
+		body := fmt.Sprintf("Uninstall %s from this device? This permanently erases the app and its data. Installation may still fail. This cannot be undone.", pkg)
+		choice, ok := ask("Erase app data?", body, []string{"Cancel", "Uninstall and install"}, 1)
+		if !ok || choice == 0 {
+			emit("Skipped", "APK kept; app not uninstalled")
+			return
+		}
+		emit("Uninstall", "Checking the installed app again before uninstalling "+pkg)
+		result.uninstallStarted = true
+		emit("", "Uninstall requested; app data may be erased even if cancelled")
+		if err := device.UninstallMismatchedRishContext(ctx, pkg, installed.CertSHA256, meta.Cert.SHA256); err != nil {
+			fail(fmt.Errorf("uninstall not confirmed (app or data may have changed): %w", err))
+			return
+		}
+		emit("Uninstall", "App uninstalled; its data was erased")
+		found = false
+	}
+
 	if ctx.Err() != nil {
 		return
 	}
@@ -379,12 +454,14 @@ func runJob(id int, ctx context.Context, s jobSpec, ch chan tea.Msg) {
 	if res.Outcome == device.OutcomeLaunched {
 		result.status = "launched"
 		emit("Confirm on device", "Installer launched; installation not yet confirmed")
-		if s.settings.VerifyInstall && meta.HaveInfo {
+		if s.settings.VerifyInstall && meta.HaveInfo && installed.Queryable && !(found && (meta.Info.VersionCode <= 0 || installed.VersionCode <= 0 || installed.VersionCode == meta.Info.VersionCode)) {
 			v := device.VerifyInstall(ctx, meta.Info.Package, meta.Info.VersionCode, 30*time.Second)
 			emit("", v.Detail)
-			if v.Outcome == device.VerifyConfirmed && !(found && (meta.Info.VersionCode <= 0 || installed.VersionCode == meta.Info.VersionCode)) {
+			if v.Outcome == device.VerifyConfirmed {
 				result.status = "installed"
 			}
+		} else if s.settings.VerifyInstall {
+			emit("", "Installation unconfirmed: a pre-existing or unknown version cannot prove a reinstall")
 		}
 	} else if res.Outcome == device.OutcomeInstalled {
 		result.status = "installed"
@@ -648,22 +725,25 @@ func (m *Model) showNextJobQuestion() {
 			j.question = nil
 			continue
 		}
+		q := j.question
 		var body []string
-		for _, w := range j.question.safety.Warnings {
-			body = append(body, m.st.Warn.Render("! "+safeJobText(w.Title)), safeJobText(w.Message))
+		for _, line := range q.body {
+			body = append(body, safeJobText(line))
 		}
 		m.confirmKind = confirmJobSafety
 		m.jobQuestionID = j.id
-		m.confirm = components.Confirm{Title: "Safety check before install", Body: body, Options: []string{"Install anyway", "Cancel"}, Cursor: 1}
+		m.jobQuestionScroll = 0
+		m.confirm = components.Confirm{Title: safeJobText(q.title), Body: body, Options: q.options, Cursor: 0, DangerIndex: q.danger}
+
 		m.modal = ModalConfirm
 		return
 	}
 }
-func (m *Model) answerJobQuestion(yes bool) {
+func (m *Model) answerJobQuestion(choice int) {
 	j := m.jobByID(m.jobQuestionID)
 	m.jobQuestionID = 0
 	if j != nil && j.question != nil {
-		j.question.reply <- yes
+		j.question.reply <- choice
 		j.question = nil
 		if j.ctx.Err() != nil {
 			j.status = "cancelling"
@@ -690,6 +770,9 @@ func (m *Model) handleJobFinished(e jobFinishedMsg) {
 	}
 	if e.err != nil {
 		j.logs = append(j.logs, e.err.Error())
+	}
+	if e.status == "cancelled" && e.uninstallStarted {
+		j.logs = append(j.logs, "Uninstall may have completed and erased app data; check the device.")
 	}
 	if e.status == "cancelled" && e.handoff {
 		j.logs = append(j.logs, "Installer may still be open; cancellation cannot undo a handoff.")

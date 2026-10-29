@@ -72,6 +72,9 @@ func (m Model) modalBox() string {
 			m.st.Dim.Render("enter saves as owner/repo · esc cancels")
 		return m.modalWindow("Edit repository", body)
 	case ModalConfirm:
+		if m.confirmKind == confirmJobSafety {
+			return m.jobQuestionBox()
+		}
 		if m.safetyDialogTooLarge() {
 			return (components.Confirm{Title: "Safety check", Body: []string{"Not enough room to show the safety warnings.", "Zoom out or rotate to see them."}, Options: []string{"Cancel"}}).Box(m.st, m.width)
 		}
@@ -96,7 +99,7 @@ func (m Model) modalBox() string {
 
 // Never offer an install override when the full warning cannot fit onscreen.
 func (m Model) safetyDialogTooLarge() bool {
-	if m.modal != ModalConfirm || m.confirmKind != confirmSafetyOverride && m.confirmKind != confirmJobSafety {
+	if m.modal != ModalConfirm || m.confirmKind != confirmSafetyOverride {
 		return false
 	}
 	if m.width < minWidth || m.height < minHeight {

@@ -23,15 +23,15 @@ import (
 // string pool, resource ID map, <manifest> and <uses-sdk> start elements.
 func buildMinimalAXML(pkg, verName string, verCode int32, minSDK, targetSDK int32) []byte {
 	stringsList := []string{
-		"manifest",      // 0
-		"package",       // 1
-		"versionCode",   // 2
-		"versionName",   // 3
-		"uses-sdk",      // 4
-		"minSdkVersion", // 5
+		"manifest",         // 0
+		"package",          // 1
+		"versionCode",      // 2
+		"versionName",      // 3
+		"uses-sdk",         // 4
+		"minSdkVersion",    // 5
 		"targetSdkVersion", // 6
-		pkg,             // 7
-		verName,         // 8
+		pkg,                // 7
+		verName,            // 8
 	}
 	resIDs := []uint32{
 		0,              // manifest
@@ -357,5 +357,44 @@ func TestEvaluateSafetyChecksAndDowngradePolicy(t *testing.T) {
 	})
 	if !allowed.AllowDowngrade || allowed.NeedsConfirm || allowed.BlockedReason != "" {
 		t.Fatalf("expected clean AllowDowngrade=true under downgrade=allow, got %+v", allowed)
+	}
+}
+
+func TestInstallSafetyVersionAndVariantScenarios(t *testing.T) {
+	base := Inspection{HaveInfo: true, Info: Info{Package: "com.example.app", VersionCode: 100, VersionName: "2.0"}, Cert: Cert{SHA256: strings.Repeat("a", 64)}}
+	cases := []struct {
+		name     string
+		in       SafetyInput
+		relation string
+		warning  WarningKind
+	}{
+		{"same code different name is still a choice", SafetyInput{InstalledFound: true, InstalledVCode: 100, InstalledVName: "debug"}, "reinstall", WarnSameVersion},
+		{"older code", SafetyInput{InstalledFound: true, InstalledVCode: 101, DowngradeMode: "auto"}, "downgrade", WarnDowngrade},
+		{"newer code", SafetyInput{InstalledFound: true, InstalledVCode: 99}, "upgrade", ""},
+		{"version names alone are not Android version codes", SafetyInput{InstalledFound: true, InstalledVName: "9.0"}, "unknown", ""},
+		{"unknown package status", SafetyInput{}, "unknown", ""},
+		{"distinct variant application ID", SafetyInput{ExpectedPackage: "com.example.app.debug", InstalledQueryable: true, CheckPackage: true}, "fresh", WarnPackageMismatch},
+		{"different key same ID", SafetyInput{InstalledFound: true, InstalledVCode: 99, InstalledCert: strings.Repeat("b", 64), CheckSignature: true}, "upgrade", WarnSignatureMismatch},
+		{"history for another variant is not a key mismatch", SafetyInput{InstalledFound: true, InstalledVCode: 99, HistoryPackage: "com.example.app.debug", HistoryCert: strings.Repeat("b", 64), CheckSignature: true}, "upgrade", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := EvaluateSafety(base, tc.in)
+			if got.VersionRelation != tc.relation {
+				t.Fatalf("relation=%s want %s", got.VersionRelation, tc.relation)
+			}
+			present := false
+			for _, w := range got.Warnings {
+				if w.Kind == tc.warning {
+					present = true
+				}
+			}
+			if tc.warning != "" && !present {
+				t.Fatalf("missing %s: %+v", tc.warning, got)
+			}
+			if tc.warning == "" && len(got.Warnings) != 0 {
+				t.Fatalf("unexpected warning %+v", got.Warnings)
+			}
+		})
 	}
 }

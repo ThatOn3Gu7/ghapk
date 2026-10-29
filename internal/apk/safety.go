@@ -2,6 +2,7 @@ package apk
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -14,6 +15,7 @@ const (
 	WarnSignatureMismatch WarningKind = "signature_mismatch"
 	WarnDowngrade         WarningKind = "downgrade"
 	WarnMinSDK            WarningKind = "min_sdk"
+	WarnSameVersion       WarningKind = "same_version"
 )
 
 // SafetyWarning describes one risk that requires blocking or explicit user
@@ -27,27 +29,29 @@ type SafetyWarning struct {
 
 // SafetyInput supplies device and policy context to EvaluateSafety.
 type SafetyInput struct {
-	ExpectedPackage string // configured or previously installed package name
-	InstalledFound  bool
-	InstalledVCode  int64
-	InstalledVName  string
-	InstalledCert   string // active signing cert SHA-256 on device
-	HistoryCert     string // signing cert SHA-256 from last install of same package/repo
-	DeviceSDK       int    // 0 if unknown (desktop without connected device)
-	DowngradeMode   string // "auto" (confirm), "allow" (permit with note), "never"/"skip" (block)
-	CheckPackage    bool   // enforce package identity warning (default true)
-	CheckSignature  bool   // enforce signing key mismatch warning (default true)
+	ExpectedPackage    string // configured or previously installed package name
+	InstalledFound     bool
+	InstalledQueryable bool
+	InstalledVCode     int64
+	InstalledVName     string
+	InstalledCert      string // active signing cert SHA-256 on device
+	HistoryCert        string // signing cert SHA-256 from last confirmed install
+	HistoryPackage     string // package that history refers to
+	DeviceSDK          int    // 0 if unknown (desktop without connected device)
+	DowngradeMode      string // "auto" (confirm), "allow" (permit with note), "never"/"skip" (block)
+	CheckPackage       bool   // enforce package identity warning (default true)
+	CheckSignature     bool   // enforce signing key mismatch warning (default true)
 }
 
 // SafetyAssessment summarizes version relation, notes, and warnings for an APK.
 type SafetyAssessment struct {
-	VersionRelation  string // "fresh", "upgrade", "reinstall", "downgrade", or "unknown"
-	IsDowngrade      bool
-	AllowDowngrade   bool // true ONLY when DowngradeMode == "allow" (or after explicit user confirmation)
-	Notes            []string
-	Warnings         []SafetyWarning
-	BlockedReason    string
-	NeedsConfirm     bool
+	VersionRelation string // "fresh", "upgrade", "reinstall", "downgrade", or "unknown"
+	IsDowngrade     bool
+	AllowDowngrade  bool // true ONLY when DowngradeMode == "allow" (or after explicit user confirmation)
+	Notes           []string
+	Warnings        []SafetyWarning
+	BlockedReason   string
+	NeedsConfirm    bool
 }
 
 // EvaluateSafety checks package identity, signing certificate continuity,
@@ -84,10 +88,12 @@ func EvaluateSafety(ins Inspection, in SafetyInput) SafetyAssessment {
 	// 2. Signing certificate continuity check
 	if in.CheckSignature && ins.Cert.SHA256 != "" {
 		refCert, refSource := in.InstalledCert, "the app currently on the device"
-		if refCert == "" && in.HistoryCert != "" && (in.ExpectedPackage == "" || in.ExpectedPackage == info.Package) {
+		if refCert == "" && in.HistoryCert != "" && in.HistoryPackage == info.Package {
 			refCert, refSource = in.HistoryCert, "the last build recorded for this app"
 		}
-		if refCert != "" {
+		if refCert == "" {
+			out.Notes = append(out.Notes, "installed signing key unavailable; could not compare")
+		} else {
 			if strings.EqualFold(refCert, ins.Cert.SHA256) {
 				out.Notes = append(out.Notes, "signing key matches")
 			} else {
@@ -95,16 +101,18 @@ func EvaluateSafety(ins Inspection, in SafetyInput) SafetyAssessment {
 					Kind:  WarnSignatureMismatch,
 					Title: "Signing key mismatch",
 					Message: fmt.Sprintf(
-						"APK signing key (%.12s…) differs from %s (%.12s…). Android refuses cross-key updates (INSTALL_FAILED_UPDATE_INCOMPATIBLE) unless the old app is uninstalled first.",
+						"APK signing key (%.12s…) differs from %s (%.12s…). Android may refuse this update; uninstalling the old app erases its data. Key rotation can also cause a mismatch.",
 						ins.Cert.SHA256, refSource, refCert,
 					),
 				})
 			}
 		}
+	} else if in.CheckSignature {
+		out.Notes = append(out.Notes, "APK signing key unavailable; could not compare")
 	}
 
 	// 3. Installed-vs-download version comparison & downgrade handling
-	if in.InstalledFound {
+	if in.InstalledFound && info.VersionCode > 0 && in.InstalledVCode > 0 {
 		cmp := compareAPKVersion(info.VersionCode, info.VersionName, in.InstalledVCode, in.InstalledVName)
 		switch {
 		case cmp > 0:
@@ -114,8 +122,10 @@ func EvaluateSafety(ins Inspection, in SafetyInput) SafetyAssessment {
 				fmtVer(info.VersionName, info.VersionCode)))
 		case cmp == 0:
 			out.VersionRelation = "reinstall"
-			out.Notes = append(out.Notes, fmt.Sprintf("same version %s",
-				fmtVer(info.VersionName, info.VersionCode)))
+			out.Warnings = append(out.Warnings, SafetyWarning{
+				Kind: WarnSameVersion, Title: "Already installed",
+				Message: fmt.Sprintf("The installed %s and APK have the same version code (%d). They may still contain different builds. Keep the APK or reinstall?", info.Package, info.VersionCode),
+			})
 		case cmp < 0:
 			out.VersionRelation = "downgrade"
 			out.IsDowngrade = true
@@ -142,12 +152,16 @@ func EvaluateSafety(ins Inspection, in SafetyInput) SafetyAssessment {
 				out.Warnings = append(out.Warnings, SafetyWarning{
 					Kind:    WarnDowngrade,
 					Title:   "Downgrade warning",
-					Message: msg + " Android blocks downgrades on release builds and may break app data.",
+					Message: msg + " Android may refuse downgrades and app data may be incompatible.",
 				})
 			}
 		}
-	} else {
+	} else if !in.InstalledFound && in.InstalledQueryable {
 		out.VersionRelation = "fresh"
+	} else if !in.InstalledFound {
+		out.Notes = append(out.Notes, "installed app status unavailable; version and signing key cannot be verified")
+	} else {
+		out.Notes = append(out.Notes, "version codes unavailable; cannot determine upgrade or downgrade")
 	}
 
 	// 4. Device SDK compatibility check
@@ -162,6 +176,8 @@ func EvaluateSafety(ins Inspection, in SafetyInput) SafetyAssessment {
 		})
 	}
 
+	order := map[WarningKind]int{WarnPackageMismatch: 0, WarnDowngrade: 1, WarnMinSDK: 2, WarnSignatureMismatch: 3, WarnSameVersion: 4}
+	sort.SliceStable(out.Warnings, func(i, j int) bool { return order[out.Warnings[i].Kind] < order[out.Warnings[j].Kind] })
 	for _, w := range out.Warnings {
 		if !w.Blocked {
 			out.NeedsConfirm = true

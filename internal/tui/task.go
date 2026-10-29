@@ -305,13 +305,8 @@ func (m *Model) startInstall(path string) tea.Cmd {
 	meta := m.downloadedAPK.Meta
 	needInspect := m.downloadedAPK.Path != path || (!meta.HaveInfo && meta.InfoErr == "")
 
-	hist, hasHist := config.History(m.settings.Repo)
-	expectPkg := m.settings.PackageName
-	if expectPkg == "" && hasHist {
-		expectPkg = hist.Pkg
-	}
-	queryPkg := expectPkg
-	if queryPkg == "" && meta.HaveInfo {
+	queryPkg := ""
+	if meta.HaveInfo {
 		queryPkg = meta.Info.Package
 	}
 
@@ -336,6 +331,10 @@ func (m *Model) startInstall(path string) tea.Cmd {
 }
 
 func (m *Model) finishStartInstall(path string, meta apk.Inspection, instApp device.InstalledApp, instFound bool) tea.Cmd {
+	m.installBaselineFound = instFound
+	m.installBaselineQueryable = instApp.Queryable
+	m.installBaselineCode = instApp.VersionCode
+	m.installBaselinePackage = meta.Info.Package
 	if m.downloadedAPK.Path == path && !m.downloadedAPK.Meta.HaveInfo && meta.HaveInfo {
 		m.downloadedAPK.Meta = meta
 	}
@@ -347,16 +346,18 @@ func (m *Model) finishStartInstall(path string, meta apk.Inspection, instApp dev
 	}
 
 	safety := apk.EvaluateSafety(meta, apk.SafetyInput{
-		ExpectedPackage: expectPkg,
-		InstalledFound:  instFound,
-		InstalledVCode:  instApp.VersionCode,
-		InstalledVName:  instApp.VersionName,
-		InstalledCert:   instApp.CertSHA256,
-		HistoryCert:     hist.Sig,
-		DeviceSDK:       m.dev.SDK,
-		DowngradeMode:   m.settings.Downgrade,
-		CheckPackage:    m.settings.PkgCheck,
-		CheckSignature:  m.settings.SigCheck,
+		ExpectedPackage:    expectPkg,
+		InstalledFound:     instFound,
+		InstalledQueryable: instApp.Queryable,
+		InstalledVCode:     instApp.VersionCode,
+		InstalledVName:     instApp.VersionName,
+		InstalledCert:      instApp.CertSHA256,
+		HistoryCert:        hist.Sig,
+		HistoryPackage:     hist.Pkg,
+		DeviceSDK:          m.dev.SDK,
+		DowngradeMode:      m.settings.Downgrade,
+		CheckPackage:       m.settings.PkgCheck,
+		CheckSignature:     m.settings.SigCheck,
 	})
 
 	if safety.BlockedReason != "" {
@@ -384,6 +385,10 @@ func (m *Model) finishStartInstall(path string, meta apk.Inspection, instApp dev
 			Body:    body,
 			Options: []string{"Install anyway", "Cancel"},
 			Cursor:  1, // safe default: Cancel
+		}
+		if len(safety.Warnings) == 1 && safety.Warnings[0].Kind == apk.WarnSameVersion {
+			m.confirm.Title = "Already installed"
+			m.confirm.Options = []string{"Reinstall", "Keep APK, skip"}
 		}
 		m.modal = ModalConfirm
 		return nil
