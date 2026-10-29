@@ -13,8 +13,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/cellbuf"
-	"github.com/ghapk/ghapk/internal/ghapi"
-	"github.com/ghapk/ghapk/internal/tui/components"
+	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 )
 
 func tapBranch(t *testing.T, m Model, x, y int) (Model, tea.Cmd) {

@@ -8,8 +8,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/ghapk/ghapk/internal/config"
-	"github.com/ghapk/ghapk/internal/tui/components"
+	"github.com/ThatOn3Gu7/ghapk/internal/config"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 )
 
 // deviceLines keeps the original hardware/session details and adds the

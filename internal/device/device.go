@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ghapk/ghapk/internal/apk"
+	"github.com/ThatOn3Gu7/ghapk/internal/apk"
 )
 
 // InstalledApp is the version of a package currently on the device.

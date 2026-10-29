@@ -8,7 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/cellbuf"
-	"github.com/ghapk/ghapk/internal/tui/components"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 )
 
 // Read the whole underlying viewport without its usual clipping or scrolling.

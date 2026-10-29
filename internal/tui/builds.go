@@ -8,7 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/ghapk/ghapk/internal/tui/components"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 )
 
 // Builds has a full-height list on the left and artifacts/details on the right.

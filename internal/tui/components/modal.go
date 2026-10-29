@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/ghapk/ghapk/internal/tui/theme"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/theme"
 )
 
 // StatusBar is the single bottom line with key hints and a message.

@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/ghapk/ghapk/internal/ghapi"
-	"github.com/ghapk/ghapk/internal/tui/components"
-	"github.com/ghapk/ghapk/internal/tui/theme"
+	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/theme"
 )
 
 func TestArtifactKindFromName(t *testing.T) {

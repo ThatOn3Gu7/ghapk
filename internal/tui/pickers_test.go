@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/ghapk/ghapk/internal/ghapi"
+	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
 )
 
 func pickerTestModel() Model {

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ghapk/ghapk/internal/apk"
+	"github.com/ThatOn3Gu7/ghapk/internal/apk"
 )
 
 func TestDownloadTrustedDigestVerification(t *testing.T) {

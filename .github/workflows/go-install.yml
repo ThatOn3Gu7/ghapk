@@ -1,0 +1,25 @@
+name: Go install
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      - name: Install this commit as a module
+        env:
+          COMMIT: ${{ github.sha }}
+          GOBIN: ${{ runner.temp }}/ghapk-bin
+        run: |
+          go install "github.com/ThatOn3Gu7/ghapk@$COMMIT"
+          "$GOBIN/ghapk" version

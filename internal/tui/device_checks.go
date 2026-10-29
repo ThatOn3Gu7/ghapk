@@ -11,11 +11,11 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/ghapk/ghapk/internal/config"
-	"github.com/ghapk/ghapk/internal/device"
-	"github.com/ghapk/ghapk/internal/ghapi"
+	"github.com/ThatOn3Gu7/ghapk/internal/config"
+	"github.com/ThatOn3Gu7/ghapk/internal/device"
+	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
 
-	"github.com/ghapk/ghapk/internal/activity"
+	"github.com/ThatOn3Gu7/ghapk/internal/activity"
 )
 
 type deviceChecks struct {

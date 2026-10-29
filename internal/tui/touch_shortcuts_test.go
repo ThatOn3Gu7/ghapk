@@ -10,8 +10,8 @@ import (
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/ghapk/ghapk/internal/ghapi"
-	"github.com/ghapk/ghapk/internal/tui/components"
+	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 )
 
 func hintSpan(t *testing.T, m Model, action string) components.HintSpan {

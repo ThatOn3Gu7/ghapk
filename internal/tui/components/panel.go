@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/ghapk/ghapk/internal/tui/theme"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/theme"
 )
 
 // Panel is a bordered box with a title and fixed outer size.

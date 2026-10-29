@@ -15,11 +15,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ghapk/ghapk/internal/config"
-	"github.com/ghapk/ghapk/internal/device"
-	"github.com/ghapk/ghapk/internal/flow"
-	"github.com/ghapk/ghapk/internal/ghapi"
-	"github.com/ghapk/ghapk/internal/tui"
+	"github.com/ThatOn3Gu7/ghapk/internal/config"
+	"github.com/ThatOn3Gu7/ghapk/internal/device"
+	"github.com/ThatOn3Gu7/ghapk/internal/flow"
+	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui"
 )
 
 const (

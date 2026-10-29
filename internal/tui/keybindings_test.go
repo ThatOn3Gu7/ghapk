@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/ghapk/ghapk/internal/activity"
-	"github.com/ghapk/ghapk/internal/tui/components"
+	"github.com/ThatOn3Gu7/ghapk/internal/activity"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 )
 
 func keyConfig(t *testing.T, edit func(map[string]map[string]string)) *KeyBindings {

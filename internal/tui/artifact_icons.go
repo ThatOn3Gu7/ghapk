@@ -4,8 +4,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/ghapk/ghapk/internal/tui/components"
-	"github.com/ghapk/ghapk/internal/tui/theme"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/theme"
 )
 
 type artifactKind int

@@ -21,9 +21,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ghapk/ghapk/internal/activity"
-	"github.com/ghapk/ghapk/internal/apk"
-	"github.com/ghapk/ghapk/internal/score"
+	"github.com/ThatOn3Gu7/ghapk/internal/activity"
+	"github.com/ThatOn3Gu7/ghapk/internal/apk"
+	"github.com/ThatOn3Gu7/ghapk/internal/score"
 )
 
 const (

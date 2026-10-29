@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/ghapk/ghapk/internal/apk"
-	"github.com/ghapk/ghapk/internal/tui/components"
-	"github.com/ghapk/ghapk/internal/tui/theme"
+	"github.com/ThatOn3Gu7/ghapk/internal/apk"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/theme"
 )
 
 // Keep the compact badge geometry while using the active app theme.

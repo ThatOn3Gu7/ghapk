@@ -1,9 +1,9 @@
 package tui
 
 import (
-	"github.com/ghapk/ghapk/internal/config"
-	"github.com/ghapk/ghapk/internal/device"
-	"github.com/ghapk/ghapk/internal/score"
+	"github.com/ThatOn3Gu7/ghapk/internal/config"
+	"github.com/ThatOn3Gu7/ghapk/internal/device"
+	"github.com/ThatOn3Gu7/ghapk/internal/score"
 )
 
 // archPrefs is the TUI-local alias kept for readability in messages.go.
