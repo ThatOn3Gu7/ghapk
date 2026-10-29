@@ -74,6 +74,20 @@ func collectJob(id int, ctx context.Context, s jobSpec) jobFinishedMsg {
 	}
 	return result
 }
+func collectJobWithAnswers(id int, ctx context.Context, s jobSpec, answer int) jobFinishedMsg {
+	ch := make(chan tea.Msg, 64)
+	go runJob(id, ctx, s, ch)
+	var result jobFinishedMsg
+	for msg := range ch {
+		switch v := msg.(type) {
+		case jobQuestionMsg:
+			v.reply <- answer
+		case jobFinishedMsg:
+			result = v
+		}
+	}
+	return result
+}
 func TestConcurrentJobsSnapshotRepoAndSaveUniqueFiles(t *testing.T) {
 	root, bin := jobTestEnv(t)
 	zipPath, digest := jobZip(t, root)
@@ -238,8 +252,8 @@ func TestJobSafetyPromptQueueAndCancel(t *testing.T) {
 	m := buildModel(t, 40, 24)
 	m.startJob(jobSpec{})
 	m.startJob(jobSpec{})
-	q1 := jobQuestionMsg{id: 1, reply: make(chan bool, 1), safety: apk.SafetyAssessment{Warnings: []apk.SafetyWarning{{Title: "warning", Message: "unsafe"}}}}
-	q2 := jobQuestionMsg{id: 2, reply: make(chan bool, 1), safety: q1.safety}
+	q1 := jobQuestionMsg{id: 1, reply: make(chan int, 1), title: "warning", body: []string{"unsafe"}, options: []string{"Cancel", "Install anyway"}, danger: -1}
+	q2 := jobQuestionMsg{id: 2, reply: make(chan int, 1), title: q1.title, body: q1.body, options: q1.options, danger: -1}
 	mm, _ := m.Update(q1)
 	m = mm.(Model)
 	mm, _ = m.Update(q2)
@@ -249,7 +263,7 @@ func TestJobSafetyPromptQueueAndCancel(t *testing.T) {
 	}
 	mm, _ = m.Update(keyOf("esc"))
 	m = mm.(Model)
-	if <-q1.reply {
+	if <-q1.reply != 0 {
 		t.Fatal("escape accepted warning")
 	}
 	if m.modal != ModalConfirm || m.jobQuestionID != 2 {
@@ -257,7 +271,7 @@ func TestJobSafetyPromptQueueAndCancel(t *testing.T) {
 	}
 	mm, _ = m.Update(keyOf("esc"))
 	m = mm.(Model)
-	if <-q2.reply {
+	if <-q2.reply != 0 {
 		t.Fatal("second warning accepted")
 	}
 	for _, j := range m.jobs {
@@ -343,7 +357,7 @@ func TestLaunchedInstallerNotMistakenForConfirmation(t *testing.T) {
 	fakeCommand(t, bin, "dumpsys", `echo 'versionCode=10 versionName=1.0'`)
 	s := config.Defaults()
 	s.PackageName = "com.example.app"
-	result := collectJob(1, context.Background(), jobSpec{repo: "one/repo", settings: s, install: true, savedPath: path})
+	result := collectJobWithAnswers(1, context.Background(), jobSpec{repo: "one/repo", settings: s, install: true, savedPath: path}, 1)
 	if result.err != nil || result.status != "launched" {
 		t.Fatalf("same preinstalled version is not proof of installation: %+v", result)
 	}

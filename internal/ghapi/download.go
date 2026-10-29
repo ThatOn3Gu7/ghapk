@@ -110,6 +110,7 @@ type extractOpts struct {
 	maxNestedDepth int
 	maxNestedBytes int64
 	excludePattern string
+	choose         func([]APKCandidate) (int, error)
 	fs             atomicFS
 }
 
@@ -547,6 +548,15 @@ func ExtractBestAPKFiltered(zipPath, outDir, filePattern, excludePattern string,
 	return extractBestAPKWithOpts(zipPath, outDir, filePattern, p, dev, opts)
 }
 
+// APKCandidate is a policy-allowed archive member presented when the best
+// rank is tied. Names are display-sanitized; extraction still uses the
+// validated original entry.
+type APKCandidate struct {
+	Name  string
+	Size  uint64
+	Score int
+}
+
 type zipCandidate struct {
 	f     *zip.File
 	leaf  string
@@ -687,6 +697,20 @@ func extractBestAPKWithOpts(zipPath, outDir, filePattern string, p score.Prefs, 
 
 	sort.SliceStable(cands, func(i, j int) bool { return cands[i].score > cands[j].score })
 	best := cands[0]
+	if opts.choose != nil && len(cands) > 1 && cands[0].score == cands[1].score {
+		choices := make([]APKCandidate, len(cands))
+		for i, c := range cands {
+			choices[i] = APKCandidate{Name: sanitizeDisplayPath(c.f.Name), Size: c.f.UncompressedSize64, Score: c.score}
+		}
+		idx, err := opts.choose(choices)
+		if err != nil {
+			return ExtractedAPK{}, err
+		}
+		if idx < 0 || idx >= len(cands) {
+			return ExtractedAPK{}, errors.New("no APK selected")
+		}
+		best = cands[idx]
+	}
 
 	dest, err := SafeDestinationPath(outDir, best.leaf)
 	if err != nil {
@@ -1458,5 +1482,13 @@ func ExtractBestAPKContext(ctx context.Context, zipPath, outDir, filePattern, ex
 	opts := defaultExtractOpts()
 	opts.ctx = ctx
 	opts.excludePattern = excludePattern
+	return extractBestAPKWithOpts(zipPath, outDir, filePattern, p, dev, opts)
+}
+
+// ExtractBestAPKContextChoice preserves all extraction safeguards while letting
+// an interactive caller resolve a tie without guessing.
+func ExtractBestAPKContextChoice(ctx context.Context, zipPath, outDir, filePattern, excludePattern string, p score.Prefs, dev score.Device, choose func([]APKCandidate) (int, error)) (ExtractedAPK, error) {
+	opts := defaultExtractOpts()
+	opts.ctx, opts.excludePattern, opts.choose = ctx, excludePattern, choose
 	return extractBestAPKWithOpts(zipPath, outDir, filePattern, p, dev, opts)
 }

@@ -81,11 +81,12 @@ func (sb StatusBar) Render(st theme.Styles) string {
 
 // Confirm is a yes/no style dialog.
 type Confirm struct {
-	Title   string
-	Body    []string // pre-styled lines
-	Options []string // e.g. {"Download", "Install", "Cancel"}
-	Cursor  int
-	Danger  bool // destructive action: red frame and primary action
+	Title       string
+	Body        []string // pre-styled lines
+	Options     []string // e.g. {"Download", "Install", "Cancel"}
+	Cursor      int
+	Danger      bool // destructive action: red frame and primary action
+	DangerIndex int  // destructive choice in a question; -1 means none
 }
 
 // ModalBox renders a bordered dialog without the surrounding whitespace.
@@ -210,6 +211,7 @@ func (c Confirm) Box(st theme.Styles, width int) string {
 		b.WriteString(ln + "\n")
 	}
 	b.WriteString("\n")
+
 	var btns []string
 	for i, opt := range c.Options {
 		if i == c.Cursor {
@@ -249,6 +251,17 @@ func (c Confirm) Box(st theme.Styles, width int) string {
 	}
 	b.WriteString(strings.Join(btns, join))
 	return ModalBox(st, width, c.Title, b.String())
+}
+
+// QuestionBox keeps numbered choices visible while the caller scrolls the body.
+func QuestionBox(st theme.Styles, width int, title, body string) string {
+	bw := min(width-2, 70)
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(st.P.BorderFocus).Padding(0, 1).Width(bw - 2).Render(body)
+	lines := strings.Split(box, "\n")
+	if len(lines) > 0 {
+		lines[0] = overlayCenter(lines[0], st.PanelTitleFoc.Render(" "+title+" "))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // Render draws a centered confirmation dialog.

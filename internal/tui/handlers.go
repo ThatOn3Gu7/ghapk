@@ -652,15 +652,32 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.confirmKind == confirmJobSafety && len(key) == 1 && key[0] >= '1' && key[0] <= '9' {
+			index := int(key[0] - '1')
+			if index < len(m.confirm.Options) {
+				m.confirm.Cursor = index
+			}
+			return m, nil // explicit Enter still required
+		}
+		if m.confirmKind == confirmJobSafety {
+			switch key {
+			case "pgdown":
+				m.scrollJobQuestion(5)
+				return m, nil
+			case "pgup":
+				m.scrollJobQuestion(-5)
+				return m, nil
+			}
+		}
 		switch key {
 		case "esc", "q":
 			m.resetConfirm()
 			return m, nil
-		case "left", "h", "shift+tab":
+		case "left", "up", "k", "h", "shift+tab":
 			if m.confirm.Cursor > 0 {
 				m.confirm.Cursor--
 			}
-		case "right", "l":
+		case "right", "down", "j", "l":
 			if m.confirm.Cursor < len(m.confirm.Options)-1 {
 				m.confirm.Cursor++
 			}
@@ -854,7 +871,7 @@ func (m *Model) askRemoveRepo(repo string) {
 
 func (m *Model) resetConfirm() {
 	if m.confirmKind == confirmJobSafety {
-		m.answerJobQuestion(false)
+		m.answerJobQuestion(0)
 	}
 	m.modal = ModalNone
 	m.confirm = components.Confirm{}
@@ -897,6 +914,10 @@ func (m *Model) confirmAccept() tea.Cmd {
 		return nil
 	}
 	choice := m.confirm.Cursor
+	if m.confirmKind == confirmJobSafety && choice != 0 && m.jobQuestionScroll < m.jobQuestionMaxScroll() {
+		m.scrollJobQuestion(5)
+		return nil
+	}
 	m.modal = ModalNone
 	m.confirm = components.Confirm{}
 	kind := m.confirmKind
@@ -904,7 +925,7 @@ func (m *Model) confirmAccept() tea.Cmd {
 	target := m.confirmTarget
 	m.confirmTarget = ""
 	if kind == confirmJobSafety {
-		m.answerJobQuestion(choice == 0)
+		m.answerJobQuestion(choice)
 		return nil
 	}
 	if kind == confirmDeleteSaved {

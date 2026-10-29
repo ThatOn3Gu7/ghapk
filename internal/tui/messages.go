@@ -354,7 +354,8 @@ func prepareInstallCmd(path string, meta apk.Inspection, needInspect bool, query
 				meta = ins
 			}
 		}
-		if queryPkg == "" && meta.HaveInfo {
+		queryPkg = ""
+		if meta.HaveInfo {
 			queryPkg = meta.Info.Package
 		}
 		var app device.InstalledApp

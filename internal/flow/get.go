@@ -67,10 +67,10 @@ func Run(o GetOptions) int {
 
 	// [3/6] & [4/6] locate source (actions artifacts and/or releases)
 	var (
-		art      ghapi.Artifact
-		run      ghapi.Run
-		relPick  ghapi.RankedReleaseAsset
-		useRel   bool
+		art     ghapi.Artifact
+		run     ghapi.Run
+		relPick ghapi.RankedReleaseAsset
+		useRel  bool
 	)
 
 	if s.Source != "releases" {
@@ -258,8 +258,8 @@ func Run(o GetOptions) int {
 		if expectPkg == "" {
 			expectPkg = hist.Pkg
 		}
-		queryPkg := expectPkg
-		if queryPkg == "" && apkOut.Meta.HaveInfo {
+		queryPkg := ""
+		if apkOut.Meta.HaveInfo {
 			queryPkg = apkOut.Meta.Info.Package
 		}
 		var instApp device.InstalledApp
@@ -269,16 +269,18 @@ func Run(o GetOptions) int {
 		}
 
 		safety := apk.EvaluateSafety(apkOut.Meta, apk.SafetyInput{
-			ExpectedPackage: expectPkg,
-			InstalledFound:  instFound,
-			InstalledVCode:  instApp.VersionCode,
-			InstalledVName:  instApp.VersionName,
-			InstalledCert:   instApp.CertSHA256,
-			HistoryCert:     hist.Sig,
-			DeviceSDK:       dev.SDK,
-			DowngradeMode:   s.Downgrade,
-			CheckPackage:    s.PkgCheck,
-			CheckSignature:  s.SigCheck,
+			ExpectedPackage:    expectPkg,
+			InstalledFound:     instFound,
+			InstalledQueryable: instApp.Queryable,
+			InstalledVCode:     instApp.VersionCode,
+			InstalledVName:     instApp.VersionName,
+			InstalledCert:      instApp.CertSHA256,
+			HistoryCert:        hist.Sig,
+			HistoryPackage:     hist.Pkg,
+			DeviceSDK:          dev.SDK,
+			DowngradeMode:      s.Downgrade,
+			CheckPackage:       s.PkgCheck,
+			CheckSignature:     s.SigCheck,
 		})
 		for _, n := range safety.Notes {
 			out("ghapk: check: %s", n)
@@ -308,7 +310,7 @@ func Run(o GetOptions) int {
 		}
 		if res.Outcome == device.OutcomeLaunched {
 			out("ghapk: installer launched via %s — accept the prompt on your Android device", res.Via)
-			if s.VerifyInstall && queryPkg != "" && apkOut.Meta.HaveInfo {
+			if s.VerifyInstall && queryPkg != "" && apkOut.Meta.HaveInfo && instApp.Queryable && !(instFound && (instApp.VersionCode <= 0 || apkOut.Meta.Info.VersionCode <= 0 || instApp.VersionCode == apkOut.Meta.Info.VersionCode)) {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				vr := device.VerifyInstall(ctx, queryPkg, apkOut.Meta.Info.VersionCode, 25*time.Second)
 				cancel()
@@ -321,6 +323,8 @@ func Run(o GetOptions) int {
 				default:
 					out("ghapk: installation remains unconfirmed (%s)", vr.Detail)
 				}
+			} else if s.VerifyInstall {
+				out("ghapk: installation remains unconfirmed; a pre-existing or unknown version cannot prove reinstall")
 			}
 		} else {
 			out("ghapk: installed via %s (confirmed)", res.Via)

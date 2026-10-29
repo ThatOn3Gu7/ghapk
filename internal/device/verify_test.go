@@ -78,3 +78,10 @@ func TestQueryPackageExplicitMissingIsQueryable(t *testing.T) {
 		t.Fatalf("explicit missing package should be queryable: %+v", app)
 	}
 }
+
+func TestVerifyUnknownVersionCannotConfirm(t *testing.T) {
+	withDeviceStubs(t, false, map[string]bool{"adb": true}, nil, func(ctx context.Context, name string, args ...string) (string, error) { return "versionCode=100", nil })
+	if got := VerifyInstall(context.Background(), "com.example.rocket", 0, 0); got.Outcome != VerifyUnavailable {
+		t.Fatalf("%+v", got)
+	}
+}

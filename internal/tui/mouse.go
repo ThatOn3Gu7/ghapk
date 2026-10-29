@@ -415,6 +415,9 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 // handleModalMouse captures input before it can reach the dashboard.
 func (m Model) handleModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.modal == ModalConfirm && m.confirmKind == confirmJobSafety {
+		return m.handleJobQuestionMouse(msg)
+	}
 	if m.modal == ModalPlan {
 		return m.handlePlanMouse(msg)
 	}
@@ -561,7 +564,11 @@ func (m Model) confirmButtonHit(px, py int, buttons []string) int {
 			break
 		}
 	}
-	if py < bottom-len(buttons) || py >= bottom || py < 0 || py >= len(lines) {
+	footer := 0
+	if m.confirmKind == confirmJobSafety {
+		footer = 1
+	}
+	if py < bottom-len(buttons)-footer || py >= bottom-footer || py < 0 || py >= len(lines) {
 		return -1
 	}
 	line := components.StripANSI(lines[py])

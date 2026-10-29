@@ -11,7 +11,7 @@ type VerifyOutcome string
 
 const (
 	// VerifyConfirmed means QueryPackage positively observed pkg on the device
-	// at the expected versionCode (or newly installed when wantVersionCode == 0).
+	// at the expected versionCode. Callers must also establish a different baseline.
 	VerifyConfirmed VerifyOutcome = "confirmed"
 
 	// VerifyUnchanged means the device could be queried, and after waiting the
@@ -45,6 +45,10 @@ func VerifyInstall(ctx context.Context, pkg string, wantVersionCode int64, wait 
 		}
 	}
 
+	if wantVersionCode <= 0 {
+		return VerifyResult{Outcome: VerifyUnavailable, Detail: "APK version code unknown — cannot verify installation"}
+	}
+
 	checkOnce := func() (VerifyResult, bool) {
 		app, found := QueryPackageContext(ctx, pkg)
 		if !app.Queryable && !found {
@@ -53,7 +57,7 @@ func VerifyInstall(ctx context.Context, pkg string, wantVersionCode int64, wait 
 				Detail:  "device package manager not queryable without Shizuku/ADB",
 			}, true
 		}
-		if found && (wantVersionCode <= 0 || app.VersionCode == wantVersionCode) {
+		if found && app.VersionCode == wantVersionCode {
 			return VerifyResult{
 				Outcome: VerifyConfirmed,
 				App:     app,

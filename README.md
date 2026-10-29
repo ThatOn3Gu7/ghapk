@@ -160,6 +160,10 @@ precedence for that launch.
 
 On a fresh start, the repository picker loads all repositories accessible to the authenticated `gh` account, including private and organization repositories where authorized. No local clone is required. Tap a repository to choose it, swipe to scroll, or type to filter or enter `owner/repo`. If loading fails, tap retry or press `Ctrl+R`.
 
+During installation, ghapk compares the APK's actual package and version code with the device. A matching version code prompts **Keep APK, skip install** or **Reinstall**; it does not mean the files are identical. Different package IDs (such as debug and release variants) are separate apps. If signing keys differ, Android may reject an update; when local Shizuku can verify the installed app, ghapk can offer an explicitly confirmed uninstall first. **Uninstalling erases that app's data.** It is never automatic. If checks cannot be performed, the Downloads log says so. An Android installer handoff is not reported as a confirmed reinstall based on an unchanged version code.
+
+When several APKs in an archive rank equally, choose which one to extract instead of silently guessing. Safety questions use numbered options; use ↑/↓ and Enter, or tap an option. Swipe or use Page Down to read a long warning before proceeding.
+
 Artifact rows use name-based platform or file-type icons (🤖 Android, 📱 iOS, 🍎 macOS, ⊞ Windows, 🐧 Linux, 🌐 web, 📄 document, 📦 archive, ◇ unknown). An `!` marks an artifact rejected by your architecture or variant preferences. Icons are hints, not verified compatibility: Actions artifact names don't reveal their contents or app icons, and installation remains APK-focused. Set `GHAPK_ASCII=1` for letter-based icons.
 
 On Repos, select a repository and then a branch; choose “all branches” to leave Actions runs unfiltered. Branches come from GitHub and, when the current working tree has a matching GitHub origin, its local branches. A local-only branch needs a pushed Actions run to have downloadable artifacts.
