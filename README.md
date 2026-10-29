@@ -143,7 +143,7 @@ precedence for that launch.
 | `g` / `G` | Jump to top / bottom |
 | `Ctrl+D` / `Ctrl+U` | Half-page down / up |
 | `Enter` / `→` | Open a build’s artifacts; Enter on an artifact opens the install plan |
-| **Mouse / Touch** | Tap to select; tap the repo name for the picker or a bottom hint to run it; swipe Device details, or swipe/drag the scroll bar in Help |
+| **Mouse / Touch** | Tap to select; tap the repo name for the picker or a bottom hint to run it; tap outside an overlay to dismiss it; swipe Device details, or swipe/drag the scroll bar in Help |
 | `d` | Download selected artifact to local cache |
 | `i` | Check the device, choose an artifact, then install or download only |
 | `R` | Repository picker (accessible GitHub repos, recents, git remote, search) |

@@ -189,6 +189,10 @@ type Model struct {
 	confirm components.Confirm
 
 	task                                                      *TaskState
+	taskSeq                                                   int
+	modalOutsidePress, modalOutsideMoved                      bool
+	modalOutsideX, modalOutsideY, modalOutsideQuestionID      int
+	modalOutsideKind                                          ModalKind
 	plan                                                      *installPlan
 	planSeq                                                   int
 	jobs                                                      []*downloadJob
@@ -720,6 +724,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case InstallPreparedMsg:
+		if m.task == nil || (msg.seq != 0 && msg.seq != m.task.seq) {
+			return m, nil
+		}
 		if msg.QueryPkg != "" && (msg.Found || msg.App.Queryable) {
 			if m.instPkg == "" || m.instPkg == msg.QueryPkg {
 				m.instPkg = msg.QueryPkg
@@ -727,10 +734,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.instFound = msg.Found
 			}
 		}
+		if m.task.cancel != nil {
+			m.task.cancel()
+		}
 		cmd := m.finishStartInstall(msg.Path, msg.Meta, msg.App, msg.Found)
 		return m, cmd
 
 	case InstallLogMsg:
+		if m.task == nil || (msg.seq != 0 && msg.seq != m.task.seq) {
+			return m, nil
+		}
 		if m.task != nil {
 			m.task.addLog(msg.Line)
 		}
@@ -738,6 +751,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitInstallLog(m.logCh)
 
 	case InstallDoneMsg:
+		if msg.seq != 0 && (m.task == nil || msg.seq != m.task.seq) {
+			return m, nil
+		}
+		if m.task != nil && m.task.cancel != nil {
+			m.task.cancel()
+		}
 		if m.task != nil {
 			m.task.installDone(msg.Result, msg.Err)
 		}
