@@ -10,10 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ThatOn3Gu7/ghapk/internal/activity"
 	"github.com/ThatOn3Gu7/ghapk/internal/apk"
 	"github.com/ThatOn3Gu7/ghapk/internal/config"
@@ -22,6 +18,10 @@ import (
 	"github.com/ThatOn3Gu7/ghapk/internal/score"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/theme"
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Screen is the top-level view.
@@ -964,15 +964,18 @@ func shortErr(err error) string {
 	return s
 }
 
-// bootstrapDashboard runs once after auth succeeds.
-func (m *Model) bootstrapDashboard() tea.Cmd {
-	var cmds []tea.Cmd
-	repo := m.settings.Repo
-	if m.opts.StartRepo != "" {
-		repo = m.opts.StartRepo
-	} else if !m.opts.RepoOverride && !hasSelectionEnv("GHAPK_REPO") {
-		if state, err := config.LoadSelections(); err != nil {
-			m.toastf("could not load selection: %s", shortErr(err))
+// startupRepo resolves the repository the dashboard will restore, without
+// making network calls or saving a selection. The same resolution is used
+// before the first frame and after authentication.
+func startupRepo(opts Options) (string, error) {
+	repo := opts.Settings.Repo
+	var selectionErr error
+	if opts.StartRepo != "" {
+		repo = opts.StartRepo
+	} else if !opts.RepoOverride && !hasSelectionEnv("GHAPK_REPO") {
+		state, err := config.LoadSelections()
+		if err != nil {
+			selectionErr = err
 		} else if validRepoSlug(state.LastRepo) {
 			repo = state.LastRepo
 		}
@@ -986,6 +989,34 @@ func (m *Model) bootstrapDashboard() tea.Cmd {
 				newest = r.UsedAt
 			}
 		}
+	}
+	return repo, selectionErr
+}
+
+// prepareStartupGlyphs loads the restored repo's effective glyph preference
+// before Bubble Tea renders anything. Other repo settings are still applied
+// when the dashboard is bootstrapped after authentication.
+func prepareStartupGlyphs(opts Options) Options {
+	repo, _ := startupRepo(opts)
+	if repo == "" {
+		return opts
+	}
+	settings := config.LoadForRepo(repo)
+	if value, ok := opts.CLIOverrides["glyphs"]; ok {
+		_ = config.SetValue(&settings, "glyphs", value)
+	}
+	opts.Settings.Glyphs = settings.Glyphs
+	return opts
+}
+
+// bootstrapDashboard runs once after auth succeeds.
+func (m *Model) bootstrapDashboard() tea.Cmd {
+	var cmds []tea.Cmd
+	opts := m.opts
+	opts.Settings.Repo = m.settings.Repo
+	repo, err := startupRepo(opts)
+	if err != nil {
+		m.toastf("could not load selection: %s", shortErr(err))
 	}
 	if repo != "" {
 		if err := m.setRepo(repo, false); err != nil {

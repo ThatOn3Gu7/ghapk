@@ -20,7 +20,11 @@ func (m Model) View() string {
 		return ""
 	}
 	if m.width == 0 {
-		return m.st.Text.Render("  ghapk starting…")
+		startup := m.st.Text.Render("  ghapk starting…")
+		if m.asciiEnabled() {
+			return asciiInterface(startup)
+		}
+		return startup
 	}
 	if m.width < minWidth || m.height < minHeight {
 		v := m.renderTooSmall()

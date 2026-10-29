@@ -3,9 +3,9 @@ package tui
 import (
 	"fmt"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ThatOn3Gu7/ghapk/internal/activity"
 	"github.com/ThatOn3Gu7/ghapk/internal/config"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Run launches the interactive interface in the alternate screen buffer.
@@ -31,6 +31,7 @@ func Run(opts Options) error {
 			_ = store.Close()
 		}
 	}()
+	opts = prepareStartupGlyphs(opts)
 	m := New(opts)
 	options := []tea.ProgramOption{tea.WithAltScreen()}
 	if opts.Settings.Mouse {
