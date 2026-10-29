@@ -128,6 +128,12 @@ go install github.com/ThatOn3Gu7/ghapk@latest
 ╰─────────────────────────────╯╰───────────────────────────────────────╯
 ```
 
+Your last selected repository, branch, and workflow are remembered between TUI
+sessions. Branch and workflow choices are kept separately for each repository,
+including “all branches” and “any workflow”. Explicit command-line flags and
+`GHAPK_REPO`, `GHAPK_BRANCH`, or `GHAPK_WORKFLOW` environment variables take
+precedence for that launch.
+
 | Key | Action |
 | :--- | :--- |
 | `Tab` / `Shift+Tab` | Cycle through screens |

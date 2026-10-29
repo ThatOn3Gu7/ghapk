@@ -5,6 +5,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -50,9 +51,12 @@ const (
 
 // Options customises a session (flags from the CLI).
 type Options struct {
-	Settings  config.Settings
-	StartRepo string
-	PickRun   bool
+	Settings         config.Settings
+	StartRepo        string
+	PickRun          bool
+	RepoOverride     bool
+	BranchOverride   bool
+	WorkflowOverride bool
 }
 
 // Model is the root Bubble Tea model.
@@ -288,6 +292,7 @@ func (m *Model) updateListBounds() {
 }
 
 func (m *Model) loadRecents(current string) {
+	previous, hadPrevious := m.repos.Selected()
 	items := []components.Item{}
 	if current != "" {
 		items = append(items, components.Item{
@@ -306,6 +311,11 @@ func (m *Model) loadRecents(current string) {
 		items = append([]components.Item{{ID: m.gitDetected, Label: m.gitDetected}}, items...)
 	}
 	m.repos.SetItems(items)
+	if hadPrevious {
+		m.repos.SelectByID(previous.ID)
+	} else if current != "" {
+		m.repos.SelectByID(current)
+	}
 }
 
 // Init kicks off environment probes.
@@ -517,28 +527,39 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.wfCatalog = msg.List
+		old, hadCursor := m.workflows.Selected()
 		items := []components.Item{{ID: "", Label: "Any workflow", Rendered: m.st.AccentAlt.Render("◆ Any workflow")}}
+		found := m.settings.Workflow == ""
+		resolvable := found
 		for _, w := range msg.List {
 			items = append(items, components.Item{ID: w.Name, Label: w.Name})
 			m.wfPaths[w.Name] = strings.TrimPrefix(w.Path, "/")
+			if w.Name == m.settings.Workflow {
+				found = true
+			}
+			if m.settings.Workflow != "" && (strings.EqualFold(w.Name, m.settings.Workflow) || w.File() == m.settings.Workflow || strings.TrimPrefix(w.Path, "/") == strings.TrimPrefix(m.settings.Workflow, "/") || fmt.Sprint(w.ID) == m.settings.Workflow || strings.Contains(strings.ToLower(w.Name), strings.ToLower(m.settings.Workflow))) {
+				resolvable = true
+			}
+		}
+		if !found {
+			detail := "unavailable"
+			if resolvable {
+				detail = "current"
+			}
+			items = append(items, components.Item{ID: m.settings.Workflow, Label: m.settings.Workflow, Detail: detail})
+			if !resolvable && !m.wfMissToasted {
+				m.wfMissToasted = true
+				m.toastf("workflow %q not in this repo — showing all runs", m.settings.Workflow)
+			}
 		}
 		m.workflows.SetItems(items)
-		m.workflows.SelectByID(m.settings.Workflow)
+		if hadCursor {
+			m.workflows.SelectByID(old.ID)
+		} else {
+			m.workflows.SelectByID(m.settings.Workflow)
+		}
 		if m.modal == ModalPickWorkflow && m.workflowPicker != nil {
 			m.workflowPicker.setOptions(&m, m.buildWorkflowOptions(), nil)
-		}
-		if wf := m.settings.Workflow; wf != "" {
-			found := false
-			for _, it := range m.workflows.Filtered() {
-				if n, _ := it.ID.(string); n == wf {
-					found = true
-					break
-				}
-			}
-			if !found && !m.wfMissToasted {
-				m.wfMissToasted = true
-				m.toastf("workflow %q not in this repo — showing all runs", wf)
-			}
 		}
 		return m, m.fetchWorkflowForSelection()
 
@@ -843,13 +864,40 @@ func shortErr(err error) string {
 func (m *Model) bootstrapDashboard() tea.Cmd {
 	var cmds []tea.Cmd
 	repo := m.settings.Repo
+	if m.opts.StartRepo != "" {
+		repo = m.opts.StartRepo
+	} else if !m.opts.RepoOverride && !hasSelectionEnv("GHAPK_REPO") {
+		if state, err := config.LoadSelections(); err != nil {
+			m.toastf("could not load selection: %s", shortErr(err))
+		} else if validRepoSlug(state.LastRepo) {
+			repo = state.LastRepo
+		}
+	}
 	if repo == "" {
-		if r := config.LoadRecents(); len(r) > 0 {
-			repo = r[0].Repo
+		// Recents are sorted by favourite first, not by most recently used.
+		var newest time.Time
+		for _, r := range config.LoadRecents() {
+			if validRepoSlug(r.Repo) && (repo == "" || r.UsedAt.After(newest)) {
+				repo = r.Repo
+				newest = r.UsedAt
+			}
 		}
 	}
 	if repo != "" {
-		m.setRepo(repo, false)
+		if err := m.setRepo(repo, false); err != nil {
+			m.toastf("could not load selection: %s", shortErr(err))
+		}
+		if m.opts.BranchOverride {
+			m.settings.Branch = m.opts.Settings.Branch
+			m.branchSel = m.settings.Branch
+			m.rebuildBranchList()
+			m.branchList.SelectByID(m.branchSel)
+		}
+		if m.opts.WorkflowOverride {
+			m.settings.Workflow = m.opts.Settings.Workflow
+			m.workflowSel = m.settings.Workflow
+			m.primeWorkflowSelection()
+		}
 		cmds = append(cmds, m.refreshAll()...)
 	}
 	if repo == "" {
@@ -865,7 +913,7 @@ func (m *Model) bootstrapDashboard() tea.Cmd {
 // setRepo switches the active repository, invalidating cached data.
 // Per-repo config re-applies on top, but session-live choices
 // (theme, watch) survive.
-func (m *Model) setRepo(repo string, persist bool) {
+func (m *Model) setRepo(repo string, persist bool) error {
 	m.navRepo = ""
 	m.repoBranchFocused = false
 	m.branchTouchActive = false
@@ -889,8 +937,18 @@ func (m *Model) setRepo(repo string, persist bool) {
 	if limit > 0 {
 		m.settings.RunLimit = limit
 	}
-	m.branchSel = pickNonEmpty(m.opts.Settings.Branch, m.settings.Branch)
-	m.settings.Branch = m.branchSel
+	selections, loadErr := config.LoadSelections()
+	if loadErr == nil {
+		choice := selections.Repos[strings.ToLower(repo)]
+		if choice.Branch != nil && !hasSelectionEnv("GHAPK_BRANCH") {
+			m.settings.Branch = *choice.Branch
+		}
+		if choice.Workflow != nil && !hasSelectionEnv("GHAPK_WORKFLOW") {
+			m.settings.Workflow = *choice.Workflow
+		}
+	}
+	m.branchSel = m.settings.Branch
+	m.workflowSel = m.settings.Workflow
 	m.branchLoading = true
 	m.runCache = map[int64][]ghapi.Artifact{}
 	m.wfPaths = map[string]string{}
@@ -908,20 +966,62 @@ func (m *Model) setRepo(repo string, persist bool) {
 	m.runsLoaded = false
 	m.runs.SetItems(nil)
 	m.arts.SetItems(nil)
-	m.workflows.SetItems(nil)
+	m.workflows.Filter = ""
+	m.primeWorkflowSelection()
 	m.releases = nil
 	m.rebuildBranchList()
 	m.loadRecents(repo)
+	m.repos.SelectByID(repo)
 	if persist {
 		config.TouchRecent(repo)
+		return config.RememberSelection(repo, true, nil, nil)
 	}
+	return loadErr
 }
 
-func pickNonEmpty(a, b string) string {
-	if a != "" {
-		return a
+// Keep a remembered choice visible even before the catalog loads or offline.
+func (m *Model) primeWorkflowSelection() {
+	m.workflows.SetItems(nil)
+	if m.settings.Workflow == "" {
+		return
 	}
-	return b
+	m.workflows.SetItems([]components.Item{{ID: "", Label: "Any workflow"}, {ID: m.settings.Workflow, Label: m.settings.Workflow, Detail: "current"}})
+	m.workflows.SelectByID(m.settings.Workflow)
+}
+
+// Custom picker/settings values remain visible even without a catalog match.
+func (m *Model) selectWorkflowOption(name string) {
+	m.workflows.Filter = ""
+	found := false
+	for _, item := range m.workflows.Items {
+		if item.ID == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		if len(m.workflows.Items) == 0 && name != "" {
+			m.workflows.Items = append(m.workflows.Items, components.Item{ID: "", Label: "Any workflow"})
+		}
+		label := name
+		detail := "current"
+		if name == "" {
+			label = "Any workflow"
+			detail = ""
+		}
+		m.workflows.Items = append(m.workflows.Items, components.Item{ID: name, Label: label, Detail: detail})
+	}
+	m.workflows.SelectByID(name)
+}
+
+func hasSelectionEnv(key string) bool { return strings.TrimSpace(os.Getenv(key)) != "" }
+func (m *Model) saveSelection(branch, workflow *string) {
+	if m.settings.Repo == "" {
+		return
+	}
+	if err := config.RememberSelection(m.settings.Repo, true, branch, workflow); err != nil {
+		m.toastf("could not save selection: %s", shortErr(err))
+	}
 }
 
 // refreshAll refetches the pieces that depend on the selected repo.

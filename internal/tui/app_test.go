@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +13,10 @@ import (
 )
 
 func newTestModel() Model {
+	// Tests that don't request a shared config start from a clean session.
+	if os.Getenv("GHAPK_CONFIG_DIR") == "" {
+		_ = os.Remove(filepath.Join(config.Dir(), "selections.json"))
+	}
 	s := config.Defaults()
 	s.Repo = "acme/rocket"
 	m := New(Options{Settings: s})

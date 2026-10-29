@@ -469,13 +469,20 @@ func (m *Model) activate() tea.Cmd {
 					m.updateListBounds()
 					return nil
 				}
+				var saveErr error
 				if repo != m.settings.Repo {
-					m.setRepo(repo, true)
+					saveErr = m.setRepo(repo, true)
+				} else {
+					config.TouchRecent(repo)
+					saveErr = config.RememberSelection(repo, true, nil, nil)
 				}
 				m.repos.SelectByID(repo)
 				m.navRepo = repo
 				m.navWorkflowSet = false
 				m.toastf("repo: %s", repo)
+				if saveErr != nil {
+					m.toastf("could not save selection: %s", shortErr(saveErr))
+				}
 				return tea.Batch(m.refreshAll()...)
 			}
 		}
@@ -495,6 +502,7 @@ func (m *Model) activate() tea.Cmd {
 			}
 			m.navWorkflow, m.navWorkflowSet = name, true
 			m.settings.Workflow = name
+			m.workflowSel = name
 			m.runsLoaded = false
 			m.runs.SetItems(nil)
 			m.arts.SetItems(nil)
@@ -504,6 +512,7 @@ func (m *Model) activate() tea.Cmd {
 			} else {
 				m.toastf("workflow: %s", name)
 			}
+			m.saveSelection(nil, &name)
 			return tea.Batch(m.refreshAll()...)
 		}
 	case PanelArtifacts:
@@ -618,7 +627,7 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.workflowPicker.handleKey(msg, &m, func(val string) tea.Cmd {
 				m.settings.Workflow = val
 				m.workflowSel = val
-				m.workflows.SelectByID(val)
+				m.selectWorkflowOption(val)
 				m.runsLoaded = false
 				m.runs.SetItems(nil)
 				m.arts.SetItems(nil)
@@ -628,6 +637,7 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				} else {
 					m.toastf("workflow: %s", val)
 				}
+				m.saveSelection(nil, &val)
 				return tea.Batch(m.refreshAll()...)
 			})
 		}
@@ -805,8 +815,11 @@ func (m *Model) saveRepoEdit() tea.Cmd {
 	m.modal = ModalNone
 	config.RenameRecent(old, new)
 	if m.settings.Repo == old {
-		m.setRepo(new, true)
+		err := m.setRepo(new, true)
 		m.toastf("repo: %s", new)
+		if err != nil {
+			m.toastf("could not save selection: %s", shortErr(err))
+		}
 		return tea.Batch(m.refreshAll()...)
 	}
 	m.loadRecents(m.settings.Repo)
@@ -815,7 +828,7 @@ func (m *Model) saveRepoEdit() tea.Cmd {
 }
 
 func validRepoSlug(s string) bool {
-	if strings.ContainsAny(s, " \t\n") {
+	if strings.ContainsAny(s, " \t\r\n") {
 		return false
 	}
 	parts := strings.Split(s, "/")
@@ -936,6 +949,9 @@ func (m *Model) confirmAccept() tea.Cmd {
 			config.RemoveRecent(target)
 			m.loadRecents(m.settings.Repo)
 			m.toastf("removed %s from recents", target)
+			if err := config.ForgetSelectedRepo(target); err != nil {
+				m.toastf("could not save selection: %s", shortErr(err))
+			}
 		}
 		return nil
 	}
@@ -961,6 +977,7 @@ func (m *Model) selectBranch(branch string) tea.Cmd {
 	} else {
 		m.toastf("branch: %s", branch)
 	}
+	m.saveSelection(&branch, nil)
 	if m.settings.Repo == "" {
 		return nil
 	}
