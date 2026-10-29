@@ -1,5 +1,5 @@
 BINARY  := ghapk
-VERSION := 4.2.6
+VERSION := 4.3.0
 LDFLAGS := -s -w -X main.appVersion=$(VERSION)
 GOFLAGS := -trimpath
 
