@@ -138,6 +138,36 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.screen != ScreenDashboard {
 		return m, nil
 	}
+	if m.settingsUI != nil && m.settingsUI.drag {
+		if msg.Action == tea.MouseActionRelease || msg.Type == tea.MouseRelease {
+			s := m.settingsUI
+			s.drag = false
+			if !s.moved && m.focus == PanelSettings {
+				line := s.offset + msg.Y - 3
+				lines := settingsLines()
+				if line >= 0 && line < len(lines) && lines[line].row >= 0 {
+					row := lines[line].row
+					if row == s.cursor {
+						return s.handleKey(hintKey("enter"), &m)
+					}
+					s.cursor = row
+					s.adjust(&m)
+				}
+			}
+			return m, nil
+		}
+		if msg.Action == tea.MouseActionMotion && msg.Button == tea.MouseButtonLeft {
+			s := m.settingsUI
+			delta := s.dragY - msg.Y
+			if delta != 0 {
+				s.moved = true
+				s.move(delta)
+				s.adjust(&m)
+			}
+			s.dragY = msg.Y
+			return m, nil
+		}
+	}
 	if m.deviceDrag {
 		if msg.Action == tea.MouseActionRelease || msg.Type == tea.MouseRelease {
 			m.deviceDrag = false
@@ -194,10 +224,36 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		for p, r := range m.compactTabRects() {
 			if r.contains(msg.X, msg.Y) {
+				if m.focus == PanelSettings && p != PanelSettings && m.settingsUI.editing {
+					m.settingsUI.editing = false
+					m.settingsUI.input.Blur()
+				}
 				m.focus = p
 				m.wfYAMLFocused = false
 				m.buildDetail = false
 				m.updateListBounds()
+				return m, nil
+			}
+		}
+	}
+	if m.activeTab() == PanelSettings && !m.settingsUI.editing {
+		s := m.settingsUI
+		if msg.Y >= 3 && msg.Y < 3+s.listHeight(&m) && (m.width < 96 || msg.X < m.width*58/100) {
+			switch msg.Type {
+			case tea.MouseWheelUp:
+				s.move(-3)
+				s.adjust(&m)
+				return m, nil
+			case tea.MouseWheelDown:
+				s.move(3)
+				s.adjust(&m)
+				return m, nil
+			case tea.MouseLeft:
+				if msg.Action == tea.MouseActionPress {
+					s.drag = true
+					s.moved = false
+					s.dragY = msg.Y
+				}
 				return m, nil
 			}
 		}
@@ -455,12 +511,7 @@ func (m Model) modalBounds() rect {
 // Outside clicks have the same cancellation semantics as Escape, including
 // rejecting queued install questions and cancelling in-flight preflight work.
 func (m Model) dismissModalOutside() (tea.Model, tea.Cmd) {
-	if m.modal == ModalSettings && m.settingsUI != nil && m.settingsUI.editing {
-		// Escape once abandons an unfinished field; outside click closes the
-		// whole window while preserving earlier changes already applied.
-		m.settingsUI.editing = false
-		m.settingsUI.input.Blur()
-	}
+
 	if m.modal == ModalTask && m.task != nil && m.task.running {
 		m.pendingInstall = false
 		if m.task.cancel != nil {

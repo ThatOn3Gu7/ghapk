@@ -130,12 +130,18 @@ func TestHelpAndSettings(t *testing.T) {
 	}
 	mm, _ = mo.Update(key("s"))
 	mo = mm.(Model)
-	if mo.modal != ModalSettings {
-		t.Fatal("s did not open settings")
+	if mo.modal != ModalNone {
+		t.Fatal("s opened an overlay")
 	}
-	if !strings.Contains(mo.View(), "Arch preference") {
-		t.Error("settings rows missing")
+	mm, _ = mo.Update(key("6"))
+	mo = mm.(Model)
+	if mo.focus != PanelSettings || mo.modal != ModalNone {
+		t.Fatal("6 did not open settings pane")
 	}
+	if !strings.Contains(mo.View(), "Settings") {
+		t.Error("settings pane missing")
+	}
+
 }
 
 func TestCompactLayout(t *testing.T) {

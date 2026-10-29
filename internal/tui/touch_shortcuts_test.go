@@ -193,11 +193,6 @@ func TestFooterTouchesDispatchActions(t *testing.T) {
 				t.Fatal("filter not opened")
 			}
 		}},
-		{"settings", PanelRuns, "s", func(t *testing.T, m Model, c tea.Cmd) {
-			if m.modal != ModalSettings {
-				t.Fatal("settings not opened")
-			}
-		}},
 		{"help", PanelRuns, "?", func(t *testing.T, m Model, c tea.Cmd) {
 			if m.modal != ModalHelp {
 				t.Fatal("help not opened")

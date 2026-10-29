@@ -22,14 +22,12 @@ func outsideTap(m Model, x, y int) (Model, tea.Cmd) {
 }
 
 func TestOutsideClickDismissesEachOverlayWithoutClickThrough(t *testing.T) {
-	for _, kind := range []ModalKind{ModalHelp, ModalSettings, ModalPickRepo, ModalPickBranch, ModalPickWorkflow, ModalEditRepo, ModalConfirm, ModalTask, ModalDoctor, ModalPlan} {
+	for _, kind := range []ModalKind{ModalHelp, ModalPickRepo, ModalPickBranch, ModalPickWorkflow, ModalEditRepo, ModalConfirm, ModalTask, ModalDoctor, ModalPlan} {
 		t.Run(fmt.Sprint(kind), func(t *testing.T) {
 			m := buildModel(t, 100, 30)
 			switch kind {
 			case ModalHelp:
 				m.helpVP = m.buildHelp()
-			case ModalSettings:
-				m.settingsUI = NewSettingsUI(&m)
 			case ModalPickRepo:
 				m.openRepoPicker()
 			case ModalPickBranch:
@@ -59,7 +57,7 @@ func TestOutsideClickDismissesEachOverlayWithoutClickThrough(t *testing.T) {
 			if m.modal != ModalNone || m.settings.Repo != beforeRepo || m.focus != beforeFocus || len(m.jobs) != 0 {
 				t.Fatalf("outside tap did not only dismiss: modal=%v focus=%v repo=%s", m.modal, m.focus, m.settings.Repo)
 			}
-			if kind != ModalSettings && cmd != nil {
+			if cmd != nil {
 				t.Fatalf("unexpected action command for %v", kind)
 			}
 			if kind == ModalConfirm && m.safetyInstallPath != "" {
@@ -150,19 +148,6 @@ func TestOutsideClickCancelsPendingTaskAndIgnoresLateCompletion(t *testing.T) {
 	m = mm.(Model)
 	if cmd != nil || m.task.phase != "downloading" || !m.task.running {
 		t.Fatal("late completion modified a newer task")
-	}
-}
-
-func TestOutsideClickDiscardsUnfinishedSettingsEdit(t *testing.T) {
-	m := buildModel(t, 80, 24)
-	m.settingsUI = NewSettingsUI(&m)
-	m.modal = ModalSettings
-	m.settingsUI.editing = true
-	m.settingsUI.input.SetValue("not saved")
-	old := m.settings.PackageName
-	m, _ = outsideTap(m, 0, 0)
-	if m.modal != ModalNone || m.settingsUI.editing || m.settings.PackageName != old {
-		t.Fatal("outside click saved unfinished setting")
 	}
 }
 

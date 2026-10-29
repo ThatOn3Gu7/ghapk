@@ -329,6 +329,14 @@ func runJob(id int, ctx context.Context, s jobSpec, ch chan tea.Msg) {
 		}
 		result.path = path
 		result.meta = meta
+		if s.settings.OutputDir != "" {
+			copyPath, copyErr := ghapi.CopyAPK(ctx, path, s.settings.OutputDir)
+			if copyErr != nil {
+				fail(fmt.Errorf("APK saved in cache, but output copy failed: %w", copyErr))
+				return
+			}
+			emit("Save", "Copied APK: "+copyPath)
+		}
 		emitJob(ctx, ch, jobEventMsg{id: id, path: path, meta: meta, log: "Saved: " + path})
 	} else {
 		s.dev = device.ProbeContext(ctx)
@@ -392,7 +400,7 @@ func runJob(id int, ctx context.Context, s jobSpec, ch chan tea.Msg) {
 	// Ask separately, as the reference does, so the user can read every risk.
 	// The APK is already saved before any of these choices.
 	for _, w := range safety.Warnings {
-		if w.Blocked {
+		if w.Blocked || (w.Kind == apk.WarnSameVersion && !s.settings.IdenticalCheck) {
 			continue
 		}
 		options := []string{"Cancel", "Install anyway"}
@@ -455,7 +463,7 @@ func runJob(id int, ctx context.Context, s jobSpec, ch chan tea.Msg) {
 		result.status = "launched"
 		emit("Confirm on device", "Installer launched; installation not yet confirmed")
 		if s.settings.VerifyInstall && meta.HaveInfo && installed.Queryable && !(found && (meta.Info.VersionCode <= 0 || installed.VersionCode <= 0 || installed.VersionCode == meta.Info.VersionCode)) {
-			v := device.VerifyInstall(ctx, meta.Info.Package, meta.Info.VersionCode, 30*time.Second)
+			v := device.VerifyInstall(ctx, meta.Info.Package, meta.Info.VersionCode, time.Duration(s.settings.InstallWait)*time.Second)
 			emit("", v.Detail)
 			if v.Outcome == device.VerifyConfirmed {
 				result.status = "installed"

@@ -112,7 +112,7 @@ go install github.com/ThatOn3Gu7/ghapk@latest
 `ghapk` is built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) and supports both **keyboard navigation** and **mouse / touch gestures**:
 
 ```
- 1 Repos   2 Flows   3 Builds   4 Downloads   5 Device
+ 1 Repos   2 Flows   3 Builds   4 Downloads   5 Device   6 Settings
 ╭─ Builds ────────────────────╮╭─ Artifacts ────────────────────────────╮
 │ ✓ #42 feat: block+pipe logo ││ ✓ app-arm64-v8a-debug       14.2 MB  │
 │ ✓ #41 fix: centering        ││ · app-universal-debug       20.1 MB  │
@@ -137,7 +137,7 @@ precedence for that launch.
 | Key | Action |
 | :--- | :--- |
 | `Tab` / `Shift+Tab` | Cycle through screens |
-| `1` – `5` | Jump to Repos, Flows, Builds, Downloads, or Device |
+| `1` – `6` | Jump to Repos, Flows, Builds, Downloads, Device, or Settings |
 | `Enter` | Select a repo, branch, or workflow; press again to move on |
 | `↑` `↓` / `j` `k` | Move cursor in the current list |
 | `g` / `G` | Jump to top / bottom |
@@ -152,7 +152,7 @@ precedence for that launch.
 | `w` | Toggle watch mode (live polling for running CI workflows) |
 | `/` | Real-time fuzzy filter within current panel |
 | `f` | Star / favorite a repository |
-| `s` | Open settings (in Downloads, focus saved APKs) |
+| `s` | In Downloads, focus saved APKs; in Settings, switch save scope |
 | `t` | Cycle color theme (`action`, `mocha`, `emerald`, `paper`) |
 | `D` | Run diagnostic Doctor tool |
 | `?` | Toggle help overlay |
@@ -252,7 +252,20 @@ Detailed instructions on compiler optimization, UPX compression, and distributio
 
 ## ⚙ Configuration
 
-Settings can be customized inside the TUI (`s`) or directly via configuration files:
+Open **Settings** from its tab (or press `6`). Enter changes a setting, `d`
+removes the override at the chosen scope, and `s` switches between this repo and
+everywhere. Changes are saved immediately; source labels show which layer wins.
+CLI flags and environment variables override saved values. Touch works for
+selecting and scrolling; tap a selected row again to change it.
+
+Most Claude-inspired settings are available, including selection and safety,
+output copies, refresh, notifications, glyphs, mouse and theme. The per-pick
+remember policy and watch timeout are not yet available; the install plan and
+its confirmations remain in place. Unattended `uninstall-first` remains
+intentionally unsupported: uninstalling an app can erase its data and still
+requires explicit safety confirmations.
+
+Settings can also be customized directly via configuration files:
 
 - **Global Config:** `~/.config/ghapk/config`
 - **Per-Repository Config:** `~/.config/ghapk/repos/<owner>_<repo>.conf`

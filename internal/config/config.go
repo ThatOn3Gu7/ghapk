@@ -36,6 +36,16 @@ type Settings struct {
 	PackageName     string `key:"package"`
 	RunLimit        int    `key:"limit"`
 	Theme           string `key:"theme"`
+	Glyphs          string `key:"glyphs"`
+	Mouse           bool   `key:"mouse"`
+	AllArch         bool   `key:"all-arch"`
+	IdenticalCheck  bool   `key:"identical-check"`
+	InstallWait     int    `key:"install-wait"`
+	OutputDir       string `key:"out"`
+	ExitSummary     bool   `key:"exit-summary"`
+	NotifyOn        string `key:"notify-on"`
+	Speak           bool   `key:"speak"`
+	Toast           bool   `key:"toast"`
 	NoOpen          bool   `key:"no-open"`
 	KeepCache       bool   `key:"keep-cache"`
 	KeepCount       int    `key:"keep"`
@@ -59,6 +69,12 @@ func Defaults() Settings {
 		Downgrade:       "auto",
 		RunLimit:        20,
 		Theme:           "action",
+		Glyphs:          "auto",
+		Mouse:           true,
+		IdenticalCheck:  true,
+		InstallWait:     90,
+		ExitSummary:     true,
+		NotifyOn:        "always",
 		KeepCount:       3,
 		AutoRefreshSecs: 60,
 		PkgCheck:        true,
@@ -281,12 +297,17 @@ func readTrustedEnv() map[string]string {
 		"file", "exclude", "arch", "variant", "source", "downgrade",
 		"package", "limit", "theme", "no-open", "keep-cache", "keep",
 		"watch", "auto-refresh", "pkg-check", "sig-check",
-		"verify-digest", "verify-install",
+		"verify-digest", "verify-install", "glyphs", "mouse", "all-arch", "identical-check", "install-wait", "out", "exit-summary", "notify-on", "speak", "toast",
 	}
 	for _, k := range keys {
 		envName := "GHAPK_" + strings.ToUpper(strings.ReplaceAll(k, "-", "_"))
 		if v, ok := os.LookupEnv(envName); ok && strings.TrimSpace(v) != "" {
 			out[k] = strings.TrimSpace(v)
+		}
+	}
+	if _, ok := out["auto-refresh"]; !ok {
+		if v := strings.TrimSpace(os.Getenv("GHAPK_REFRESH")); v != "" {
+			out["auto-refresh"] = v
 		}
 	}
 	return out
@@ -424,6 +445,32 @@ func setTrustedField(s *Settings, k, v string) {
 		if v != "" {
 			s.Theme = v
 		}
+	case "glyphs":
+		if oneOf(v, "auto", "unicode", "ascii") {
+			s.Glyphs = v
+		}
+	case "mouse":
+		s.Mouse = truthy(v)
+	case "all-arch":
+		s.AllArch = truthy(v)
+	case "identical-check":
+		s.IdenticalCheck = truthy(v)
+	case "install-wait":
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 3600 {
+			s.InstallWait = n
+		}
+	case "notify-on":
+		if oneOf(v, "always", "success", "failure", "never") {
+			s.NotifyOn = v
+		}
+	case "speak":
+		s.Speak = truthy(v)
+	case "toast":
+		s.Toast = truthy(v)
+	case "out":
+		s.OutputDir = v
+	case "exit-summary":
+		s.ExitSummary = truthy(v)
 	case "no-open":
 		s.NoOpen = truthy(v)
 	case "keep-cache":
@@ -535,6 +582,16 @@ func encode(s Settings, repoLevel bool) string {
 	kvline(&b, "keep-cache", untruth(s.KeepCache))
 	kvline(&b, "keep", fmt.Sprint(s.KeepCount))
 	kvline(&b, "watch", untruth(s.Watch))
+	kvline(&b, "glyphs", s.Glyphs)
+	kvline(&b, "mouse", untruth(s.Mouse))
+	kvline(&b, "all-arch", untruth(s.AllArch))
+	kvline(&b, "identical-check", untruth(s.IdenticalCheck))
+	kvline(&b, "install-wait", fmt.Sprint(s.InstallWait))
+	kvline(&b, "out", s.OutputDir)
+	kvline(&b, "exit-summary", untruth(s.ExitSummary))
+	kvline(&b, "notify-on", s.NotifyOn)
+	kvline(&b, "speak", untruth(s.Speak))
+	kvline(&b, "toast", untruth(s.Toast))
 	return b.String()
 }
 

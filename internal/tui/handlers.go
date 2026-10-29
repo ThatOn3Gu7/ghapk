@@ -45,6 +45,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleFilterKey(msg)
 	}
 
+	if m.focus == PanelSettings && (m.settingsUI.editing || key == "up" || key == "down" || key == "j" || key == "k" || key == "pgup" || key == "pgdown" || key == "ctrl+u" || key == "ctrl+d" || key == "g" || key == "G" || key == "s" || key == "d" || key == "enter" || key == " " || key == "left" || key == "right" || key == "h" || key == "l") {
+		return m.settingsUI.handleKey(msg, &m)
+	}
 	if m.focus == PanelDevice {
 		switch key {
 		case "j", "down":
@@ -157,11 +160,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.helpVP, m.helpLineEntries = m.helpLayout()
 		return m, nil
 
-	case "s":
-		m.settingsUI = NewSettingsUI(&m)
-		m.modal = ModalSettings
-		return m, nil
-
 	case "D":
 		return m, m.openDoctor()
 
@@ -191,13 +189,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "w":
 		m.settings.Watch = !m.settings.Watch
 		if m.settings.Watch {
-			m.refreshSecs = 15
-			m.toastf("watch on — refreshing every 15s")
-			return m, tea.Batch(m.refreshAll()...)
+			m.refreshSecs = m.settings.AutoRefreshSecs
+			m.toastf("watch on — faster while builds are active")
+			m.refreshSeq++
+			return m, tea.Batch(append(m.refreshAll(), refreshTickCmd(m.effectiveRefreshSecs(), m.refreshSeq))...)
 		}
 		m.refreshSecs = m.settings.AutoRefreshSecs
 		m.toastf("watch off")
-		return m, nil
+		m.refreshSeq++
+		return m, refreshTickCmd(m.effectiveRefreshSecs(), m.refreshSeq)
 
 	case "r":
 		if m.settings.Repo == "" {
@@ -749,15 +749,6 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, nil
-		}
-		if key == "esc" || key == "q" {
-			m.modal = ModalNone
-		}
-		return m, nil
-
-	case ModalSettings:
-		if m.settingsUI != nil {
-			return m.settingsUI.handleKey(msg, &m)
 		}
 		if key == "esc" || key == "q" {
 			m.modal = ModalNone

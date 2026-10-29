@@ -38,7 +38,6 @@ type ModalKind int
 const (
 	ModalNone ModalKind = iota
 	ModalHelp
-	ModalSettings
 	ModalPickRepo
 	ModalPickBranch
 	ModalPickWorkflow
@@ -57,6 +56,7 @@ type Options struct {
 	RepoOverride     bool
 	BranchOverride   bool
 	WorkflowOverride bool
+	CLIOverrides     map[string]string
 }
 
 // Model is the root Bubble Tea model.
@@ -221,6 +221,7 @@ type Model struct {
 	doctor *DoctorState
 
 	watchTicker bool // whether refresh ticks are running
+	refreshSeq  int
 	refreshSecs int
 
 	// debounce for repo search
@@ -244,6 +245,7 @@ type Model struct {
 // New builds the root model.
 func New(opts Options) Model {
 	th := theme.New(theme.Get(opts.Settings.Theme))
+	applyGlyphs(&th, opts.Settings.Glyphs)
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = th.Accent
@@ -271,6 +273,7 @@ func New(opts Options) Model {
 		progCh:         make(chan tea.Msg, 64),
 		logCh:          make(chan tea.Msg, 64),
 	}
+	m.settingsUI = NewSettingsUI(&m)
 	m.refreshSaved()
 	m.loadRecents("")
 	m.updateListBounds()
@@ -336,6 +339,7 @@ func (m Model) Init() tea.Cmd {
 		detectGitRepoCmd(),
 		m.spin.Tick,
 		shimmerTickCmd(),
+		refreshTickCmd(m.effectiveRefreshSecs(), m.refreshSeq),
 	)
 }
 
@@ -346,12 +350,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := next.(type) {
 	case Model:
 		v.showNextJobQuestion()
+		if v.effectiveRefreshSecs() != m.effectiveRefreshSecs() && v.refreshSeq == m.refreshSeq {
+			v.refreshSeq++
+			cmd = tea.Batch(cmd, refreshTickCmd(v.effectiveRefreshSecs(), v.refreshSeq))
+		}
 		if v.focus != m.focus || v.settings.Repo != m.settings.Repo || (m.deviceHistoryLoaded && !v.deviceHistoryLoaded) || (m.deviceHistoryLoading && !v.deviceHistoryLoading) {
 			cmd = tea.Batch(cmd, v.ensureDeviceHistory())
 		}
 		return v, cmd
 	case *Model:
 		v.showNextJobQuestion()
+		if v.effectiveRefreshSecs() != m.effectiveRefreshSecs() && v.refreshSeq == m.refreshSeq {
+			v.refreshSeq++
+			cmd = tea.Batch(cmd, refreshTickCmd(v.effectiveRefreshSecs(), v.refreshSeq))
+		}
 		if v.focus != m.focus || v.settings.Repo != m.settings.Repo || (m.deviceHistoryLoaded && !v.deviceHistoryLoaded) || (m.deviceHistoryLoading && !v.deviceHistoryLoading) {
 			cmd = tea.Batch(cmd, v.ensureDeviceHistory())
 		}
@@ -379,15 +391,31 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case jobQuestionMsg:
 		return m, m.handleJobQuestion(msg)
 	case jobFinishedMsg:
+		var notification tea.Cmd
+		if j := m.jobByID(msg.id); j != nil && msg.status != "cancelled" {
+			settings := j.spec.settings
+			success := msg.err == nil && msg.status != "launched"
+			message := "Job completed"
+			if msg.status == "launched" {
+				message = "Installer opened; installation is unconfirmed"
+			}
+			if msg.err != nil {
+				message = "Job failed: " + msg.err.Error()
+			}
+			notification = func() tea.Msg {
+				device.Notify(settings.NotifyOn, settings.Speak, settings.Toast, success, "GH APK", message)
+				return nil
+			}
+		}
 		m.deviceHistorySeq++
 		m.deviceHistoryLoaded = false
 		m.deviceHistoryLoading = false
 		m.handleJobFinished(msg)
 		if m.quitAfterJobs && !m.hasActiveJobs() {
 			m.quitting = true
-			return m, tea.Quit
+			return m, tea.Batch(notification, tea.Quit)
 		}
-		return m, nil
+		return m, notification
 
 	case tea.MouseMsg:
 		if m.quitAfterJobs {
@@ -777,7 +805,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.Result.Outcome == device.OutcomeLaunched:
 			m.toastf("installer launched (%s) — confirm on device", msg.Result.Via)
 			if m.settings.VerifyInstall && pkg != "" && meta.HaveInfo && m.installBaselineQueryable && !(m.installBaselineFound && m.installBaselinePackage == pkg && (m.installBaselineCode <= 0 || meta.Info.VersionCode <= 0 || m.installBaselineCode == meta.Info.VersionCode)) {
-				cmds = append(cmds, verifyInstallCmd(pkg, meta.Info.VersionCode, 30*time.Second))
+				cmds = append(cmds, verifyInstallCmd(pkg, meta.Info.VersionCode, time.Duration(m.settings.InstallWait)*time.Second))
 			}
 		default:
 			m.toastf("installed via %s ✓", msg.Result.Via)
@@ -819,10 +847,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case RefreshTickMsg:
-		if m.screen != ScreenDashboard || m.modal != ModalNone {
-			return m, refreshTickCmd(m.effectiveRefreshSecs())
+		if msg.Seq != m.refreshSeq {
+			return m, nil
 		}
-		cmds := []tea.Cmd{refreshTickCmd(m.effectiveRefreshSecs())}
+		if m.screen != ScreenDashboard || m.modal != ModalNone {
+			return m, refreshTickCmd(m.effectiveRefreshSecs(), m.refreshSeq)
+		}
+		cmds := []tea.Cmd{refreshTickCmd(m.effectiveRefreshSecs(), m.refreshSeq)}
 		if m.settings.Repo != "" {
 			cmds = append(cmds, fetchRunsCmd(m.settings.Repo, m.settings.Workflow, m.branchSel, m.settings.RunLimit))
 		}
@@ -952,16 +983,8 @@ func (m *Model) setRepo(repo string, persist bool) error {
 	m.repo = ghapi.Repo{}
 	m.navWorkflow = ""
 	m.navWorkflowSet = false
-	theme, watch, limit := m.settings.Theme, m.settings.Watch, m.settings.RunLimit
 	m.settings = config.LoadForRepo(repo)
 	m.settings.Repo = repo
-	if theme != "" {
-		m.settings.Theme = theme
-	}
-	m.settings.Watch = watch
-	if limit > 0 {
-		m.settings.RunLimit = limit
-	}
 	selections, loadErr := config.LoadSelections()
 	if loadErr == nil {
 		choice := selections.Repos[strings.ToLower(repo)]
@@ -972,6 +995,19 @@ func (m *Model) setRepo(repo string, persist bool) error {
 			m.settings.Workflow = *choice.Workflow
 		}
 	}
+	for k, v := range m.opts.CLIOverrides {
+		if k != "repo" {
+			_ = config.SetValue(&m.settings, k, v)
+		}
+	}
+	if m.opts.BranchOverride {
+		m.settings.Branch = m.opts.Settings.Branch
+	}
+	if m.opts.WorkflowOverride {
+		m.settings.Workflow = m.opts.Settings.Workflow
+	}
+	m.applyTheme(m.settings.Theme)
+	m.refreshSecs = m.settings.AutoRefreshSecs
 	m.branchSel = m.settings.Branch
 	m.workflowSel = m.settings.Workflow
 	m.branchLoading = true
@@ -1073,7 +1109,7 @@ func (m *Model) refreshAll() []tea.Cmd {
 
 func (m *Model) effectiveRefreshSecs() int {
 	// fast ticks while something is in flight, the configured cadence otherwise
-	if m.watchActive() {
+	if m.settings.Watch && m.watchActive() {
 		return 15
 	}
 	if m.refreshSecs > 0 {
@@ -1155,7 +1191,7 @@ func firstLineS(s string) string {
 // scoreArtifacts ranks a run's artifacts for this device and prefs,
 // sorted best-first (mirrors select_candidates in the script).
 func (m *Model) scoreArtifacts(list []ghapi.Artifact) []ghapi.Artifact {
-	prefs := score.Prefs{Arch: m.settings.Arch, Variant: m.settings.Variant}
+	prefs := prefsFromSettings(m.settings)
 	dev := score.Device{ABIs: m.dev.ABIs, SDK: m.dev.SDK}
 	out := make([]ghapi.Artifact, 0, len(list))
 	for _, a := range list {
@@ -1461,7 +1497,17 @@ func (m *Model) cursorArtifact() (ghapi.Artifact, bool) {
 func (m *Model) applyTheme(name string) {
 	m.settings.Theme = name
 	m.st = theme.New(theme.Get(name))
+	applyGlyphs(&m.st, m.settings.Glyphs)
 	m.spin.Style = m.st.Accent
+}
+
+func applyGlyphs(st *theme.Styles, mode string) {
+	if mode == "ascii" {
+		st.G = theme.ASCIIGlyphs
+	}
+	if mode == "unicode" {
+		st.G = theme.UnicodeGlyphs
+	}
 }
 
 func (m *Model) recordAPKHistory(meta apk.Inspection) {
@@ -1487,7 +1533,7 @@ func (m *Model) rankedReleases() []ghapi.RankedReleaseAsset {
 	if len(m.releases) == 0 {
 		return nil
 	}
-	prefs := score.Prefs{Arch: m.settings.Arch, Variant: m.settings.Variant}
+	prefs := prefsFromSettings(m.settings)
 	dev := score.Device{ABIs: m.dev.ABIs, SDK: m.dev.SDK}
 	return ghapi.RankReleaseAssets(
 		m.releases,

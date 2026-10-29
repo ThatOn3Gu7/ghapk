@@ -160,7 +160,10 @@ func (m Model) renderStatusBar() string {
 func (m Model) statusBar() components.StatusBar {
 	hints := []components.Hint{}
 	add := func(k, d, action string) { hints = append(hints, components.Hint{Key: k, Desc: d, Action: action}) }
-	if m.filterMode {
+	if m.focus == PanelSettings && m.settingsUI != nil && m.settingsUI.editing {
+		add("enter", "save", "enter")
+		add("esc", "cancel", "esc")
+	} else if m.filterMode {
 		add("⌫", "delete", "backspace")
 		add("esc", "clear", "esc")
 		add("enter", "keep", "enter")
@@ -188,6 +191,10 @@ func (m Model) statusBar() components.StatusBar {
 					add("→/v", "view yaml", "right")
 				}
 			}
+		case PanelSettings:
+			add("↵", "change", "enter")
+			add("d", "reset", "d")
+			add("s", "scope", "s")
 		case PanelDevice:
 			add("↑", "up", "up")
 			add("↓", "down", "down")
@@ -220,9 +227,6 @@ func (m Model) statusBar() components.StatusBar {
 		add("tab", "panels", "tab")
 		if m.focusedListOrNil() != nil {
 			add("/", "filter", "/")
-		}
-		if m.focus != PanelDownloads {
-			add("s", "settings", "s")
 		}
 		add("?", "help", "?")
 		add("q", "quit", "q")
@@ -271,6 +275,11 @@ func (m Model) renderCompact(h int) string {
 		return tabBar + "\n" + m.renderBuilds()
 	case PanelDownloads:
 		return tabBar + "\n" + m.renderDownloads()
+	case PanelSettings:
+		if m.settingsUI == nil {
+			m.settingsUI = NewSettingsUI(&m)
+		}
+		return tabBar + "\n" + m.settingsUI.render(&m, bodyH)
 	default:
 		content = m.deviceContent(m.width, bodyH, &m)
 	}
@@ -292,9 +301,9 @@ func (m Model) tabLabels() (map[PanelID]string, bool) {
 	if total+2 <= m.width {
 		return labels, false
 	}
-	labels = map[PanelID]string{PanelRepos: "1 Repo", PanelRuns: "3 Build", PanelWorkflows: "2 Flow", PanelDownloads: "4 DL", PanelDevice: "5 Dev"}
-	if m.width < 35 {
-		labels = map[PanelID]string{PanelRepos: "1 Rep", PanelWorkflows: "2 Flo", PanelRuns: "3 Bld", PanelDevice: "5 Dev", PanelDownloads: "4 DL"}
+	labels = map[PanelID]string{PanelRepos: "1 Repo", PanelRuns: "3 Build", PanelWorkflows: "2 Flow", PanelDownloads: "4 DL", PanelDevice: "5 Dev", PanelSettings: "6 Set"}
+	if m.width < 41 {
+		labels = map[PanelID]string{PanelRepos: "1 Rp", PanelWorkflows: "2 Fl", PanelRuns: "3 Bd", PanelDownloads: "4 Dl", PanelDevice: "5 Dv", PanelSettings: "6 St"}
 	}
 	return labels, false
 }
@@ -362,6 +371,8 @@ func panelShort(p PanelID) string {
 		return "Artif"
 	case PanelDownloads:
 		return "Downloads"
+	case PanelSettings:
+		return "Settings"
 	default:
 		return "Device"
 	}
