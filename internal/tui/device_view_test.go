@@ -122,7 +122,7 @@ func TestDeviceMiddleAndTabOrdering(t *testing.T) {
 	for _, tc := range []struct {
 		key   string
 		panel PanelID
-	}{{"4", PanelDownloads}, {"5", PanelDevice}} {
+	}{{"4", PanelDownloads}, {"5", PanelSettings}, {"6", PanelDevice}, {"7", PanelLog}} {
 		mm, _ := m.Update(key(tc.key))
 		if mm.(Model).focus != tc.panel {
 			t.Fatalf("%s did not select %v", tc.key, tc.panel)

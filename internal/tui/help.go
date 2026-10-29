@@ -72,7 +72,7 @@ func (m Model) helpLayout() (viewport.Model, []int) {
 
 	h1("Moving around")
 	row("tab / shift+tab", "cycle panels")
-	row("1 … 6", "jump to Repos, Flows, Builds, Downloads, Device, Settings")
+	row("1 … 7", "jump to Repos, Flows, Builds, Downloads, Settings, Device, Log")
 	row("enter", "select a repo, branch or workflow; enter again to move on")
 	row("j / k · ↑ / ↓", "move in a list")
 	row("ctrl+d / ctrl+u", "page a list")
@@ -112,6 +112,7 @@ func (m Model) helpLayout() (viewport.Model, []int) {
 	row("B", "branch picker (filter + default/protected/PR branches)")
 	row("W", "workflow picker outside Help (filter by name or .yml)")
 	row("Settings pane", "enter changes, d resets, s switches save scope")
+	row("Log pane", "scroll with arrows or swipe; f follows, y copies recent entries")
 	row("t", "cycle theme")
 	row("D", "doctor — environment health check")
 	row("?", "this help")

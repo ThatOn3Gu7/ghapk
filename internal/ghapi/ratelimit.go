@@ -5,8 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"time"
+
+	"github.com/ghapk/ghapk/internal/activity"
 )
 
 type RateLimit struct {
@@ -19,7 +20,7 @@ type RateLimit struct {
 func CoreRateLimit(parent context.Context) (RateLimit, error) {
 	ctx, cancel := context.WithTimeout(parent, 8*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", "api", "rate_limit")
+	cmd := activity.CommandContext(ctx, "gh", "api", "rate_limit")
 	cmd.WaitDelay = time.Second
 	var out bytes.Buffer
 	cmd.Stdout = &out

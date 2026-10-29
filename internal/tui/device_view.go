@@ -227,7 +227,11 @@ func (m Model) deviceLines(w int) []string {
 	} else {
 		row("free space", "unknown", st.Dim)
 	}
-	row("log", "session only (not saved to a file)", st.Dim)
+	if m.activity != nil {
+		row("log", m.activity.Path(), st.Dim)
+	} else {
+		row("log", "unavailable", st.Dim)
+	}
 	return lines
 }
 

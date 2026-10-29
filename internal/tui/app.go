@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/ghapk/ghapk/internal/activity"
 	"github.com/ghapk/ghapk/internal/apk"
 	"github.com/ghapk/ghapk/internal/config"
 	"github.com/ghapk/ghapk/internal/device"
@@ -57,6 +58,8 @@ type Options struct {
 	BranchOverride   bool
 	WorkflowOverride bool
 	CLIOverrides     map[string]string
+	Activity         *activity.Store
+	LogError         string
 }
 
 // Model is the root Bubble Tea model.
@@ -77,6 +80,10 @@ type Model struct {
 
 	// data
 	settings config.Settings
+	activity *activity.Store
+	logError string
+	logState *logViewState
+	logSeq   int
 	dev      device.Info
 	repo     ghapi.Repo
 
@@ -254,6 +261,9 @@ func New(opts Options) Model {
 		screen:         ScreenBoot,
 		opts:           opts,
 		settings:       opts.Settings,
+		activity:       opts.Activity,
+		logError:       opts.LogError,
+		logState:       &logViewState{follow: true},
 		st:             th,
 		spin:           sp,
 		runCache:       map[int64][]ghapi.Artifact{},
@@ -346,10 +356,18 @@ func (m Model) Init() tea.Cmd {
 // ───────────────────────────── UPDATE ─────────────────────────────
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.auditInput(msg)
 	next, cmd := m.update(msg)
 	switch v := next.(type) {
 	case Model:
 		v.showNextJobQuestion()
+		m.auditTransition(v)
+		if v.focus != m.focus && (v.focus == PanelLog || m.focus == PanelLog) {
+			v.logSeq++
+			if v.focus == PanelLog && v.activity != nil {
+				cmd = tea.Batch(cmd, logTickCmd(v.logSeq))
+			}
+		}
 		if v.effectiveRefreshSecs() != m.effectiveRefreshSecs() && v.refreshSeq == m.refreshSeq {
 			v.refreshSeq++
 			cmd = tea.Batch(cmd, refreshTickCmd(v.effectiveRefreshSecs(), v.refreshSeq))
@@ -360,6 +378,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return v, cmd
 	case *Model:
 		v.showNextJobQuestion()
+		m.auditTransition(*v)
+		if v.focus != m.focus && (v.focus == PanelLog || m.focus == PanelLog) {
+			v.logSeq++
+			if v.focus == PanelLog && v.activity != nil {
+				cmd = tea.Batch(cmd, logTickCmd(v.logSeq))
+			}
+		}
 		if v.effectiveRefreshSecs() != m.effectiveRefreshSecs() && v.refreshSeq == m.refreshSeq {
 			v.refreshSeq++
 			cmd = tea.Batch(cmd, refreshTickCmd(v.effectiveRefreshSecs(), v.refreshSeq))
@@ -374,6 +399,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case logTickMsg:
+		if msg.seq == m.logSeq && m.focus == PanelLog && m.activity != nil {
+			return m, logTickCmd(m.logSeq)
+		}
+		return m, nil
+	case logCopiedMsg:
+		if msg.err != nil {
+			m.toastf("copy failed: %s", shortErr(msg.err))
+		} else {
+			m.toastf("copied last 60 log entries")
+		}
+		return m, nil
 	case planReadyMsg:
 		if m.modal == ModalPlan && m.plan != nil && m.plan.seq == msg.seq {
 			m.plan.loading = false
@@ -1441,6 +1478,11 @@ func (m *Model) invalidateArtifacts() {
 }
 
 func (m *Model) toastf(format string, a ...any) {
+	if m.activity != nil {
+		// Persist the message template, not interpolated user-entered values.
+		message := strings.NewReplacer("%s", "[details]", "%q", "[details]", "%v", "[details]", "%d", "[details]").Replace(format)
+		_ = m.activity.Write("notice", message)
+	}
 	m.toast = fmt.Sprintf(format, a...)
 	m.toastUntil = time.Now().Add(4 * time.Second)
 }

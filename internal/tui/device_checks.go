@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,6 +14,8 @@ import (
 	"github.com/ghapk/ghapk/internal/config"
 	"github.com/ghapk/ghapk/internal/device"
 	"github.com/ghapk/ghapk/internal/ghapi"
+
+	"github.com/ghapk/ghapk/internal/activity"
 )
 
 type deviceChecks struct {
@@ -133,7 +134,7 @@ func cacheFree(ctx context.Context, path string) (int64, bool) {
 		}
 		path = next
 	}
-	cmd := exec.CommandContext(ctx, "df", "-Pk", path)
+	cmd := activity.CommandContext(ctx, "df", "-Pk", path)
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil {

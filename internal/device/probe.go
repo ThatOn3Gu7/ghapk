@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ghapk/ghapk/internal/activity"
 )
 
 // Info describes the target device as well as we can tell.
@@ -179,7 +181,7 @@ func runShortCmdContext(parent context.Context, timeout time.Duration, name stri
 	if probeCmdHook != nil {
 		return probeCmdHook(ctx, name, args...)
 	}
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := activity.CommandContext(ctx, name, args...)
 	cmd.WaitDelay = time.Second
 	b, err := cmd.CombinedOutput()
 	return string(b), err
@@ -253,7 +255,7 @@ func probeHost(in *Info) {
 	if target == "" {
 		target = "."
 	}
-	if out, err := exec.Command("df", "-Pk", target).Output(); err == nil {
+	if out, err := activity.Command("df", "-Pk", target).Output(); err == nil {
 		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 		if len(lines) >= 2 {
 			f := strings.Fields(lines[len(lines)-1])
@@ -322,7 +324,7 @@ func getprop(key string) string { return getpropContext(context.Background(), ke
 func getpropContext(parent context.Context, key string) string {
 	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "getprop", key)
+	cmd := activity.CommandContext(ctx, "getprop", key)
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil {

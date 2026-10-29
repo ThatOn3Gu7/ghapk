@@ -112,7 +112,7 @@ go install github.com/ThatOn3Gu7/ghapk@latest
 `ghapk` is built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) and supports both **keyboard navigation** and **mouse / touch gestures**:
 
 ```
- 1 Repos   2 Flows   3 Builds   4 Downloads   5 Device   6 Settings
+ 1 Repos   2 Flows   3 Builds   4 Downloads   5 Settings   6 Device   7 Log
 ╭─ Builds ────────────────────╮╭─ Artifacts ────────────────────────────╮
 │ ✓ #42 feat: block+pipe logo ││ ✓ app-arm64-v8a-debug       14.2 MB  │
 │ ✓ #41 fix: centering        ││ · app-universal-debug       20.1 MB  │
@@ -137,7 +137,7 @@ precedence for that launch.
 | Key | Action |
 | :--- | :--- |
 | `Tab` / `Shift+Tab` | Cycle through screens |
-| `1` – `6` | Jump to Repos, Flows, Builds, Downloads, Device, or Settings |
+| `1` – `7` | Jump to Repos, Flows, Builds, Downloads, Settings, Device, or Log |
 | `Enter` | Select a repo, branch, or workflow; press again to move on |
 | `↑` `↓` / `j` `k` | Move cursor in the current list |
 | `g` / `G` | Jump to top / bottom |
@@ -164,7 +164,7 @@ During installation, ghapk compares the APK's actual package and version code wi
 
 When several APKs in an archive rank equally, choose which one to extract instead of silently guessing. Safety questions use numbered options; use ↑/↓ and Enter, or tap an option. Swipe or use Page Down to read a long warning before proceeding.
 
-Artifact rows use name-based platform or file-type icons (🤖 Android, 📱 iOS, 🍎 macOS, ⊞ Windows, 🐧 Linux, 🌐 web, 📄 document, 📦 archive, ◇ unknown). An `!` marks an artifact rejected by your architecture or variant preferences. Icons are hints, not verified compatibility: Actions artifact names don't reveal their contents or app icons, and installation remains APK-focused. Set `GHAPK_ASCII=1` for letter-based icons.
+Artifact rows use name-based platform or file-type icons (🤖 Android, 📱 iOS, 🍎 macOS, ⊞ Windows, 🐧 Linux, 🌐 web, 📄 document, 📦 archive, ◇ unknown). An `!` marks an artifact rejected by your architecture or variant preferences. Icons are hints, not verified compatibility: Actions artifact names don't reveal their contents or app icons, and installation remains APK-focused. Select **ASCII** in Settings (or set `GHAPK_ASCII=1` in auto mode) for ASCII borders, indicators, and icons; non-English repository names and other user text are preserved.
 
 On Repos, select a repository and then a branch; choose “all branches” to leave Actions runs unfiltered. Branches come from GitHub and, when the current working tree has a matching GitHub origin, its local branches. A local-only branch needs a pushed Actions run to have downloadable artifacts.
 
@@ -252,7 +252,7 @@ Detailed instructions on compiler optimization, UPX compression, and distributio
 
 ## ⚙ Configuration
 
-Open **Settings** from its tab (or press `6`). Enter changes a setting, `d`
+Open **Settings** from its tab (or press `5`). Enter changes a setting, `d`
 removes the override at the chosen scope, and `s` switches between this repo and
 everywhere. Changes are saved immediately; source labels show which layer wins.
 CLI flags and environment variables override saved values. Touch works for
@@ -271,6 +271,19 @@ Settings can also be customized directly via configuration files:
 - **Per-Repository Config:** `~/.config/ghapk/repos/<owner>_<repo>.conf`
 - **Local Workspace Config:** `.ghapk.conf`
 - **Downloaded APK Storage:** `~/.cache/ghapk/apk/`
+
+### Activity log
+
+The **Log** tab (7) shows timestamped activity and job steps across sessions,
+grouped by date. Use the arrow keys or swipe to scroll, `f` to follow new
+entries, and `y` to copy the last 60 entries. The private log is stored at
+`~/.config/ghapk/activity.log` (or under `GHAPK_CONFIG_DIR` / `XDG_CONFIG_HOME`)
+and keeps the newest entries when it reaches 1 MiB. Log-file errors are shown in the Log tab.
+
+The log can include repository names, file paths, command names and their
+arguments. Typed search/edit text and streamed installer output are not recorded;
+error messages may include command output. Recognizable credentials and URL queries are redacted. Review the log before
+sharing it, because automatic redaction cannot identify every possible secret.
 
 ### Downloads and installation
 

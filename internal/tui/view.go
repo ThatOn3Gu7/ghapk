@@ -23,7 +23,11 @@ func (m Model) View() string {
 		return m.st.Text.Render("  ghapk starting…")
 	}
 	if m.width < minWidth || m.height < minHeight {
-		return m.renderTooSmall()
+		v := m.renderTooSmall()
+		if m.asciiEnabled() {
+			return asciiInterface(v)
+		}
+		return v
 	}
 
 	var base string
@@ -35,9 +39,16 @@ func (m Model) View() string {
 	}
 
 	if box := m.modalBox(); box != "" {
-		return components.Overlay(base, box, m.width, m.height)
+		base = components.Overlay(base, box, m.width, m.height)
+	}
+	if m.asciiEnabled() {
+		return asciiInterface(base)
 	}
 	return base
+}
+
+func (m Model) asciiEnabled() bool {
+	return m.settings.Glyphs == "ascii" || ((m.settings.Glyphs == "auto" || m.settings.Glyphs == "") && m.st.G == theme.ASCIIGlyphs)
 }
 
 // modalBox is shared by rendering and modal mouse hit-testing.

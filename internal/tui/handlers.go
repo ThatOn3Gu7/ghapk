@@ -45,6 +45,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleFilterKey(msg)
 	}
 
+	if m.focus == PanelLog {
+		if handled, cmd := m.logKey(key); handled {
+			return m, cmd
+		}
+	}
 	if m.focus == PanelSettings && (m.settingsUI.editing || key == "up" || key == "down" || key == "j" || key == "k" || key == "pgup" || key == "pgdown" || key == "ctrl+u" || key == "ctrl+d" || key == "g" || key == "G" || key == "s" || key == "d" || key == "enter" || key == " " || key == "left" || key == "right" || key == "h" || key == "l") {
 		return m.settingsUI.handleKey(msg, &m)
 	}
