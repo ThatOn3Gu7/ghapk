@@ -115,11 +115,13 @@ cp /sdcard/ghapk $PREFIX/bin/ghapk && chmod +x $PREFIX/bin/ghapk
 `make release` builds six binaries and their `sha256sums.txt`. Set `VERSION`
 when building a different version, for example `make release VERSION=4.3.0`.
 
-The release workflow runs for `v*` tags or by manual dispatch with an existing tag. Add handwritten
+The release workflow runs for `v*` tags or by manual dispatch on the desired target ref. Add handwritten
 notes at `docs/releases/<tag>.md` before tagging. It builds the same six targets,
 packages the checked-out source, and includes its SHA-256 in `sha256sums.txt`.
 If a release for that tag already exists, the workflow leaves it and its assets
-untouched; publish or update those assets manually instead. For a manual
+untouched by default. To upload to an existing draft, use manual dispatch with
+`upload_draft` enabled; the draft must target the exact commit being built.
+Published releases are never overwritten. For a manual
 release, build from the exact committed target, add a source archive and its
 checksum, then use `gh release create` with `--target` and `--notes-file`.
 Review the tag, notes, assets, and checksums before publishing.
