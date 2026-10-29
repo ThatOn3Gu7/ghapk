@@ -109,8 +109,12 @@ type DownloadDoneMsg struct {
 	Err     error
 }
 
-type InstallLogMsg struct{ Line string }
+type InstallLogMsg struct {
+	Line string
+	seq  int
+}
 type InstallPreparedMsg struct {
+	seq      int
 	Path     string
 	Meta     apk.Inspection
 	QueryPkg string
@@ -118,6 +122,7 @@ type InstallPreparedMsg struct {
 	Found    bool
 }
 type InstallDoneMsg struct {
+	seq    int
 	Result device.InstallResult
 	Err    error
 }
@@ -333,24 +338,28 @@ func waitProgress(progCh chan tea.Msg) tea.Cmd {
 	}
 }
 
-func installApkCmd(path string, allowDowngrade bool, logCh chan tea.Msg) tea.Cmd {
+func installApkCmd(ctx context.Context, seq int, path string, allowDowngrade bool, logCh chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
+		defer close(logCh)
 		logf := func(line string) {
 			select {
-			case logCh <- InstallLogMsg{Line: line}:
+			case logCh <- InstallLogMsg{Line: line, seq: seq}:
 			default:
 			}
 		}
-		res, err := device.InstallAPK(path, allowDowngrade, logf)
-		logCh <- InstallDoneMsg{Result: res, Err: err}
+		res, err := device.InstallAPKContext(ctx, path, allowDowngrade, logf)
+		select {
+		case logCh <- InstallDoneMsg{Result: res, Err: err, seq: seq}:
+		case <-ctx.Done():
+		}
 		return nil
 	}
 }
 
-func prepareInstallCmd(path string, meta apk.Inspection, needInspect bool, queryPkg string) tea.Cmd {
+func prepareInstallCmd(ctx context.Context, seq int, path string, meta apk.Inspection, needInspect bool, queryPkg string) tea.Cmd {
 	return func() tea.Msg {
 		if needInspect {
-			if ins, err := apk.Inspect(path); err == nil {
+			if ins, err := apk.InspectContext(ctx, path); err == nil {
 				meta = ins
 			}
 		}
@@ -361,9 +370,13 @@ func prepareInstallCmd(path string, meta apk.Inspection, needInspect bool, query
 		var app device.InstalledApp
 		var found bool
 		if queryPkg != "" {
-			app, found = device.QueryPackage(queryPkg)
+			app, found = device.QueryPackageContext(ctx, queryPkg)
+		}
+		if ctx.Err() != nil {
+			return nil
 		}
 		return InstallPreparedMsg{
+			seq:      seq,
 			Path:     path,
 			Meta:     meta,
 			QueryPkg: queryPkg,
@@ -377,7 +390,7 @@ func waitInstallLog(logCh chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		m, ok := <-logCh
 		if !ok {
-			return InstallDoneMsg{}
+			return nil
 		}
 		return m
 	}

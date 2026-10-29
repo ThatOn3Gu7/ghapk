@@ -98,13 +98,45 @@ func hintKey(action string) tea.KeyMsg {
 // handleMouse implements click-to-focus, click-to-select,
 // click-again-to-activate, and wheel scrolling of the hovered panel.
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.screen != ScreenDashboard {
-		return m, nil
+	// Complete an outside tap on release, so a swipe or a drag across the
+	// border never dismisses an overlay or activates the dashboard beneath it.
+	if m.modalOutsidePress {
+		if msg.Action == tea.MouseActionRelease || msg.Type == tea.MouseRelease {
+			m.modalOutsidePress = false
+			if !m.modalOutsideMoved && m.modal == m.modalOutsideKind && m.modal != ModalNone &&
+				(m.confirmKind != confirmJobSafety || m.jobQuestionID == m.modalOutsideQuestionID) &&
+				!m.modalBounds().contains(msg.X, msg.Y) {
+				return m.dismissModalOutside()
+			}
+			return m, nil
+		}
+		if msg.Action == tea.MouseActionMotion {
+			if msg.X != m.modalOutsideX || msg.Y != m.modalOutsideY {
+				m.modalOutsideMoved = true
+			}
+			return m, nil
+		}
+		if msg.Action == tea.MouseActionPress && (msg.Type == tea.MouseLeft || msg.Button == tea.MouseButtonLeft) {
+			m.modalOutsidePress = false // terminals that omit release events
+		}
 	}
 	if m.modal != ModalNone {
 		m.deviceDrag = false
 		m.branchTouchActive = false
+		if m.width >= minWidth && m.height >= minHeight && msg.Action == tea.MouseActionPress &&
+			(msg.Type == tea.MouseLeft || msg.Button == tea.MouseButtonLeft) {
+			box := m.modalBox()
+			if box != "" && !m.modalBounds().contains(msg.X, msg.Y) {
+				m.modalOutsidePress, m.modalOutsideMoved = true, false
+				m.modalOutsideX, m.modalOutsideY = msg.X, msg.Y
+				m.modalOutsideKind, m.modalOutsideQuestionID = m.modal, m.jobQuestionID
+				return m, nil
+			}
+		}
 		return m.handleModalMouse(msg)
+	}
+	if m.screen != ScreenDashboard {
+		return m, nil
 	}
 	if m.deviceDrag {
 		if msg.Action == tea.MouseActionRelease || msg.Type == tea.MouseRelease {
@@ -411,6 +443,36 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// modalBounds uses the same dimensions and centering as components.Overlay.
+func (m Model) modalBounds() rect {
+	box := m.modalBox()
+	w, h := lipgloss.Width(box), lipgloss.Height(box)
+	return rect{x: max(0, (m.width-w)/2), y: max(0, (m.height-h)/2), w: w, h: h}
+}
+
+// Outside clicks have the same cancellation semantics as Escape, including
+// rejecting queued install questions and cancelling in-flight preflight work.
+func (m Model) dismissModalOutside() (tea.Model, tea.Cmd) {
+	if m.modal == ModalSettings && m.settingsUI != nil && m.settingsUI.editing {
+		// Escape once abandons an unfinished field; outside click closes the
+		// whole window while preserving earlier changes already applied.
+		m.settingsUI.editing = false
+		m.settingsUI.input.Blur()
+	}
+	if m.modal == ModalTask && m.task != nil && m.task.running {
+		m.pendingInstall = false
+		if m.task.cancel != nil {
+			m.task.cancel()
+		}
+		m.taskSeq++ // ignore late results from the dismissed operation
+		m.task = nil
+		m.modal = ModalNone
+		m.toastf("cancelled; an Android installer already opened may remain open")
+		return m, nil
+	}
+	return m.handleModalKey(tea.KeyMsg{Type: tea.KeyEsc})
 }
 
 // handleModalMouse captures input before it can reach the dashboard.

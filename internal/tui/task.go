@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -37,6 +38,8 @@ type TaskState struct {
 	started    time.Time
 
 	running bool // still streaming
+	seq     int
+	cancel  context.CancelFunc
 }
 
 func newTask(title, artifact string, st progressColor) *TaskState {
@@ -237,55 +240,24 @@ func (t *TaskState) view(m *Model) string {
 
 // startDownload launches download of the selected workflow artifact or release asset.
 func (m *Model) startDownload(withInstall bool) tea.Cmd {
-	cacheDir := config.CacheDir()
-	outDir := filepath.Join(cacheDir, "apk")
-
+	spec := jobSpec{repo: m.settings.Repo, settings: m.settings, dev: m.dev, install: withInstall}
 	if m.usingReleaseAssets() {
 		ra, ok := m.selectedReleaseAsset()
 		if !ok {
 			m.toastf("no release asset selected")
 			return nil
 		}
-		m.pendingInstall = withInstall
-		m.progCh = make(chan tea.Msg, 64)
-		device_CanInstall = m.dev.CanInstall
-		m.task = newTask("Downloading release asset", ra.Asset.Name, progressColor{m.st.P.Accent, m.st.P.AccentAlt})
-		if ra.Asset.Rejected {
-			m.task.addLog("warning: asset does not match your arch/variant policy")
+		spec.choice = planChoice{asset: ra.Asset, release: true}
+	} else {
+		art, ok := m.selectedArtifact()
+		if !ok {
+			m.toastf("no artifact selected")
+			return nil
 		}
-		m.busy = true
-		m.busyMsg = "downloading"
-		m.modal = ModalTask
-		return tea.Batch(
-			downloadReleaseApkCmd(m.settings.Repo, ra.Asset, outDir, m.settings.FilePattern, m.settings.ExcludePattern,
-				m.settings.KeepCache, m.settings.KeepCount, m.settings.VerifyDigest, m.dev, archPrefs{m.settings.Arch, m.settings.Variant}, m.progCh),
-			waitProgress(m.progCh),
-		)
+		spec.choice = planChoice{art: art}
+		spec.run, _ = m.selectedRun()
 	}
-
-	art, ok := m.selectedArtifact()
-	if !ok {
-		m.toastf("no artifact selected")
-		return nil
-	}
-	run, _ := m.selectedRun()
-	zipPath := filepath.Join(outDir, fmt.Sprintf("%d-%s.zip", art.ID, sanitize(art.Name)))
-	m.pendingInstall = withInstall
-	m.progCh = make(chan tea.Msg, 64)
-	device_CanInstall = m.dev.CanInstall
-	m.task = newTask("Downloading artifact", art.Name, progressColor{m.st.P.Accent, m.st.P.AccentAlt})
-	if art.Rejected {
-		m.task.addLog("warning: artifact does not match your arch/variant policy")
-	}
-	_ = run
-	m.busy = true
-	m.busyMsg = "downloading"
-	m.modal = ModalTask
-	return tea.Batch(
-		downloadApkCmd(m.settings.Repo, art, zipPath, outDir, m.settings.FilePattern, m.settings.ExcludePattern,
-			m.settings.KeepCache, m.settings.KeepCount, m.settings.VerifyDigest, m.dev, archPrefs{m.settings.Arch, m.settings.Variant}, m.progCh),
-		waitProgress(m.progCh),
-	)
+	return m.startJob(spec)
 }
 
 // startInstall validates APK identity, signing continuity, and version safety
@@ -325,9 +297,12 @@ func (m *Model) startInstall(path string) tea.Cmd {
 		t.result = m.downloadedAPK
 	}
 	device_CanInstall = m.dev.CanInstall
+	ctx, cancel := context.WithCancel(context.Background())
+	m.taskSeq++
+	t.seq, t.cancel = m.taskSeq, cancel
 	m.task = t
 	m.modal = ModalTask
-	return prepareInstallCmd(path, meta, needInspect, queryPkg)
+	return prepareInstallCmd(ctx, t.seq, path, meta, needInspect, queryPkg)
 }
 
 func (m *Model) finishStartInstall(path string, meta apk.Inspection, instApp device.InstalledApp, instFound bool) tea.Cmd {
@@ -409,10 +384,13 @@ func (m *Model) executeInstall(path string, allowDowngrade bool, notes []string)
 		t.addLog(n)
 	}
 	device_CanInstall = m.dev.CanInstall
+	ctx, cancel := context.WithCancel(context.Background())
+	m.taskSeq++
+	t.seq, t.cancel = m.taskSeq, cancel
 	m.task = t
 	m.modal = ModalTask
 	return tea.Batch(
-		installApkCmd(path, allowDowngrade, m.logCh),
+		installApkCmd(ctx, t.seq, path, allowDowngrade, m.logCh),
 		waitInstallLog(m.logCh),
 	)
 }
