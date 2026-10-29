@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/theme"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func humanSize(b int64) string { return ghapi.HumanBytes(b) }
@@ -294,7 +294,7 @@ func (m Model) reposContent(w, h int, mm *Model) string {
 		if m.branchLoading {
 			title = "Branches · loading"
 		}
-		lines[0] = putTitle(lines[0], st, title)
+		lines[0] = putTitle(lines[0], st, title, branches.Focused)
 	}
 	branchBox = strings.Join(lines, "\n")
 	if bannerH > 0 {

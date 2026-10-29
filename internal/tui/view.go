@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/theme"
+	"github.com/charmbracelet/lipgloss"
 )
 
 const (
@@ -173,7 +173,7 @@ func (m Model) modalWindow(title, body string) string {
 	// draw the title into the top border
 	lines := strings.Split(box, "\n")
 	if len(lines) > 0 && title != "" {
-		lines[0] = putTitle(lines[0], m.st, title)
+		lines[0] = putTitle(lines[0], m.st, title, true)
 		box = strings.Join(lines, "\n")
 	}
 	return box
@@ -190,10 +190,14 @@ func (m Model) overlayModal(title, body string) string {
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, m.modalWindow(title, body))
 }
 
-func putTitle(borderLine string, st theme.Styles, title string) string {
+func putTitle(borderLine string, st theme.Styles, title string, focused bool) string {
 	plain := components.StripANSI(borderLine)
 	runes := []rune(plain)
-	tt := st.PanelTitleFoc.Render(" " + title + " ")
+	titleStyle, borderColor := st.PanelTitle, st.P.Border
+	if focused {
+		titleStyle, borderColor = st.PanelTitleFoc, st.P.BorderFocus
+	}
+	tt := titleStyle.Render(" " + title + " ")
 	cw := components.VisibleWidth(tt)
 	start := 3
 	if start+cw >= len(runes) {
@@ -201,6 +205,6 @@ func putTitle(borderLine string, st theme.Styles, title string) string {
 	}
 	left := string(runes[:start])
 	right := string(runes[start+cw:])
-	bc := lipgloss.NewStyle().Foreground(st.P.BorderFocus)
+	bc := lipgloss.NewStyle().Foreground(borderColor)
 	return bc.Render(left) + tt + bc.Render(right)
 }
