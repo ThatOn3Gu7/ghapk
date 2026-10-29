@@ -178,7 +178,7 @@ When several APKs in an archive rank equally, choose which one to extract instea
 
 Artifact rows use name-based platform or file-type icons (🤖 Android, 📱 iOS, 🍎 macOS, ⊞ Windows, 🐧 Linux, 🌐 web, 📄 document, 📦 archive, ◇ unknown). An `!` marks an artifact rejected by your architecture or variant preferences. Icons are hints, not verified compatibility: Actions artifact names don't reveal their contents or app icons, and installation remains APK-focused. Select **ASCII** in Settings (or set `GHAPK_ASCII=1` in auto mode) for ASCII borders, indicators, and icons; non-English repository names and other user text are preserved.
 
-On Repos, select a repository and then a branch; choose “all branches” to leave Actions runs unfiltered. Branches come from GitHub and, when the current working tree has a matching GitHub origin, its local branches. A local-only branch needs a pushed Actions run to have downloadable artifacts.
+On Repos, select a repository and then a branch; choose “all branches” to leave Actions runs unfiltered. Each box title shows the number of matching options, including off-screen rows and “all branches” when present; counts update when filtering. Branches come from GitHub and, when the current working tree has a matching GitHub origin, its local branches. A local-only branch needs a pushed Actions run to have downloadable artifacts.
 
 In Help, press `W` (or tap the wrap label) to toggle word wrapping; when wrapping is off, long lines are clipped on the right.
 

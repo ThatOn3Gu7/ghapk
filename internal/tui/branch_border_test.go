@@ -52,11 +52,12 @@ func assertBranchTopColors(t *testing.T, m Model, focused bool) {
 		}
 		borderColor := renderedForeground(lipgloss.NewStyle().Foreground(borderStyle).Render("X"))
 		titleColor := renderedForeground(titleStyle.Render("X"))
-		title := "Branches"
-		if m.branchLoading {
-			title = "Branches · loading"
+		title := fmt.Sprintf("Branches · %d", len(m.branchList.Filtered()))
+		loading := title + " · loading"
+		if m.branchLoading && components.VisibleWidth(loading)+5 < m.width-4 {
+			title = loading
 		}
-		for _, dx := range []int{-2, components.VisibleWidth(title) + 2} {
+		for _, dx := range []int{-2, components.VisibleWidth(title) + 1} {
 			got := cells.Cell(x+dx, y)
 			if got == nil || !sameColor(got.Style.Fg, borderColor) {
 				t.Fatalf("focused=%v border x=%d: got %+v, want %v", focused, x+dx, got, borderColor)

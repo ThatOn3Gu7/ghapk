@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/cellbuf"
 	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/cellbuf"
 )
 
 func tapBranch(t *testing.T, m Model, x, y int) (Model, tea.Cmd) {
@@ -351,16 +351,18 @@ func TestLiveTeaBranchTouch(t *testing.T) {
 	}
 }
 
-func TestBranchHitTargetsRequireVisibleLists(t *testing.T) {
+func TestBranchHitTargetsRequireActiveRepo(t *testing.T) {
 	m := seedBranches(t, buildModel(t, 40, 24))
 	m.focus = PanelRepos
 	m.repos.Filter = "does-not-match"
+	m.settings.Repo = ""
+	m.branchList.SetItems(nil)
 	r := m.panelRects()[PanelRepos]
 	banner, repoH, _ := reposBranchSplit(r.h, len(m.repos.Items), len(m.branchList.Items), r.w)
 	mm, cmd := m.Update(tea.MouseMsg{Type: tea.MouseLeft, X: r.x + 3, Y: r.y + banner + repoH + 2})
 	got := mm.(Model)
 	if cmd != nil || got.navBranchSet || got.repoBranchFocused {
-		t.Fatal("invisible branch activated")
+		t.Fatal("branch box focused without an active repository")
 	}
 }
 

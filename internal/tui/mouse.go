@@ -3,9 +3,9 @@ package tui
 import (
 	"strings"
 
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 )
 
 // rect is an outer panel rectangle in screen cells.
@@ -335,9 +335,6 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if p == PanelRepos {
-				if len(m.repos.Items) == 0 || len(m.repos.Filtered()) == 0 {
-					return m, nil
-				}
 				banner, repoH, branchH := reposBranchSplit(r.h, len(m.repos.Items), len(m.branchList.Items), r.w)
 				branchTop := r.y + 1 + banner + repoH
 				if msg.Y >= branchTop && msg.Y < branchTop+branchH {
@@ -382,9 +379,6 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			}
 
 			if p == PanelRepos {
-				if len(m.repos.Items) == 0 || len(m.repos.Filtered()) == 0 {
-					return m, nil
-				}
 				if msg.Action != tea.MouseActionPress {
 					return m, nil
 				}
@@ -392,6 +386,9 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				repoTop := r.y + 1 + bannerH
 				branchTop := repoTop + repoH
 				if msg.X < r.x+2 || msg.X >= r.x+r.w-2 {
+					return m, nil
+				}
+				if msg.Y >= branchTop && msg.Y < branchTop+branchH && m.settings.Repo == "" {
 					return m, nil
 				}
 				if msg.Y == branchTop {

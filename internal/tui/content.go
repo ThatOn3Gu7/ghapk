@@ -253,13 +253,6 @@ func (m Model) renderShimmerLogo(w int, totalBannerH ...int) string {
 
 func (m Model) reposContent(w, h int, mm *Model) string {
 	l := m.repos
-	if len(l.Items) == 0 {
-		return m.emptyState("📂", "No repositories added", "Pick or add a repository", "press "+m.keyName("dashboard", "R"), w, h)
-	}
-	if len(l.Filtered()) == 0 {
-		return m.emptyState("🔍 ∅", "No matching repositories", fmt.Sprintf("No repos match %q", l.Filter), "press "+m.keyName("filter", "esc")+" to clear filter", w, h)
-	}
-
 	bannerH, listH, branchH := reposBranchSplit(h, len(l.Items), len(m.branchList.Items), w)
 	l.MaxShown = listH - 2
 	l.Focused = m.focus == PanelRepos && !m.repoBranchFocused
@@ -279,20 +272,28 @@ func (m Model) reposContent(w, h int, mm *Model) string {
 	}
 	l.Items = items
 
-	list := renderBoxedList(l, st, w-4, listH, m.focus == PanelRepos && !m.repoBranchFocused, func(it components.Item) bool {
+	list := renderBoxedList(l, st, w-4, listH, l.Focused, func(it components.Item) bool {
 		repo, _ := it.ID.(string)
 		return repo != "" && repo == m.settings.Repo
 	})
+	lines := strings.Split(list, "\n")
+	if len(lines) > 0 {
+		title := fmt.Sprintf("Repos · %d", len(l.Filtered()))
+		lines[0] = putTitle(lines[0], st, title, l.Focused)
+	}
+	list = strings.Join(lines, "\n")
 
 	branches := m.branchList
 	branches.MaxShown = max(1, branchH-2)
 	branches.Focused = m.focus == PanelRepos && m.repoBranchFocused
 	branchBox := renderBoxedList(branches, st, w-4, branchH, branches.Focused, func(it components.Item) bool { value, ok := it.ID.(string); return ok && value == m.branchSel })
-	lines := strings.Split(branchBox, "\n")
+	lines = strings.Split(branchBox, "\n")
 	if len(lines) > 0 {
-		title := "Branches"
-		if m.branchLoading {
-			title = "Branches · loading"
+		title := fmt.Sprintf("Branches · %d", len(branches.Filtered()))
+		loading := title + " · loading"
+		// Keep the count visible on narrow screens, even with a large list.
+		if m.branchLoading && components.VisibleWidth(loading)+5 < w-4 {
+			title = loading
 		}
 		lines[0] = putTitle(lines[0], st, title, branches.Focused)
 	}
