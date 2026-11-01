@@ -346,6 +346,12 @@ tool are available. Otherwise the installer proceeds without verification.
 To request a particular release, pipe the installer into
 `GHAPK_VERSION=v4.3.0 bash`.
 
+If GitHub cannot be reached during startup, ghapk stays open in offline mode.
+You can explore settings, saved downloads, recent repositories and local branches;
+GitHub data and downloads need a connection. The header shows `GitHub offline`;
+press `r` or tap `r:retry` to re-check. A spinner shows the real check in progress.
+Missing `gh` or invalid authentication still shows setup instructions.
+
 Termux notifications require the relevant Termux:API app and command-line tools.
 Settings can choose when to notify and optionally speak or show a toast; absent
 helpers are skipped. Use `ghapk doctor` to check GitHub authentication and
@@ -353,8 +359,11 @@ installer availability.
 
 ### Custom key bindings
 
-On the first TUI launch, ghapk creates `~/.config/twinpane/keybinding.json`.
-Edit existing entries and restart ghapk to use them. `XDG_CONFIG_HOME` changes
+On the first TUI launch, ghapk creates `~/.config/ghapk/keybinding.json`.
+Twinpane's configuration is never read or modified. If you previously customized
+ghapk's bindings at the old Twinpane path, copy them to the new ghapk path only
+if that file actually contains ghapk bindings. Edit existing entries and restart
+ghapk to use them. `XDG_CONFIG_HOME` changes
 the parent config directory; `GHAPK_CONFIG_DIR` places the file directly in
 that directory. For example, changing `"repo_picker": "R"` in `dashboard` to
 `"repo_picker": "z"` makes `z` open the repository picker. Each entry is one

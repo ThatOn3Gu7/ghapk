@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ThatOn3Gu7/ghapk/internal/activity"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func keyConfig(t *testing.T, edit func(map[string]map[string]string)) *KeyBindings {
@@ -54,7 +54,7 @@ func TestKeybindingFileCreationRestartAndIsolation(t *testing.T) {
 	t.Setenv("GHAPK_CONFIG_DIR", "")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	path := KeybindingPath()
-	if !strings.HasSuffix(path, filepath.Join("twinpane", "keybinding.json")) {
+	if !strings.HasSuffix(path, filepath.Join("ghapk", "keybinding.json")) {
 		t.Fatalf("path %s", path)
 	}
 	first, err := LoadKeyBindings(path)
@@ -521,5 +521,34 @@ func TestLongSafetyShortcutsKeepChoicesTouchable(t *testing.T) {
 				t.Fatalf("%v option not visible: %q", size, label)
 			}
 		}
+	}
+}
+
+func TestKeybindingsNeverTouchTwinpane(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("GHAPK_CONFIG_DIR", "")
+	other := filepath.Join(root, ".config", "twinpane", "keybinding.json")
+	if err := os.MkdirAll(filepath.Dir(other), 0700); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("{\"version\": 1, \"settings\": {\"some_other_action\": \"x\"}}\n")
+	if err := os.WriteFile(other, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	path := KeybindingPath()
+	if path != filepath.Join(root, ".config", "ghapk", "keybinding.json") {
+		t.Fatalf("wrong path %q", path)
+	}
+	if _, err := LoadKeyBindings(path); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(other)
+	if err != nil || string(after) != string(original) {
+		t.Fatalf("Twinpane file was changed: %q %v", after, err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("ghapk file missing: %v", err)
 	}
 }

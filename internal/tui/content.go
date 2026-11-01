@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/theme"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func humanSize(b int64) string { return ghapi.HumanBytes(b) }
@@ -1180,7 +1182,7 @@ func (m Model) renderSetup() string {
 	st := m.st
 	var b strings.Builder
 	b.WriteString(st.Header.Render(" ghapk — setup ") + "\n\n")
-	if m.authErr == ghapi.ErrNoGH {
+	if errors.Is(m.authErr, ghapi.ErrNoGH) {
 		b.WriteString(st.Err.Render(" "+st.G.Fail+" the GitHub CLI (gh) is not installed") + "\n\n")
 		b.WriteString("  ghapk talks to GitHub through gh, exactly like the\n  original script did.\n\n")
 		b.WriteString(st.Bold.Render("  Install it:") + "\n")
@@ -1189,11 +1191,23 @@ func (m Model) renderSetup() string {
 		b.WriteString("    Fedora          sudo dnf install gh\n")
 		b.WriteString("    macOS           brew install gh\n")
 		b.WriteString("    other           https://cli.github.com\n\n")
-	} else {
+	} else if errors.Is(m.authErr, ghapi.ErrNoAuth) {
 		b.WriteString(st.Warn.Render(" "+st.G.Fail+" gh is installed but not authenticated") + "\n\n")
 		b.WriteString("  Run in another terminal:\n\n")
 		b.WriteString(st.Bold.Render("    gh auth login") + "\n\n")
+	} else {
+		b.WriteString(st.Warn.Render("  Could not check GitHub authentication.") + "\n\n")
+		b.WriteString("  Check gh and your connection, then retry.\n\n")
+	}
+	if m.authChecking {
+		b.WriteString("  " + m.authSpinner() + st.Accent.Render(" Checking GitHub...") + "\n\n")
 	}
 	b.WriteString(st.Muted.Render("  "+m.keyName("setup", "r")+"  re-check      "+m.keyName("setup", "q")+"  quit") + "\n")
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, b.String())
+	// Wrap and fit setup guidance on phones, preserving the retry/quit hints.
+	body := strings.TrimSuffix(ansi.Wrap(b.String(), max(1, m.width-2), ""), "\n")
+	lines := strings.Split(body, "\n")
+	if len(lines) > m.height {
+		lines = append(lines[:max(0, m.height-3)], lines[len(lines)-3:]...)
+	}
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, strings.Join(lines, "\n"))
 }

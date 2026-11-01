@@ -680,7 +680,7 @@ func (m Model) handleRepoPickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return rp.handleKey(tea.KeyMsg{Type: tea.KeyEsc}, &m)
 		}
 		if status.contains(msg.X, msg.Y) && rp.errMsg != "" {
-			return m, m.fetchUserRepos()
+			return rp.handleKey(hintKey("ctrl+r"), &m)
 		}
 		if bounds.contains(msg.X, msg.Y) {
 			idx := rp.list.Offset + msg.Y - bounds.y

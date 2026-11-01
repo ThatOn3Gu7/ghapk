@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -104,7 +106,7 @@ func (m Model) auditInput(msg tea.Msg) {
 	case DoctorDoneMsg:
 		_ = m.activity.Write("app", "Doctor checks completed")
 	case RefreshTickMsg:
-		if m.screen == ScreenDashboard && m.modal == ModalNone && m.settings.Repo != "" && v.Seq == m.refreshSeq {
+		if m.screen == ScreenDashboard && m.modal == ModalNone && m.settings.Repo != "" && v.Seq == m.refreshSeq && !errors.Is(m.authErr, ghapi.ErrOffline) {
 			_ = m.activity.Write("app", "Automatic build refresh")
 		}
 	}

@@ -12,6 +12,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/ThatOn3Gu7/ghapk/internal/config"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -82,20 +83,9 @@ type KeyBindings struct {
 	actions  map[string]map[string]string
 }
 
-// KeybindingPath uses the requested twinpane config location. GHAPK_CONFIG_DIR
-// remains an explicit override, useful for isolated profiles and tests.
+// KeybindingPath uses ghapk's own config directory, not another app's files.
 func KeybindingPath() string {
-	if d := strings.TrimSpace(os.Getenv("GHAPK_CONFIG_DIR")); d != "" {
-		return filepath.Join(d, "keybinding.json")
-	}
-	if d := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); d != "" {
-		return filepath.Join(d, "twinpane", "keybinding.json")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(".", "keybinding.json")
-	}
-	return filepath.Join(home, ".config", "twinpane", "keybinding.json")
+	return filepath.Join(config.Dir(), "keybinding.json")
 }
 
 func defaultKeyDocument() map[string]map[string]string {

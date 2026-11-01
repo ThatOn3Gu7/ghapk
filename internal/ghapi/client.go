@@ -18,8 +18,10 @@ import (
 )
 
 var (
-	ErrNoGH   = errors.New("gh CLI not found on PATH")
-	ErrNoAuth = errors.New("gh is not authenticated (run: gh auth login)")
+	ErrNoGH      = errors.New("gh CLI not found on PATH")
+	ErrNoAuth    = errors.New("gh is not authenticated (run: gh auth login)")
+	ErrOffline   = errors.New("cannot reach GitHub; check your connection")
+	ErrAuthCheck = errors.New("could not check GitHub authentication")
 )
 
 // Available reports whether gh is installed.
@@ -41,7 +43,8 @@ func Version() string {
 	return out
 }
 
-// AuthStatus mirrors the preflight auth check.
+// AuthStatus checks credentials and connectivity without mistaking network
+// failures for a need to log in. Do not expose gh's potentially sensitive output.
 func AuthStatus() (user string, err error) {
 	if !Available() {
 		return "", ErrNoGH
@@ -49,17 +52,58 @@ func AuthStatus() (user string, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	cmd := activity.CommandContext(ctx, "gh", "auth", "status")
-	if out, err2 := cmd.CombinedOutput(); err2 != nil {
-		return "", fmt.Errorf("%w: %s", ErrNoAuth, firstLine(string(out)))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", authCheckError(ctx, string(out), true)
 	}
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel2()
 	cmd = activity.CommandContext(ctx2, "gh", "api", "user", "--jq", ".login")
-	out, err2 := cmd.Output()
-	if err2 != nil {
-		return "", ErrNoAuth
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		return "", authCheckError(ctx2, stdout.String()+"\n"+stderr.String(), false)
 	}
-	return strings.TrimSpace(string(out)), nil
+	if user := strings.TrimSpace(stdout.String()); user != "" {
+		return user, nil
+	}
+	return "", ErrAuthCheck
+}
+
+func authCheckError(ctx context.Context, output string, status bool) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || connectionFailure(output) {
+		return ErrOffline
+	}
+	text := strings.ToLower(output)
+	if strings.Contains(text, "http 401") || strings.Contains(text, "authentication required") ||
+		strings.Contains(text, "not logged") || strings.Contains(text, "not authenticated") ||
+		strings.Contains(text, "invalid token") || strings.Contains(text, "token is invalid") ||
+		strings.Contains(text, "failed to authenticate") || strings.Contains(text, "authentication failed") ||
+		strings.Contains(text, "failed to log in") || (strings.Contains(text, "token") && strings.Contains(text, "invalid")) {
+		return ErrNoAuth
+	}
+	// Older versions of gh return unstructured output on auth-status errors.
+	if status && strings.TrimSpace(output) == "" {
+		return ErrNoAuth
+	}
+	return ErrAuthCheck
+}
+
+func connectionFailure(output string) bool {
+	text := strings.ToLower(output)
+	for _, fragment := range []string{
+		"error connecting to", "failed to connect", "unable to connect", "could not resolve",
+		"dial tcp", "dial udp", "no such host", "network is unreachable", "network unreachable",
+		"connection refused", "connection reset", "connection aborted", "connection closed",
+		"connection timed out", "i/o timeout", "no route to host", "network is down",
+		"request timeout", "context deadline exceeded", "temporary failure in name resolution",
+		"unexpected eof", ": eof", "server misbehaving", "tls handshake timeout", "proxyconnect", "x509:",
+		"http 502", "http 503", "http 504",
+	} {
+		if strings.Contains(text, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 func firstLine(s string) string {

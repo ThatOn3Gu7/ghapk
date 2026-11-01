@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 )
 
@@ -44,6 +46,12 @@ func (m Model) headerLayout() (string, rect) {
 			right += " "
 		}
 		right += st.Dim.Render(th)
+	}
+	connectionWarning := errors.Is(m.authErr, ghapi.ErrOffline)
+	if m.authChecking {
+		right = m.authSpinner() + " " + st.Warn.Render("checking GitHub")
+	} else if connectionWarning {
+		right = st.Warn.Render("GitHub offline")
 	}
 	rw := components.VisibleWidth(right)
 
@@ -89,7 +97,7 @@ func (m Model) headerLayout() (string, rect) {
 	if components.VisibleWidth(bar)+rw+1 > w {
 		bar = build(18, 0, 0) // repo only
 	}
-	if components.VisibleWidth(bar)+rw+1 > w {
+	if components.VisibleWidth(bar)+rw+1 > w && !connectionWarning && !m.authChecking {
 		right = "" // right side disappears last
 		rw = 0
 	}
@@ -176,6 +184,9 @@ func (m Model) statusBar() components.StatusBar {
 		add("esc", "clear", "esc")
 		add("enter", "keep", "enter")
 	} else {
+		if errors.Is(m.authErr, ghapi.ErrOffline) {
+			add("r", "retry", "r")
+		}
 		switch m.focus {
 		case PanelRepos:
 			add("enter", "select / next", "enter")
@@ -211,7 +222,9 @@ func (m Model) statusBar() components.StatusBar {
 		case PanelDevice:
 			add("↑", "up", "up")
 			add("↓", "down", "down")
-			add("r", "re-check", "r")
+			if !errors.Is(m.authErr, ghapi.ErrOffline) {
+				add("r", "re-check", "r")
+			}
 		case PanelDownloads:
 			if !m.downloadDetail && m.width < 80 && m.downloadFocus == 0 {
 				add("↵", "detail", "enter")

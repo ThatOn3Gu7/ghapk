@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ThatOn3Gu7/ghapk/internal/config"
 	"github.com/ThatOn3Gu7/ghapk/internal/device"
 	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // DoctorState holds the health-check report.
@@ -46,8 +47,12 @@ func (m *Model) openDoctor() tea.Cmd {
 		}
 		if u, err := ghapi.AuthStatus(); err == nil {
 			add("ok", "auth", "@"+u)
-		} else {
+		} else if errors.Is(err, ghapi.ErrOffline) {
+			add("warn", "auth", "GitHub unavailable — check your connection")
+		} else if errors.Is(err, ghapi.ErrNoAuth) {
 			add("err", "auth", "not logged in — run: gh auth login")
+		} else {
+			add("err", "auth", "could not check GitHub authentication")
 		}
 
 		info := device.Probe()

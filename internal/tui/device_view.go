@@ -1,15 +1,17 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/ThatOn3Gu7/ghapk/internal/config"
+	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/ThatOn3Gu7/ghapk/internal/config"
-	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 )
 
 // deviceLines keeps the original hardware/session details and adds the
@@ -95,10 +97,14 @@ func (m Model) deviceLines(w int) []string {
 		}
 	}
 	row("gh CLI", gh, ghStyle)
-	if m.authUser != "" {
+	if errors.Is(m.authErr, ghapi.ErrOffline) {
+		row("signed in", "GitHub unavailable", st.Warn)
+	} else if m.authUser != "" {
 		row("signed in", "@"+m.authUser, st.OK)
-	} else if m.authErr != nil {
+	} else if errors.Is(m.authErr, ghapi.ErrNoAuth) {
 		row("signed in", "not authenticated", st.Warn)
+	} else if m.authErr != nil {
+		row("signed in", "could not check", st.Warn)
 	} else {
 		row("signed in", "unknown", st.Dim)
 	}

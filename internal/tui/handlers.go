@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -28,9 +29,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case "r", "enter":
-			m.busy = true
-			m.busyMsg = "re-checking gh"
-			return m, tea.Batch(checkAuthCmd(), m.spin.Tick)
+			cmd := m.recheckAuth()
+			return m, cmd
 		}
 		return m, nil
 	}
@@ -43,6 +43,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// ── filter mode feeds the focused list ────────────────────────
 	if m.filterMode {
 		return m.handleFilterKey(msg)
+	}
+
+	if key == "r" && errors.Is(m.authErr, ghapi.ErrOffline) && !(m.focus == PanelSettings && m.settingsUI.editing) {
+		cmd := m.recheckAuth()
+		return m, cmd
 	}
 
 	if m.focus == PanelLog {
@@ -996,8 +1001,21 @@ func (m *Model) selectBranch(branch string) tea.Cmd {
 		m.toastf("branch: %s", branch)
 	}
 	m.saveSelection(&branch, nil)
-	if m.settings.Repo == "" {
+	if m.settings.Repo == "" || errors.Is(m.authErr, ghapi.ErrOffline) {
 		return nil
 	}
 	return fetchRunsCmd(m.settings.Repo, m.settings.Workflow, branch, m.settings.RunLimit)
+}
+
+// recheckAuth coalesces repeated retry presses and animates until the real
+// gh check completes; the user can continue navigating while offline.
+func (m *Model) recheckAuth() tea.Cmd {
+	if m.authChecking {
+		return nil
+	}
+	m.authChecking = true
+	if m.modal == ModalPickRepo && m.repoPicker != nil {
+		m.repoPicker.loading = true
+	}
+	return tea.Batch(checkAuthCmd(), m.spin.Tick)
 }

@@ -4,6 +4,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -75,9 +76,10 @@ type Model struct {
 	buildDetail   bool // narrow-screen drill-down from builds into artifacts
 
 	// environment
-	ghVersion string
-	authUser  string
-	authErr   error
+	ghVersion    string
+	authUser     string
+	authErr      error
+	authChecking bool
 
 	// data
 	settings config.Settings
@@ -264,6 +266,7 @@ func New(opts Options) Model {
 
 	m := Model{
 		screen:         ScreenBoot,
+		authChecking:   true,
 		opts:           opts,
 		settings:       opts.Settings,
 		bindings:       opts.KeyBindings,
@@ -346,6 +349,19 @@ func (m *Model) loadRecents(current string) {
 	} else if current != "" {
 		m.repos.SelectByID(current)
 	}
+}
+
+// authSpinner retains visible animation in ASCII mode as well as Unicode.
+func (m Model) authSpinner() string {
+	if m.asciiEnabled() {
+		frame := components.StripANSI(m.spin.View())
+		for i, dot := range spinner.Dot.Frames {
+			if frame == dot {
+				return m.st.Accent.Render(string("|/-\\"[i%4]) + " ")
+			}
+		}
+	}
+	return m.spin.View()
 }
 
 // Init kicks off environment probes.
@@ -525,7 +541,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Only repaint for the spinner when something is visibly moving.
 		// Idle dashboards used to redraw ten times a second for no reason,
 		// which made every repo switch on a phone feel jerky.
-		if m.busy || len(m.fetching) > 0 || m.modal == ModalTask || (m.modal == ModalPickRepo && m.repoPicker != nil && m.repoPicker.loading) || m.watchActive() {
+		if m.authChecking || m.busy || len(m.fetching) > 0 || m.modal == ModalTask || (m.modal == ModalPickRepo && m.repoPicker != nil && m.repoPicker.loading) || m.watchActive() {
 			return m, cmd
 		}
 		return m, nil
@@ -541,6 +557,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Tick(300*time.Millisecond, func(t time.Time) tea.Msg { return ShimmerTickMsg{At: t} })
 
 	case AuthCheckedMsg:
+		wasOffline := errors.Is(m.authErr, ghapi.ErrOffline)
+		wasDashboard := m.screen == ScreenDashboard
 		oldPicker := m.repoPicker
 		changedAccount := msg.Err == nil && m.authUser != "" && m.authUser != msg.User
 		if changedAccount {
@@ -549,22 +567,45 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.userReposLoading = false
 			m.userReposSeq++
 		}
+		m.authChecking = false
 		m.ghVersion = msg.Version
-		m.authUser = msg.User
+		if msg.Err == nil {
+			m.authUser = msg.User
+		}
 		m.authErr = msg.Err
 		if msg.Err == nil {
 			m.screen = ScreenDashboard
+			if wasOffline && wasDashboard {
+				m.toastf("GitHub connected")
+				cmds := m.refreshAll()
+				if m.modal == ModalPickRepo && m.repoPicker != nil {
+					m.repoPicker.loading = false
+					m.repoPicker.errMsg = ""
+					if !m.userReposLoaded {
+						cmds = append(cmds, m.fetchUserRepos())
+					}
+				}
+				return m, tea.Batch(cmds...)
+			}
 			cmd := m.bootstrapDashboard()
 			if changedAccount && m.modal == ModalPickRepo && m.repoPicker == oldPicker {
 				cmd = tea.Batch(cmd, m.openRepoPicker())
 			}
 			return m, cmd
 		}
-		if ghapiErr(msg.Err) == ghapi.ErrNoGH || m.ghVersion == "" && msg.Err != nil && !ghapi.Available() {
-			m.screen = ScreenSetup
-		} else {
-			m.screen = ScreenSetup
+		if errors.Is(msg.Err, ghapi.ErrOffline) {
+			if m.repoPicker != nil {
+				m.repoPicker.loading = false
+				m.repoPicker.errMsg = "GitHub offline"
+			}
+			m.screen = ScreenDashboard
+			if !wasDashboard {
+				return m, m.bootstrapDashboard()
+			}
+			return m, nil
 		}
+		m.authUser = ""
+		m.screen = ScreenSetup
 		return m, nil
 
 	case DeviceMsg:
@@ -906,7 +947,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case repoSearchDebounced:
-		if m.modal == ModalPickRepo && m.repoPicker != nil && msg.seq == m.searchSeq {
+		if m.modal == ModalPickRepo && m.repoPicker != nil && msg.seq == m.searchSeq && !errors.Is(m.authErr, ghapi.ErrOffline) {
 			return m, searchReposCmd(msg.query, msg.seq)
 		}
 		return m, nil
@@ -922,7 +963,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Seq != m.refreshSeq {
 			return m, nil
 		}
-		if m.screen != ScreenDashboard || m.modal != ModalNone {
+		if m.screen != ScreenDashboard || m.modal != ModalNone || errors.Is(m.authErr, ghapi.ErrOffline) {
 			return m, refreshTickCmd(m.effectiveRefreshSecs(), m.refreshSeq)
 		}
 		cmds := []tea.Cmd{refreshTickCmd(m.effectiveRefreshSecs(), m.refreshSeq)}
@@ -962,16 +1003,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.task.update(msg)
 	}
 	return m, nil
-}
-
-func ghapiErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	if err == ghapi.ErrNoGH || strings.Contains(err.Error(), "not found") {
-		return ghapi.ErrNoGH
-	}
-	return err
 }
 
 func shortErr(err error) string {
@@ -1062,8 +1093,8 @@ func (m *Model) bootstrapDashboard() tea.Cmd {
 		}
 		cmds = append(cmds, m.refreshAll()...)
 	}
-	if repo == "" {
-		// nothing to load — open the repo picker right away
+	if repo == "" && !errors.Is(m.authErr, ghapi.ErrOffline) {
+		// Nothing to load online — open the repo picker right away.
 		cmds = append(cmds, m.openRepoPicker())
 	}
 	if m.instPkg == "" && m.dev.OS == "android" {
@@ -1200,6 +1231,11 @@ func (m *Model) refreshAll() []tea.Cmd {
 	repo := m.settings.Repo
 	if repo == "" {
 		return nil
+	}
+	if errors.Is(m.authErr, ghapi.ErrOffline) {
+		m.busy = false
+		m.branchLoading = false
+		return []tea.Cmd{fetchLocalBranchesCmd(repo)}
 	}
 	m.busy = true
 	m.branchLoading = true
@@ -1489,6 +1525,9 @@ func (m *Model) scrollWorkflowYAML(d int) {
 // fetchWorkflowForSelection downloads the YAML for the highlighted workflow
 // (once), so the preview pane under the list stays live.
 func (m *Model) fetchWorkflowForSelection() tea.Cmd {
+	if errors.Is(m.authErr, ghapi.ErrOffline) {
+		return nil
+	}
 	sel, ok := m.workflows.Selected()
 	if !ok {
 		return nil

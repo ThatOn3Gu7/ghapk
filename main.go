@@ -11,6 +11,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -186,7 +187,13 @@ func doctorCmd() int {
 	check(have, "gh", "installed "+ghapi.Version(), "not installed — https://cli.github.com")
 	if have {
 		u, err := ghapi.AuthStatus()
-		check(err == nil, "auth", "@"+u, "run: gh auth login")
+		bad := "could not check GitHub authentication"
+		if errors.Is(err, ghapi.ErrOffline) {
+			bad = "GitHub unavailable — check your connection"
+		} else if errors.Is(err, ghapi.ErrNoAuth) {
+			bad = "run: gh auth login"
+		}
+		check(err == nil, "auth", "@"+u, bad)
 	}
 	d := device.Probe()
 	if d.OS == "android" {

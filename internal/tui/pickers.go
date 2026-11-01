@@ -1,15 +1,16 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ThatOn3Gu7/ghapk/internal/config"
 	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // matchAllTokens reports whether every whitespace-separated token in query
@@ -69,6 +70,10 @@ func (m *Model) openRepoPicker() tea.Cmd {
 	m.searchSeq++ // invalidate searches from an earlier picker
 	rp.resize(m)
 	rp.rebuild(m)
+	if errors.Is(m.authErr, ghapi.ErrOffline) {
+		rp.errMsg = "GitHub offline"
+		return nil
+	}
 	if !m.userReposLoaded && len(m.cachedUserRepos) == 0 {
 		if m.userReposLoading {
 			rp.loading = true
@@ -198,6 +203,10 @@ func (rp *RepoPicker) handleKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 		m.repoPicker = nil
 		return *m, nil
 	case "ctrl+r":
+		if errors.Is(m.authErr, ghapi.ErrOffline) {
+			cmd := m.recheckAuth()
+			return *m, cmd
+		}
 		if rp.errMsg != "" {
 			return *m, m.fetchUserRepos()
 		}
@@ -258,6 +267,9 @@ func (rp *RepoPicker) handleKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 			m.searchSeq++
 			seq := m.searchSeq
 			rp.rebuild(m)
+			if errors.Is(m.authErr, ghapi.ErrOffline) {
+				return *m, cmd
+			}
 			if strings.Contains(q, "/") {
 				return *m, tea.Batch(cmd, searchReposCmd(q, seq))
 			}
@@ -310,7 +322,9 @@ func (rp *RepoPicker) view(m *Model) string {
 		lines = append(lines, line)
 	}
 	status := ""
-	if rp.loading {
+	if rp.loading && m.authChecking {
+		status = m.authSpinner() + " Checking GitHub…"
+	} else if rp.loading {
 		status = m.spin.View() + " Loading repositories…"
 	} else if rp.errMsg != "" {
 		status = "Load failed · tap retry: " + rp.errMsg
@@ -511,6 +525,11 @@ func (m *Model) openBranchPicker() tea.Cmd {
 	m.branchPicker = fp
 	m.branchLoading = true
 	m.modal = ModalPickBranch
+	if errors.Is(m.authErr, ghapi.ErrOffline) {
+		m.branchLoading = false
+		fp.setOptions(m, m.buildBranchOptions(m.apiBranches), ghapi.ErrOffline)
+		return nil
+	}
 	return fetchBranchesCmd(m.settings.Repo)
 }
 
@@ -569,6 +588,10 @@ func (m *Model) openWorkflowPicker() tea.Cmd {
 	fp.loading = !haveWFs
 	m.workflowPicker = fp
 	m.modal = ModalPickWorkflow
+	if errors.Is(m.authErr, ghapi.ErrOffline) {
+		fp.setOptions(m, m.buildWorkflowOptions(), ghapi.ErrOffline)
+		return nil
+	}
 	if !haveWFs {
 		return fetchWorkflowsCmd(m.settings.Repo)
 	}
