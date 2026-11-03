@@ -223,6 +223,37 @@ func TestAMStartDetectsInlineErrorDespiteExitZero(t *testing.T) {
 	}
 }
 
+func TestInstallerFallsBackToNextChoice(t *testing.T) {
+	apkPath := createDummyAPK(t)
+	var calls []string
+
+	withDeviceStubs(t, true, map[string]bool{"termux-open": true, "am": true, "adb": true},
+		func(ctx context.Context, name string, args []string, onLine func(string)) (string, error) {
+			calls = append(calls, name)
+			switch name {
+			case "termux-open":
+				return "storage permission denied", errors.New("exit status 1")
+			case "am":
+				return "Error: Activity not started, unable to resolve Intent", nil
+			case "adb":
+				return "Performing Streamed Install\nSuccess\n", nil
+			}
+			t.Fatalf("unexpected installer %s", name)
+			return "", nil
+		}, nil)
+
+	res, err := InstallAPK(apkPath, false, nil)
+	if err != nil {
+		t.Fatalf("expected adb fallback to succeed: %v", err)
+	}
+	if res.Outcome != OutcomeInstalled || res.Via != "adb" {
+		t.Fatalf("expected confirmed adb install, got %+v", res)
+	}
+	if got := strings.Join(calls, ","); got != "termux-open,am,adb" {
+		t.Fatalf("installer order = %s, want termux-open,am,adb", got)
+	}
+}
+
 func TestValidPackageStrict(t *testing.T) {
 	good := []string{"com.example.app", "org.termux.x11", "a.b2_c.d"}
 	for _, g := range good {

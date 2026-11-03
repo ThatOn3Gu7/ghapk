@@ -16,6 +16,7 @@ import (
 	"github.com/ThatOn3Gu7/ghapk/internal/config"
 	"github.com/ThatOn3Gu7/ghapk/internal/device"
 	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
+	"github.com/ThatOn3Gu7/ghapk/internal/pattern"
 	"github.com/ThatOn3Gu7/ghapk/internal/score"
 )
 
@@ -121,10 +122,10 @@ func Run(o GetOptions) (code int) {
 					continue
 				}
 				if s.ArtifactName == "" {
-					if s.ArtifactPattern != "" && !containsFold(a.Name, s.ArtifactPattern) {
+					if s.ArtifactPattern != "" && !pattern.MatchList(s.ArtifactPattern, a.Name) {
 						continue
 					}
-					if s.ExcludePattern != "" && containsFold(a.Name, s.ExcludePattern) {
+					if s.ExcludePattern != "" && pattern.MatchList(s.ExcludePattern, a.Name) {
 						continue
 					}
 				}
@@ -209,9 +210,12 @@ func Run(o GetOptions) (code int) {
 		if !s.KeepCache && o.PrintDir == "" {
 			ghapi.PruneAPKCache(dir, s.KeepCount, apkOut.Path)
 		}
-		if apkOut.DigestStatus == apk.DigestVerified {
-			out("\rghapk: downloaded release asset (sha256 verified against GitHub digest)   ")
-		} else {
+		switch {
+		case apkOut.Meta.DigestStatus == apk.DigestVerified:
+			out("\rghapk: downloaded release APK (sha256 verified against GitHub digest)   ")
+		case apkOut.Meta.ArchiveDigestStatus == apk.DigestVerified:
+			out("\rghapk: downloaded release archive (sha256 verified against GitHub digest; APK not independently verified)   ")
+		default:
 			out("\rghapk: downloaded release asset (digest unverified — GitHub published none)   ")
 		}
 	} else {
@@ -230,9 +234,9 @@ func Run(o GetOptions) (code int) {
 		case cached:
 			out("\rghapk: reused verified cached archive %s   ", filepath.Base(zipPath))
 		case ds == apk.DigestVerified:
-			out("\rghapk: downloaded %s (sha256 verified against GitHub digest)   ", ghapi.HumanBytes(art.SizeInBytes))
+			out("\rghapk: downloaded %s (archive sha256 verified against GitHub digest)   ", ghapi.HumanBytes(art.SizeInBytes))
 		default:
-			out("\rghapk: downloaded %s (digest unverified — GitHub published none)   ", ghapi.HumanBytes(art.SizeInBytes))
+			out("\rghapk: downloaded %s (archive digest unverified — GitHub published none)   ", ghapi.HumanBytes(art.SizeInBytes))
 		}
 
 		var xerr error
@@ -247,8 +251,9 @@ func Run(o GetOptions) (code int) {
 			out("ghapk: unpacking: %v", xerr)
 			return 9
 		}
-		apkOut.DigestStatus = ds
-		apkOut.Meta.DigestStatus = ds
+		apkOut.DigestStatus = apk.DigestUnverified
+		apkOut.Meta.DigestStatus = apk.DigestUnverified
+		apkOut.Meta.ArchiveDigestStatus = ds
 	}
 	out("ghapk: apk %s (%s)", apkOut.Path, ghapi.HumanBytes(apkOut.Size))
 	if apkOut.Meta.HaveInfo {
@@ -365,12 +370,6 @@ func branchSuffix(b string) string {
 		return ""
 	}
 	return " (branch " + b + ")"
-}
-
-func containsFold(name, pattern string) bool {
-	return strings.Contains(
-		strings.ToLower(name),
-		strings.ToLower(strings.Trim(pattern, "*")))
 }
 
 func recordFlowHistory(repo string, art ghapi.Artifact, run ghapi.Run, meta apk.Inspection) {

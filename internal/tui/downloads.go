@@ -14,12 +14,12 @@ import (
 	"time"
 	"unicode"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ThatOn3Gu7/ghapk/internal/apk"
 	"github.com/ThatOn3Gu7/ghapk/internal/config"
 	"github.com/ThatOn3Gu7/ghapk/internal/device"
 	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 type jobSpec struct {
@@ -258,7 +258,11 @@ func runJob(id int, ctx context.Context, s jobSpec, ch chan tea.Msg) {
 			digest = ""
 		}
 		ds := ghapi.DigestStatusFor(digest)
-		emit("Checksum", "GitHub digest: "+string(ds))
+		scope := "APK"
+		if iszip {
+			scope = "Archive"
+		}
+		emit("Checksum", scope+" digest: "+string(ds))
 		if iszip {
 			emit("Unpack", "Safely extracting best matching APK")
 			var out ghapi.ExtractedAPK
@@ -302,7 +306,13 @@ func runJob(id int, ctx context.Context, s jobSpec, ch chan tea.Msg) {
 		if ctx.Err() != nil {
 			return
 		}
-		meta.DigestStatus = ds
+		if iszip {
+			// GitHub's digest covers the ZIP, not the APK extracted from it.
+			meta.DigestStatus = apk.DigestUnverified
+			meta.ArchiveDigestStatus = ds
+		} else {
+			meta.DigestStatus = ds
+		}
 		emit("Validate APK", "APK inspected")
 		if !meta.HaveInfo {
 			emit("", "Manifest unavailable: "+meta.InfoErr)

@@ -135,31 +135,73 @@ func InstallAPKContext(parent context.Context, apkPath string, allowDowngrade bo
 	defer cancel()
 
 	onAndroid := detectOSFn()
+	type attempt struct {
+		name string
+		run  func() (InstallResult, error)
+	}
+	var attempts []attempt
 	if onAndroid {
 		if hasPath("termux-open") {
-			return runTermuxOpenInstall(ctx, apkPath, onLine)
+			attempts = append(attempts, attempt{"termux-open", func() (InstallResult, error) {
+				return runTermuxOpenInstall(ctx, apkPath, onLine)
+			}})
 		}
 		if hasPath("am") {
-			return runAMInstall(ctx, apkPath, onLine)
+			attempts = append(attempts, attempt{"am", func() (InstallResult, error) {
+				return runAMInstall(ctx, apkPath, onLine)
+			}})
+		}
+	}
+	if hasPath("adb") {
+		attempts = append(attempts, attempt{"adb", func() (InstallResult, error) {
+			return runADBInstall(ctx, apkPath, allowDowngrade, onLine)
+		}})
+	}
+
+	if len(attempts) == 0 {
+		diag := "install Android platform-tools (`adb`) and enable USB/Wireless debugging, or copy the APK to your Android device"
+		if onAndroid {
+			diag = "install `termux-tools` (`pkg install termux-tools`) for `termux-open`, or open the saved APK from your Android file manager"
+		}
+		msg := fmt.Sprintf("no Android installer available (%s); APK saved at %s", diag, apkPath)
+		onLine(msg)
+		err := errors.New(msg)
+		return InstallResult{
+			Outcome:   OutcomeFailed,
+			Diagnosis: diag,
+			Detail:    msg,
+		}, err
+	}
+
+	var failures []string
+	var last InstallResult
+	for i, a := range attempts {
+		if err := ctx.Err(); err != nil {
+			return last, err
+		}
+		res, err := a.run()
+		if err == nil {
+			return res, nil
+		}
+		last = res
+		failures = append(failures, a.name+": "+err.Error())
+		if ctx.Err() != nil {
+			return last, ctx.Err()
+		}
+		if i < len(attempts)-1 {
+			onLine(fmt.Sprintf("%s failed; trying the next installer…", a.name))
 		}
 	}
 
-	if hasPath("adb") {
-		return runADBInstall(ctx, apkPath, allowDowngrade, onLine)
+	detail := "all installers failed: " + strings.Join(failures, "; ")
+	if last.Outcome == "" {
+		last.Outcome = OutcomeFailed
 	}
-
-	diag := "install Android platform-tools (`adb`) and enable USB/Wireless debugging, or copy the APK to your Android device"
-	if onAndroid {
-		diag = "install `termux-tools` (`pkg install termux-tools`) for `termux-open`, or open the saved APK from your Android file manager"
+	last.Detail = detail
+	if last.Diagnosis == "" {
+		last.Diagnosis = "all available installers failed"
 	}
-	msg := fmt.Sprintf("no Android installer available (%s); APK saved at %s", diag, apkPath)
-	onLine(msg)
-	err := errors.New(msg)
-	return InstallResult{
-		Outcome:   OutcomeFailed,
-		Diagnosis: diag,
-		Detail:    msg,
-	}, err
+	return last, errors.New(detail)
 }
 
 // Install preserves the error-only helper signature while returning non-nil

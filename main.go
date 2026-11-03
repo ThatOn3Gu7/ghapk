@@ -104,7 +104,11 @@ func getCmd(args []string) (int, tui.Options) {
 			settings.Branch = val()
 			branchOverride = true
 		case a == "--artifact" || strings.HasPrefix(a, "--artifact="):
+			// --artifact is a pattern; clear a saved exact name so it cannot
+			// silently shadow the command-line selection.
 			settings.ArtifactPattern = val()
+			settings.ArtifactName = ""
+			seen["artifact"] = true
 		case a == "--file" || strings.HasPrefix(a, "--file="):
 			settings.FilePattern = val()
 		case a == "--exclude" || strings.HasPrefix(a, "--exclude="):

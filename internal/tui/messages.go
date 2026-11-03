@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ThatOn3Gu7/ghapk/internal/apk"
 	"github.com/ThatOn3Gu7/ghapk/internal/device"
 	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/ThatOn3Gu7/ghapk/internal/activity"
 )
@@ -298,8 +298,9 @@ func downloadApkCmd(repo string, art ghapi.Artifact, zipPath, outDir, filePatter
 				checked = ""
 			}
 			ds := ghapi.DigestStatusFor(checked)
-			apkOut.DigestStatus = ds
-			apkOut.Meta.DigestStatus = ds
+			apkOut.DigestStatus = apk.DigestUnverified
+			apkOut.Meta.DigestStatus = apk.DigestUnverified
+			apkOut.Meta.ArchiveDigestStatus = ds
 		}
 		progCh <- DownloadDoneMsg{ZipPath: zipPath, APK: apkOut, Cached: cached, Err: err}
 		return nil

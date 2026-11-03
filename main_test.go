@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -16,6 +18,27 @@ func TestSelectionFlagOverridesAreTracked(t *testing.T) {
 	_, opts = getCmd(nil)
 	if opts.RepoOverride || opts.BranchOverride || opts.WorkflowOverride {
 		t.Fatal("unprovided flags marked as explicit")
+	}
+}
+
+func TestArtifactFlagClearsSavedExactName(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GHAPK_CONFIG_DIR", dir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config"), []byte("artifact=old-exact\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, opts := getCmd([]string{"--artifact=app-*"})
+	if opts.Settings.ArtifactName != "" {
+		t.Fatalf("saved exact artifact name was not cleared: %q", opts.Settings.ArtifactName)
+	}
+	if opts.Settings.ArtifactPattern != "app-*" {
+		t.Fatalf("pattern = %q, want app-*", opts.Settings.ArtifactPattern)
+	}
+	if v, ok := opts.CLIOverrides["artifact"]; !ok || v != "" {
+		t.Fatalf("artifact override = %q, present=%v; want empty override", v, ok)
 	}
 }
 

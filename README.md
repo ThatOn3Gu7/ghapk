@@ -218,7 +218,7 @@ Useful options (also available to the TUI unless noted):
 | :--- | :--- |
 | `--source auto\|actions\|releases` | Choose Actions, release assets, or fallback |
 | `--branch`, `--workflow` | Filter Actions runs |
-| `--artifact PATTERN`, `--exclude PATTERN` | Filter names: Actions uses case-insensitive substring matching; Releases uses case-insensitive globs |
+| `--artifact PATTERN`, `--exclude PATTERN` | Filter names: case-insensitive globs (`*`, `?`), comma-separated; plain text is a substring match |
 | `--file GLOB` | Match files in archives, e.g. `--file '*release*.apk'` |
 | `--out DIR` | Also copy the APK to a directory |
 | `--keep N`, `--refresh SECONDS` | Control cache retention and refresh interval |
@@ -337,8 +337,9 @@ change the cache location.
 Actions where available and falls back to release assets. A release asset can
 be an APK or a ZIP containing APKs; Actions artifacts are archives. Branch
 filters apply to Actions, not releases. Archive extraction has size and path
-safety limits. With digest verification enabled, ghapk checks a SHA-256 digest
-when GitHub supplies one and reports unverified when it doesn't. Cached
+safety limits. With digest verification enabled, ghapk checks the SHA-256
+digest GitHub publishes for the downloaded file. For ZIP artifacts that digest
+covers the archive, not the APK inside it; the UI distinguishes the two. Cached
 archives are reused only when validated; disabling verification weakens this
 check. The one-line installer separately verifies the binary against the
 release's `sha256sums.txt` when the file, a matching entry, and a SHA-256

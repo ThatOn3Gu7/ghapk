@@ -12,7 +12,6 @@ import (
 	"math"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -23,6 +22,7 @@ import (
 
 	"github.com/ThatOn3Gu7/ghapk/internal/activity"
 	"github.com/ThatOn3Gu7/ghapk/internal/apk"
+	"github.com/ThatOn3Gu7/ghapk/internal/pattern"
 	"github.com/ThatOn3Gu7/ghapk/internal/score"
 )
 
@@ -621,7 +621,7 @@ func extractBestAPKWithOpts(zipPath, outDir, filePattern string, p score.Prefs, 
 			}
 
 			lower := strings.ToLower(leaf)
-			if opts.excludePattern != "" && matchAnyGlobFold(opts.excludePattern, leaf) {
+			if opts.excludePattern != "" && pattern.MatchList(opts.excludePattern, leaf) {
 				continue
 			}
 
@@ -664,8 +664,8 @@ func extractBestAPKWithOpts(zipPath, outDir, filePattern string, p score.Prefs, 
 			}
 
 			isAPK := strings.HasSuffix(lower, ".apk")
-			matchesPattern := !isAPK && filePattern != "" && matchAnyGlobFold(filePattern, leaf)
-			if isAPK && filePattern != "" && !strings.EqualFold(strings.TrimSpace(filePattern), "*.apk") && !matchAnyGlobFold(filePattern, leaf) {
+			matchesPattern := !isAPK && filePattern != "" && pattern.MatchList(filePattern, leaf)
+			if isAPK && filePattern != "" && !strings.EqualFold(strings.TrimSpace(filePattern), "*.apk") && !pattern.MatchList(filePattern, leaf) {
 				continue
 			}
 			if !isAPK && !matchesPattern {
@@ -1249,33 +1249,6 @@ func evalSymlinksAllowMissing(absPath string) (string, error) {
 	}
 }
 
-// matchGlobFold is path.Match against a lowercased leaf name and pattern,
-// falling back to substring match only when pattern has invalid glob syntax.
-func matchGlobFold(pattern, name string) bool {
-	p := strings.ToLower(strings.TrimSpace(pattern))
-	if p == "" {
-		return false
-	}
-	n := strings.ToLower(name)
-	ok, err := path.Match(p, n)
-	if err != nil {
-		sub := strings.Trim(p, "*")
-		return sub != "" && strings.Contains(n, sub)
-	}
-	return ok
-}
-
-// matchAnyGlobFold matches name against a comma-separated list of globs.
-func matchAnyGlobFold(patterns, name string) bool {
-	for _, part := range strings.Split(patterns, ",") {
-		part = strings.TrimSpace(part)
-		if part != "" && matchGlobFold(part, name) {
-			return true
-		}
-	}
-	return false
-}
-
 // RankedReleaseAsset pairs a ReleaseAsset with its parent Release metadata and
 // computed score/policy flags.
 type RankedReleaseAsset struct {
@@ -1299,14 +1272,14 @@ func RankReleaseAssets(rels []Release, artifactPattern, filePattern, excludePatt
 			low := strings.ToLower(a.Name)
 			isAPK := strings.HasSuffix(low, ".apk")
 			isZip := strings.HasSuffix(low, ".zip")
-			matchesFile := filePattern != "" && matchAnyGlobFold(filePattern, a.Name)
+			matchesFile := filePattern != "" && pattern.MatchList(filePattern, a.Name)
 			if !isAPK && !isZip && !matchesFile {
 				continue
 			}
-			if artifactPattern != "" && !matchAnyGlobFold(artifactPattern, a.Name) {
+			if artifactPattern != "" && !pattern.MatchList(artifactPattern, a.Name) {
 				continue
 			}
-			if excludePattern != "" && matchAnyGlobFold(excludePattern, a.Name) {
+			if excludePattern != "" && pattern.MatchList(excludePattern, a.Name) {
 				continue
 			}
 			a.Score = score.APKRank(a.Name, p, dev)
@@ -1376,8 +1349,10 @@ func FetchReleaseAPKWithDigest(repo string, asset ReleaseAsset, outDir, filePatt
 		if xerr != nil {
 			return ExtractedAPK{}, xerr
 		}
-		apkOut.DigestStatus = ds
-		apkOut.Meta.DigestStatus = ds
+		// The published digest covers the ZIP, not the APK inside it.
+		apkOut.DigestStatus = apk.DigestUnverified
+		apkOut.Meta.DigestStatus = apk.DigestUnverified
+		apkOut.Meta.ArchiveDigestStatus = ds
 		return apkOut, nil
 	}
 

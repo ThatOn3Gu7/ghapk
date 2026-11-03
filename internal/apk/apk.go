@@ -68,6 +68,9 @@ type Inspection struct {
 	Size         int64
 	LocalSHA256  string       // informational hash of the APK file itself
 	DigestStatus DigestStatus // verified ONLY when checked against trusted expected hash
+	// ArchiveDigestStatus is set when the APK came out of a ZIP whose digest
+	// was checked. It never claims the APK itself was verified.
+	ArchiveDigestStatus DigestStatus
 }
 
 // Inspect reads manifest info, signing certificate, size, and local SHA-256
