@@ -95,13 +95,28 @@ func getCmd(args []string) (int, tui.Options) {
 		}
 		switch {
 		case a == "--repo" || strings.HasPrefix(a, "--repo="):
-			settings.Repo = val()
+			v, ok := selectionFlagValue(args, &i, a)
+			if !ok {
+				fmt.Fprintln(os.Stderr, "ghapk: --repo requires a value")
+				return 2, tui.Options{}
+			}
+			settings.Repo = v
 			repoOverride = true
 		case a == "--workflow" || strings.HasPrefix(a, "--workflow="):
-			settings.Workflow = val()
+			v, ok := selectionFlagValue(args, &i, a)
+			if !ok {
+				fmt.Fprintln(os.Stderr, "ghapk: --workflow requires a value")
+				return 2, tui.Options{}
+			}
+			settings.Workflow = v
 			workflowOverride = true
 		case a == "--branch" || strings.HasPrefix(a, "--branch="):
-			settings.Branch = val()
+			v, ok := selectionFlagValue(args, &i, a)
+			if !ok {
+				fmt.Fprintln(os.Stderr, "ghapk: --branch requires a value")
+				return 2, tui.Options{}
+			}
+			settings.Branch = v
 			branchOverride = true
 		case a == "--artifact" || strings.HasPrefix(a, "--artifact="):
 			// --artifact is a pattern; clear a saved exact name so it cannot
@@ -176,6 +191,22 @@ func getCmd(args []string) (int, tui.Options) {
 		}), opts
 	}
 	return 0, opts
+}
+
+// selectionFlagValue reads a required selection value, rejecting both a
+// missing argument and an empty --flag= form instead of silently clearing the
+// saved repository, branch, or workflow.
+func selectionFlagValue(args []string, i *int, arg string) (string, bool) {
+	if strings.Contains(arg, "=") {
+		v := strings.SplitN(arg, "=", 2)[1]
+		return v, strings.TrimSpace(v) != ""
+	}
+	if *i+1 >= len(args) || strings.HasPrefix(args[*i+1], "-") {
+		return "", false
+	}
+	*i++
+	v := args[*i]
+	return v, strings.TrimSpace(v) != ""
 }
 
 func doctorCmd() int {

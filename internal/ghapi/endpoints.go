@@ -1,6 +1,7 @@
 package ghapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -165,8 +166,13 @@ func FetchWorkflowFile(repo, path string) (string, error) {
 
 // ListArtifacts mirrors `gh api repos/:repo/actions/runs/:id/artifacts`.
 func ListArtifacts(repo string, runID int64) ([]Artifact, error) {
+	return ListArtifactsContext(context.Background(), repo, runID)
+}
+
+// ListArtifactsContext is ListArtifacts with caller-owned cancellation.
+func ListArtifactsContext(ctx context.Context, repo string, runID int64) ([]Artifact, error) {
 	var a artifactsResp
-	if err := api(&a, defaultTimeout, fmt.Sprintf("repos/%s/actions/runs/%d/artifacts", repo, runID)); err != nil {
+	if err := apiContext(ctx, &a, defaultTimeout, fmt.Sprintf("repos/%s/actions/runs/%d/artifacts", repo, runID)); err != nil {
 		return nil, err
 	}
 	return a.Artifacts, nil
@@ -195,15 +201,31 @@ func ListReleases(repo string, limit int) ([]Release, error) {
 	return r, nil
 }
 
-// ListUserRepos returns all repositories accessible to the authenticated user,
-// including owned, collaborator, and organization repositories.
-func ListUserRepos() ([]Repo, error) {
-	const endpoint = "user/repos?sort=pushed&direction=desc&per_page=100&affiliation=owner,collaborator,organization_member"
-	out, err := rawAPI(2*time.Minute, endpoint, "--paginate")
-	if err != nil {
-		return nil, err
+// ListUserReposPage returns one page of repositories accessible to the
+// authenticated user, including owned, collaborator, and organization
+// repositories. hasMore reports whether another page may exist.
+func ListUserReposPage(page, perPage int) ([]Repo, bool, error) {
+	if page < 1 {
+		page = 1
 	}
-	return decodePages[Repo](out, "authenticated repositories")
+	if perPage <= 0 {
+		perPage = 100
+	}
+	if perPage > 100 {
+		perPage = 100
+	}
+	endpoint := fmt.Sprintf(
+		"user/repos?sort=pushed&direction=desc&per_page=%d&page=%d&affiliation=owner,collaborator,organization_member",
+		perPage, page)
+	out, err := rawAPI(2*time.Minute, endpoint)
+	if err != nil {
+		return nil, false, err
+	}
+	repos, err := decodePages[Repo](out, "authenticated repositories")
+	if err != nil {
+		return nil, false, err
+	}
+	return repos, len(repos) == perPage, nil
 }
 
 // gh --paginate emits consecutive JSON arrays; decode all of them without

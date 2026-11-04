@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -32,6 +33,20 @@ type Store struct {
 	modified      time.Time
 	version       uint64
 	err           error
+
+	// Input events are high-volume and must not block the UI loop. They are
+	// appended by one background worker; other events stay synchronous so
+	// tests and crash diagnostics still see them immediately.
+	asyncCh     chan asyncWrite
+	asyncQuit   chan struct{}
+	asyncDone   chan struct{}
+	asyncClosed atomic.Bool
+	closeOnce   sync.Once
+}
+
+type asyncWrite struct {
+	kind, text string
+	done       chan struct{}
 }
 
 // Open loads the previous sessions and starts a new one. Failures are returned
@@ -59,6 +74,10 @@ func Open(dir string, max int64) (*Store, error) {
 	if err := s.Write("session", "Session started"); err != nil {
 		return nil, err
 	}
+	s.asyncCh = make(chan asyncWrite, 256)
+	s.asyncQuit = make(chan struct{})
+	s.asyncDone = make(chan struct{})
+	go s.runAsync()
 	return s, nil
 }
 func (s *Store) Path() string {
@@ -75,7 +94,76 @@ func (s *Store) Error() error {
 	defer s.mu.Unlock()
 	return s.err
 }
-func (s *Store) Close() error { return s.Write("session", "Session ended") }
+func (s *Store) Close() error {
+	if s == nil {
+		return nil
+	}
+	s.Flush()
+	s.closeOnce.Do(func() {
+		s.asyncClosed.Store(true)
+		if s.asyncQuit != nil {
+			close(s.asyncQuit)
+		}
+		if s.asyncDone != nil {
+			<-s.asyncDone
+		}
+	})
+	return s.write("session", "Session ended")
+}
+
+// WriteAsync records an entry on a background worker. It is intended for
+// high-volume input events; if the queue is full the event is dropped rather
+// than blocking the interface. Call Flush, Entries, Version, or Close before
+// reading the file directly.
+func (s *Store) WriteAsync(kind, text string) {
+	if s == nil || s.asyncClosed.Load() {
+		return
+	}
+	select {
+	case <-s.asyncQuit:
+		return
+	default:
+	}
+	select {
+	case s.asyncCh <- asyncWrite{kind: kind, text: text}:
+	case <-s.asyncQuit:
+	default:
+		// Best-effort input logging: dropping one event is better than a
+		// stutter while the user is typing or scrolling.
+	}
+}
+
+// Flush waits for queued asynchronous writes to reach disk.
+func (s *Store) Flush() {
+	if s == nil || s.asyncCh == nil {
+		return
+	}
+	done := make(chan struct{})
+	select {
+	case s.asyncCh <- asyncWrite{done: done}:
+		select {
+		case <-done:
+		case <-s.asyncDone:
+		}
+	case <-s.asyncDone:
+	}
+}
+
+func (s *Store) runAsync() {
+	defer close(s.asyncDone)
+	for {
+		select {
+		case req := <-s.asyncCh:
+			if req.done != nil {
+				close(req.done)
+				continue
+			}
+			_ = s.write(req.kind, req.text)
+		case <-s.asyncQuit:
+			return
+		}
+	}
+}
 
 func (s *Store) reload() error {
 	fi, err := os.Lstat(s.path)
@@ -158,6 +246,7 @@ func (s *Store) Entries() []Entry {
 	if s == nil {
 		return nil
 	}
+	s.Flush()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.refresh()
@@ -169,16 +258,24 @@ func (s *Store) Version() uint64 {
 	if s == nil {
 		return 0
 	}
+	s.Flush()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.refresh()
 	return s.version
 }
 
+// Write appends synchronously, first draining any queued input events so the
+// on-disk order matches the order in which the interface produced them.
 func (s *Store) Write(kind, text string) error {
 	if s == nil {
 		return nil
 	}
+	s.Flush()
+	return s.write(kind, text)
+}
+
+func (s *Store) write(kind, text string) error {
 	e := Entry{At: time.Now(), Session: s.session, Kind: clean(kind, 48), Text: clean(Redact(text), 3072)}
 	b, err := json.Marshal(e)
 	if err != nil {

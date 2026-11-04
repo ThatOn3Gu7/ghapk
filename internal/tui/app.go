@@ -188,6 +188,8 @@ type Model struct {
 	userReposLoaded  bool
 	userReposLoading bool
 	userReposSeq     int
+	userReposPage    int
+	userReposHasMore bool
 	wfCatalog        []ghapi.Workflow
 
 	branchList components.List
@@ -350,6 +352,24 @@ func (m *Model) loadRecents(current string) {
 	} else if current != "" {
 		m.repos.SelectByID(current)
 	}
+}
+
+// appendUniqueRepos adds a later page without duplicating repositories that
+// moved between pages while the list was being paged.
+func appendUniqueRepos(existing, more []ghapi.Repo) []ghapi.Repo {
+	seen := make(map[string]bool, len(existing)+len(more))
+	for _, r := range existing {
+		seen[strings.ToLower(r.FullName)] = true
+	}
+	for _, r := range more {
+		key := strings.ToLower(r.FullName)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		existing = append(existing, r)
+	}
+	return existing
 }
 
 // authSpinner retains visible animation in ASCII mode as well as Unicode.
@@ -566,6 +586,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cachedUserRepos = nil
 			m.userReposLoaded = false
 			m.userReposLoading = false
+			m.userReposPage = 0
+			m.userReposHasMore = false
 			m.userReposSeq++
 		}
 		m.authChecking = false
@@ -826,7 +848,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.userReposLoading = false
 		if msg.Err == nil {
-			m.cachedUserRepos = msg.List
+			page := msg.Page
+			if page < 1 {
+				page = 1
+			}
+			if page == 1 {
+				m.cachedUserRepos = msg.List
+			} else {
+				m.cachedUserRepos = appendUniqueRepos(m.cachedUserRepos, msg.List)
+			}
+			m.userReposPage = page
+			m.userReposHasMore = msg.HasMore
 			m.userReposLoaded = true
 		}
 		if m.modal == ModalPickRepo && m.repoPicker != nil {

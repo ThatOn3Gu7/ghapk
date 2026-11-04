@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ThatOn3Gu7/ghapk/internal/activity"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestLogPanelHistoryFollowAndTouch(t *testing.T) {
@@ -286,6 +286,7 @@ func TestBrowsingLogDoesNotCreateScrollEntries(t *testing.T) {
 				t.Fatal("copy no longer works")
 			}
 			apply(key("5"))
+			store.Flush()
 			data, err := os.ReadFile(store.Path())
 			if err != nil {
 				t.Fatal(err)

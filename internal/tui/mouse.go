@@ -655,7 +655,7 @@ func (m Model) handleRepoPickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			rp.list.MoveBy(delta)
 		}
 		rp.touchLastY = msg.Y
-		return m, nil
+		return m, m.loadMoreReposIfNeeded()
 	}
 	if (msg.Type == tea.MouseWheelUp || msg.Button == tea.MouseButtonWheelUp) && bounds.contains(msg.X, msg.Y) {
 		rp.list.MoveBy(-3)
@@ -663,7 +663,7 @@ func (m Model) handleRepoPickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	if (msg.Type == tea.MouseWheelDown || msg.Button == tea.MouseButtonWheelDown) && bounds.contains(msg.X, msg.Y) {
 		rp.list.MoveBy(3)
-		return m, nil
+		return m, m.loadMoreReposIfNeeded()
 	}
 	if msg.Type == tea.MouseLeft && msg.Action == tea.MouseActionPress {
 		hintY := status.y + 1

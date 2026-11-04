@@ -49,19 +49,15 @@ func AuthStatus() (user string, err error) {
 	if !Available() {
 		return "", ErrNoGH
 	}
+	// One API call proves both credentials and connectivity. Running
+	// `gh auth status` first doubled the startup wait, especially offline.
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := activity.CommandContext(ctx, "gh", "auth", "status")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", authCheckError(ctx, string(out), true)
-	}
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel2()
-	cmd = activity.CommandContext(ctx2, "gh", "api", "user", "--jq", ".login")
+	cmd := activity.CommandContext(ctx, "gh", "api", "user", "--jq", ".login")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return "", authCheckError(ctx2, stdout.String()+"\n"+stderr.String(), false)
+		return "", authCheckError(ctx, stdout.String()+"\n"+stderr.String())
 	}
 	if user := strings.TrimSpace(stdout.String()); user != "" {
 		return user, nil
@@ -69,7 +65,7 @@ func AuthStatus() (user string, err error) {
 	return "", ErrAuthCheck
 }
 
-func authCheckError(ctx context.Context, output string, status bool) error {
+func authCheckError(ctx context.Context, output string) error {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) || connectionFailure(output) {
 		return ErrOffline
 	}
@@ -78,11 +74,9 @@ func authCheckError(ctx context.Context, output string, status bool) error {
 		strings.Contains(text, "not logged") || strings.Contains(text, "not authenticated") ||
 		strings.Contains(text, "invalid token") || strings.Contains(text, "token is invalid") ||
 		strings.Contains(text, "failed to authenticate") || strings.Contains(text, "authentication failed") ||
-		strings.Contains(text, "failed to log in") || (strings.Contains(text, "token") && strings.Contains(text, "invalid")) {
-		return ErrNoAuth
-	}
-	// Older versions of gh return unstructured output on auth-status errors.
-	if status && strings.TrimSpace(output) == "" {
+		strings.Contains(text, "failed to log in") || strings.Contains(text, "to authenticate") ||
+		strings.Contains(text, "welcome to github cli") || strings.Contains(text, "gh auth login") ||
+		(strings.Contains(text, "token") && strings.Contains(text, "invalid")) {
 		return ErrNoAuth
 	}
 	return ErrAuthCheck
@@ -116,6 +110,11 @@ func firstLine(s string) string {
 // api runs `gh api <endpoint> [args...]` and decodes JSON into v.
 // A default per_page=100 is added unless the endpoint already has a query.
 func api(v any, timeout time.Duration, endpoint string, args ...string) error {
+	return apiContext(context.Background(), v, timeout, endpoint, args...)
+}
+
+// apiContext is api with a caller-owned cancellation context.
+func apiContext(parent context.Context, v any, timeout time.Duration, endpoint string, args ...string) error {
 	if !Available() {
 		return ErrNoGH
 	}
@@ -123,7 +122,10 @@ func api(v any, timeout time.Duration, endpoint string, args ...string) error {
 		endpoint += "?per_page=100"
 	}
 	full := append([]string{"api", endpoint}, args...)
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	cmd := activity.CommandContext(ctx, "gh", full...)
 	var stdout, stderr bytes.Buffer

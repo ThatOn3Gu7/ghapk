@@ -260,6 +260,50 @@ func TestRepoPickerFiltersAndRejectsStaleSearch(t *testing.T) {
 	}
 }
 
+func TestRepoPickerLoadsNextPageOnScroll(t *testing.T) {
+	t.Setenv("GHAPK_CONFIG_DIR", t.TempDir())
+	m := newTestModel()
+	for i := 0; i < 100; i++ {
+		m.cachedUserRepos = append(m.cachedUserRepos, ghapi.Repo{FullName: fmt.Sprintf("team/repo%03d", i)})
+	}
+	m.userReposLoaded = true
+	m.userReposPage = 1
+	m.userReposHasMore = true
+	m.openRepoPicker()
+	if m.repoPicker.loading {
+		t.Fatal("opening a loaded picker should not fetch page one again")
+	}
+	var cmd tea.Cmd
+	var next tea.Model
+	for i := 0; i < 100; i++ {
+		next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = next.(Model)
+		if cmd != nil {
+			break
+		}
+	}
+	if cmd == nil || !m.userReposLoading {
+		t.Fatal("scrolling to the end did not request the next page")
+	}
+	seq := m.userReposSeq
+	mm, _ := m.Update(UserReposMsg{Seq: seq, Page: 2, List: []ghapi.Repo{
+		{FullName: "team/repo099"},
+		{FullName: "new/page2"},
+	}})
+	m = mm.(Model)
+	if m.userReposLoading || m.userReposPage != 2 || m.userReposHasMore {
+		t.Fatalf("page state = loading:%v page:%d more:%v", m.userReposLoading, m.userReposPage, m.userReposHasMore)
+	}
+	if len(m.cachedUserRepos) != 101 || m.cachedUserRepos[100].FullName != "new/page2" {
+		t.Fatalf("page was not appended/deduplicated: %d %+v", len(m.cachedUserRepos), m.cachedUserRepos[len(m.cachedUserRepos)-1])
+	}
+	next, cmd = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = next.(Model)
+	if cmd != nil || m.userReposLoading {
+		t.Fatal("scrolling past the last page started another fetch")
+	}
+}
+
 func TestRepoPickerAccountSwitchClearsOldData(t *testing.T) {
 	t.Setenv("GHAPK_CONFIG_DIR", t.TempDir())
 	m := newTestModel()

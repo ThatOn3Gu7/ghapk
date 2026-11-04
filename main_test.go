@@ -21,6 +21,27 @@ func TestSelectionFlagOverridesAreTracked(t *testing.T) {
 	}
 }
 
+func TestSelectionFlagsRequireValues(t *testing.T) {
+	t.Setenv("GHAPK_CONFIG_DIR", t.TempDir())
+	for _, args := range [][]string{
+		{"--repo"},
+		{"--repo="},
+		{"--repo", "--branch", "main"},
+		{"--branch"},
+		{"--branch="},
+		{"--workflow"},
+		{"--workflow="},
+		{"--workflow", "--repo", "owner/project"},
+	} {
+		if code, _ := getCmd(args); code != 2 {
+			t.Fatalf("missing value accepted: %v", args)
+		}
+	}
+	if _, opts := getCmd([]string{"--repo", "owner/project"}); opts.Settings.Repo != "owner/project" {
+		t.Fatalf("separate-value form failed: %+v", opts.Settings)
+	}
+}
+
 func TestArtifactFlagClearsSavedExactName(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GHAPK_CONFIG_DIR", dir)

@@ -82,6 +82,13 @@ func Inspect(apkPath string) (Inspection, error) {
 
 // InspectContext checks cancellation during the potentially long file hash.
 func InspectContext(ctx context.Context, apkPath string) (Inspection, error) {
+	return InspectContextWithSHA(ctx, apkPath, "")
+}
+
+// InspectContextWithSHA is InspectContext with an already-computed SHA-256.
+// Pass an empty sha to hash the file normally; a known hash avoids reading the
+// same bytes twice after a verified download or cache check.
+func InspectContextWithSHA(ctx context.Context, apkPath, sha string) (Inspection, error) {
 	if err := ctx.Err(); err != nil {
 		return Inspection{}, err
 	}
@@ -92,13 +99,15 @@ func InspectContext(ctx context.Context, apkPath string) (Inspection, error) {
 	if !st.Mode().IsRegular() || st.Size() == 0 {
 		return Inspection{}, errors.New("APK is empty or not a regular file")
 	}
-	sha, err := FileSHA256Context(ctx, apkPath)
-	if err != nil {
-		return Inspection{}, err
+	if len(sha) != 64 {
+		sha, err = FileSHA256Context(ctx, apkPath)
+		if err != nil {
+			return Inspection{}, err
+		}
 	}
 	out := Inspection{
 		Size:         st.Size(),
-		LocalSHA256:  sha,
+		LocalSHA256:  strings.ToLower(sha),
 		DigestStatus: DigestUnverified,
 	}
 	if err := ctx.Err(); err != nil {
