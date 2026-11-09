@@ -88,13 +88,33 @@ func (m *Model) fetchUserRepos() tea.Cmd {
 	if m.userReposLoading {
 		return nil
 	}
+	page := 1
+	if m.userReposLoaded {
+		if !m.userReposHasMore {
+			return nil
+		}
+		page = m.userReposPage + 1
+	}
 	m.userReposLoading = true
 	m.userReposSeq++
 	if m.repoPicker != nil {
 		m.repoPicker.loading = true
 		m.repoPicker.errMsg = ""
 	}
-	return tea.Batch(fetchUserReposCmd(m.userReposSeq), m.spin.Tick)
+	return tea.Batch(fetchUserReposCmd(m.userReposSeq, page), m.spin.Tick)
+}
+
+// loadMoreReposIfNeeded starts the next page when the highlighted row is near
+// the end of the list. Paging on demand keeps huge accounts responsive.
+func (m *Model) loadMoreReposIfNeeded() tea.Cmd {
+	if m.modal != ModalPickRepo || m.repoPicker == nil || m.userReposLoading || !m.userReposHasMore {
+		return nil
+	}
+	items := m.repoPicker.list.Filtered()
+	if len(items) == 0 || m.repoPicker.list.Cursor < len(items)-3 {
+		return nil
+	}
+	return m.fetchUserRepos()
 }
 
 // Keep the modal and its hit targets inside even the smallest supported screen.
@@ -213,13 +233,13 @@ func (rp *RepoPicker) handleKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 		return *m, nil
 	case "down", "ctrl+n", "tab":
 		rp.list.MoveBy(1)
-		return *m, nil
+		return *m, m.loadMoreReposIfNeeded()
 	case "up", "ctrl+p", "shift+tab":
 		rp.list.MoveBy(-1)
 		return *m, nil
 	case "pgdown", "ctrl+d":
 		rp.list.MoveBy(6)
-		return *m, nil
+		return *m, m.loadMoreReposIfNeeded()
 	case "pgup", "ctrl+u":
 		rp.list.MoveBy(-6)
 		return *m, nil

@@ -598,11 +598,36 @@ func encode(s Settings, repoLevel bool) string {
 func kvline(b *strings.Builder, k, v string) { fmt.Fprintf(b, "%s=%s\n", k, v) }
 
 func save(path, body string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	return writeFileAtomic(path, []byte(body), 0o600)
+}
+
+// writeFileAtomic writes to a unique temporary file in the destination
+// directory, then renames it into place. A fixed ".tmp" name would let two
+// processes (or two jobs) overwrite each other's temporary file.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(body), 0o600); err != nil {
+	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if err := f.Chmod(perm); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)

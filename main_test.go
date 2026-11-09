@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -16,6 +18,48 @@ func TestSelectionFlagOverridesAreTracked(t *testing.T) {
 	_, opts = getCmd(nil)
 	if opts.RepoOverride || opts.BranchOverride || opts.WorkflowOverride {
 		t.Fatal("unprovided flags marked as explicit")
+	}
+}
+
+func TestSelectionFlagsRequireValues(t *testing.T) {
+	t.Setenv("GHAPK_CONFIG_DIR", t.TempDir())
+	for _, args := range [][]string{
+		{"--repo"},
+		{"--repo="},
+		{"--repo", "--branch", "main"},
+		{"--branch"},
+		{"--branch="},
+		{"--workflow"},
+		{"--workflow="},
+		{"--workflow", "--repo", "owner/project"},
+	} {
+		if code, _ := getCmd(args); code != 2 {
+			t.Fatalf("missing value accepted: %v", args)
+		}
+	}
+	if _, opts := getCmd([]string{"--repo", "owner/project"}); opts.Settings.Repo != "owner/project" {
+		t.Fatalf("separate-value form failed: %+v", opts.Settings)
+	}
+}
+
+func TestArtifactFlagClearsSavedExactName(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GHAPK_CONFIG_DIR", dir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config"), []byte("artifact=old-exact\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, opts := getCmd([]string{"--artifact=app-*"})
+	if opts.Settings.ArtifactName != "" {
+		t.Fatalf("saved exact artifact name was not cleared: %q", opts.Settings.ArtifactName)
+	}
+	if opts.Settings.ArtifactPattern != "app-*" {
+		t.Fatalf("pattern = %q, want app-*", opts.Settings.ArtifactPattern)
+	}
+	if v, ok := opts.CLIOverrides["artifact"]; !ok || v != "" {
+		t.Fatalf("artifact override = %q, present=%v; want empty override", v, ok)
 	}
 }
 

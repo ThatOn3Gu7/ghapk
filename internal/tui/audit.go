@@ -31,7 +31,7 @@ func (m Model) auditInput(msg tea.Msg) {
 		if len(v.Runes) > 1 {
 			k = "[pasted text omitted]"
 		}
-		_ = m.activity.Write("input", fmt.Sprintf("key %s (panel=%s, dialog=%d)", k, PanelNames[m.activeTab()], m.modal))
+		m.activity.WriteAsync("input", fmt.Sprintf("key %s (panel=%s, dialog=%d)", k, PanelNames[m.activeTab()], m.modal))
 	case tea.MouseMsg:
 		// Scrolling is high-volume input, not an activity worth persisting.
 		// In the Log pane it would also generate more entries to scroll through.
@@ -42,7 +42,7 @@ func (m Model) auditInput(msg tea.Msg) {
 			return
 		}
 		if v.Action == tea.MouseActionPress {
-			_ = m.activity.Write("input", fmt.Sprintf("pointer %s at %d,%d (panel=%s)", v.String(), v.X, v.Y, PanelNames[m.activeTab()]))
+			m.activity.WriteAsync("input", fmt.Sprintf("pointer %s at %d,%d (panel=%s)", v.String(), v.X, v.Y, PanelNames[m.activeTab()]))
 		}
 	case jobEventMsg:
 		if v.transient {

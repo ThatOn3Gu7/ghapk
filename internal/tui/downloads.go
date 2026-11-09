@@ -14,12 +14,12 @@ import (
 	"time"
 	"unicode"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ThatOn3Gu7/ghapk/internal/apk"
 	"github.com/ThatOn3Gu7/ghapk/internal/config"
 	"github.com/ThatOn3Gu7/ghapk/internal/device"
 	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 type jobSpec struct {
@@ -186,8 +186,9 @@ func runJob(id int, ctx context.Context, s jobSpec, ch chan tea.Msg) {
 			fail(err)
 			return
 		}
-		// Reuse a cache only after validating a private copy, so a concurrent
-		// job replacing the shared cache cannot change what we extract.
+		// Reuse a cache only after validating the job's own link or copy, so a
+		// concurrent job replacing the shared cache cannot change what we
+		// extract.
 		cacheKey := sha256.Sum256([]byte(fmt.Sprintf("%s/%t/%d/%s/%d", s.repo, s.choice.release, func() int64 {
 			if s.choice.release {
 				return s.choice.asset.ID
@@ -207,28 +208,24 @@ func runJob(id int, ctx context.Context, s jobSpec, ch chan tea.Msg) {
 			checkAsset.Digest = ""
 		}
 		cacheOK := false
+		knownSHA := ""
 		if s.settings.KeepCache {
-			valid := false
-			if s.choice.release {
-				valid = ghapi.CanReuseReleaseAssetContext(ctx, cached, checkAsset)
-			} else {
-				valid = ghapi.CanReuseArtifactZipContext(ctx, cached, checkArt)
+			// Link the cached archive into this job when possible; a hardlink
+			// is stable even if another job replaces the cache path, and it
+			// avoids copying the whole file. Fall back to a copy on filesystems
+			// without hardlink support, then validate only the job's copy.
+			if err = linkOrCopy(ctx, cached, download); err == nil && ctx.Err() == nil {
+				if s.choice.release {
+					cacheOK, knownSHA = ghapi.CanReuseReleaseAssetHashContext(ctx, download, checkAsset)
+				} else {
+					cacheOK = ghapi.CanReuseArtifactZipContext(ctx, download, checkArt)
+				}
 			}
-			if valid && ctx.Err() == nil {
-				err = copyJobFile(ctx, cached, download)
-				if err == nil {
-					if s.choice.release {
-						cacheOK = ghapi.CanReuseReleaseAssetContext(ctx, download, checkAsset)
-					} else {
-						cacheOK = ghapi.CanReuseArtifactZipContext(ctx, download, checkArt)
-					}
+			if cacheOK {
+				if fi, e := os.Stat(download); e == nil {
+					prog(fi.Size(), fi.Size())
 				}
-				if cacheOK {
-					if fi, e := os.Stat(download); e == nil {
-						prog(fi.Size(), fi.Size())
-					}
-					emit("Download", "Reused validated cache")
-				}
+				emit("Download", "Reused validated cache")
 			}
 		}
 		if ctx.Err() != nil {
@@ -236,7 +233,7 @@ func runJob(id int, ctx context.Context, s jobSpec, ch chan tea.Msg) {
 		}
 		if !cacheOK {
 			if s.choice.release {
-				err = ghapi.DownloadReleaseAssetContext(ctx, s.repo, s.choice.asset, download, s.settings.VerifyDigest, prog)
+				knownSHA, err = ghapi.DownloadReleaseAssetContextHash(ctx, s.repo, s.choice.asset, download, s.settings.VerifyDigest, prog)
 			} else {
 				err = ghapi.DownloadArtifactContext(ctx, s.repo, s.choice.art, download, s.settings.VerifyDigest, prog)
 			}
@@ -258,7 +255,11 @@ func runJob(id int, ctx context.Context, s jobSpec, ch chan tea.Msg) {
 			digest = ""
 		}
 		ds := ghapi.DigestStatusFor(digest)
-		emit("Checksum", "GitHub digest: "+string(ds))
+		scope := "APK"
+		if iszip {
+			scope = "Archive"
+		}
+		emit("Checksum", scope+" digest: "+string(ds))
 		if iszip {
 			emit("Unpack", "Safely extracting best matching APK")
 			var out ghapi.ExtractedAPK
@@ -293,7 +294,7 @@ func runJob(id int, ctx context.Context, s jobSpec, ch chan tea.Msg) {
 				return
 			}
 			path = download
-			meta, err = apk.InspectContext(ctx, path)
+			meta, err = apk.InspectContextWithSHA(ctx, path, knownSHA)
 			if err != nil {
 				fail(err)
 				return
@@ -302,7 +303,13 @@ func runJob(id int, ctx context.Context, s jobSpec, ch chan tea.Msg) {
 		if ctx.Err() != nil {
 			return
 		}
-		meta.DigestStatus = ds
+		if iszip {
+			// GitHub's digest covers the ZIP, not the APK extracted from it.
+			meta.DigestStatus = apk.DigestUnverified
+			meta.ArchiveDigestStatus = ds
+		} else {
+			meta.DigestStatus = ds
+		}
 		emit("Validate APK", "APK inspected")
 		if !meta.HaveInfo {
 			emit("", "Manifest unavailable: "+meta.InfoErr)
@@ -508,6 +515,20 @@ func (r jobReader) Read(p []byte) (int, error) {
 	}
 	return r.r.Read(p)
 }
+
+// linkOrCopy gives the job its own path to a cached archive. A hardlink keeps
+// the inode stable if another job replaces the shared cache path, so the copy
+// only needs validating once; filesystems without hardlinks fall back to copy.
+func linkOrCopy(ctx context.Context, src, dst string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := os.Link(src, dst); err == nil {
+		return nil
+	}
+	return copyJobFile(ctx, src, dst)
+}
+
 func copyJobFile(ctx context.Context, src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -556,6 +577,18 @@ func publishAPK(ctx context.Context, src, dir string) (string, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", err
 	}
+	base := sanitize(strings.TrimSuffix(filepath.Base(src), filepath.Ext(src)))
+	if base == "" {
+		base = "app"
+	}
+
+	// Moving the finished APK into the cache avoids a second full copy when the
+	// work file and the cache live on the same filesystem. The work directory
+	// is removed afterwards, so nothing needs the old path.
+	if target, err := movePublishedAPK(ctx, src, dir, base); err == nil {
+		return target, nil
+	}
+
 	in, err := os.Open(src)
 	if err != nil {
 		return "", err
@@ -578,12 +611,34 @@ func publishAPK(ctx context.Context, src, dir string) (string, error) {
 		return "", err
 	}
 	tag := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(tmp), ".ghapk-save-"), ".part")
-	base := sanitize(strings.TrimSuffix(filepath.Base(src), filepath.Ext(src)))
-	if base == "" {
-		base = "app"
-	}
 	target := filepath.Join(dir, base+"-"+tag+".apk")
 	if err = os.Rename(tmp, target); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+// movePublishedAPK reserves a unique name and renames src to it. A rename
+// across filesystems fails, so the caller can fall back to a copy.
+func movePublishedAPK(ctx context.Context, src, dir, base string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	f, err := os.CreateTemp(dir, ".ghapk-save-*.part")
+	if err != nil {
+		return "", err
+	}
+	name := f.Name()
+	if err := f.Close(); err != nil {
+		_ = os.Remove(name)
+		return "", err
+	}
+	if err := os.Remove(name); err != nil {
+		return "", err
+	}
+	tag := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(name), ".ghapk-save-"), ".part")
+	target := filepath.Join(dir, base+"-"+tag+".apk")
+	if err := os.Rename(src, target); err != nil {
 		return "", err
 	}
 	return target, nil

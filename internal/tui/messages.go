@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ThatOn3Gu7/ghapk/internal/apk"
 	"github.com/ThatOn3Gu7/ghapk/internal/device"
 	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/ThatOn3Gu7/ghapk/internal/activity"
 )
@@ -94,9 +94,11 @@ type SearchResultsMsg struct {
 }
 
 type UserReposMsg struct {
-	Seq  int
-	List []ghapi.Repo
-	Err  error
+	Seq     int
+	Page    int
+	List    []ghapi.Repo
+	HasMore bool
+	Err     error
 }
 
 type DownloadProgressMsg struct {
@@ -234,7 +236,7 @@ func fetchLocalBranchesCmd(repo string) tea.Cmd {
 
 func fetchReleasesCmd(repo string) tea.Cmd {
 	return func() tea.Msg {
-		rs, err := ghapi.ListReleases(repo, 5)
+		rs, err := ghapi.ListReleases(repo, 10)
 		return ReleasesMsg{Repo: repo, List: rs, Err: err}
 	}
 }
@@ -262,10 +264,10 @@ func searchReposCmd(query string, seq int) tea.Cmd {
 	}
 }
 
-func fetchUserReposCmd(seq int) tea.Cmd {
+func fetchUserReposCmd(seq, page int) tea.Cmd {
 	return func() tea.Msg {
-		rs, err := ghapi.ListUserRepos()
-		return UserReposMsg{Seq: seq, List: rs, Err: err}
+		rs, hasMore, err := ghapi.ListUserReposPage(page, 100)
+		return UserReposMsg{Seq: seq, Page: page, List: rs, HasMore: hasMore, Err: err}
 	}
 }
 
@@ -298,8 +300,9 @@ func downloadApkCmd(repo string, art ghapi.Artifact, zipPath, outDir, filePatter
 				checked = ""
 			}
 			ds := ghapi.DigestStatusFor(checked)
-			apkOut.DigestStatus = ds
-			apkOut.Meta.DigestStatus = ds
+			apkOut.DigestStatus = apk.DigestUnverified
+			apkOut.Meta.DigestStatus = apk.DigestUnverified
+			apkOut.Meta.ArchiveDigestStatus = ds
 		}
 		progCh <- DownloadDoneMsg{ZipPath: zipPath, APK: apkOut, Cached: cached, Err: err}
 		return nil

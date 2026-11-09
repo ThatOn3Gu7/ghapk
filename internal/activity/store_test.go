@@ -131,6 +131,45 @@ func TestConcurrentStoresDoNotLoseRecords(t *testing.T) {
 		t.Fatal("version not updated")
 	}
 }
+func TestAsyncInputWritesAreFlushedBeforeReads(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir, DefaultMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 50; i++ {
+		s.WriteAsync("input", fmt.Sprintf("key-%d", i))
+	}
+	entries := s.Entries()
+	count := 0
+	for _, e := range entries {
+		if e.Kind == "input" {
+			count++
+		}
+	}
+	if count != 50 {
+		t.Fatalf("input entries = %d, want 50", count)
+	}
+	s.Flush()
+	raw, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "key-49") {
+		t.Fatal("newest asynchronous entry was not flushed")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "Session ended") {
+		t.Fatal("Close did not flush the session end")
+	}
+}
+
 func TestCommandLoggingRedactsCredentialsAndQueries(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir, DefaultMaxBytes)

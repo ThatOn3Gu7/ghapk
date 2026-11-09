@@ -7,15 +7,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/progress"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/ThatOn3Gu7/ghapk/internal/apk"
 	"github.com/ThatOn3Gu7/ghapk/internal/config"
 	"github.com/ThatOn3Gu7/ghapk/internal/device"
 	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/theme"
+	"github.com/charmbracelet/bubbles/progress"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // TaskState tracks a download/install operation shown in the task modal.
@@ -407,10 +407,14 @@ func renderAPKMetaLines(b *strings.Builder, st theme.Styles, res ghapi.Extracted
 	if res.Meta.Cert.SHA256 != "" {
 		b.WriteString(st.Dim.Render(fmt.Sprintf("key %.12s… (%s)", res.Meta.Cert.SHA256, res.Meta.Cert.Scheme)) + "\n")
 	}
-	switch res.DigestStatus {
-	case apk.DigestVerified:
-		b.WriteString(st.OK.Render(st.G.OK+" sha256 verified against GitHub digest") + "\n")
-	case apk.DigestUnverified:
+	switch {
+	case res.Meta.DigestStatus == apk.DigestVerified:
+		b.WriteString(st.OK.Render(st.G.OK+" APK sha256 verified against GitHub digest") + "\n")
+	case res.Meta.ArchiveDigestStatus == apk.DigestVerified:
+		b.WriteString(st.OK.Render(st.G.OK+" archive sha256 verified; APK not independently verified") + "\n")
+	case res.Meta.ArchiveDigestStatus == apk.DigestUnverified:
+		b.WriteString(st.Dim.Render("archive digest unverified (GitHub published none)") + "\n")
+	case res.Meta.DigestStatus == apk.DigestUnverified:
 		b.WriteString(st.Dim.Render("digest unverified (GitHub published none)") + "\n")
 	}
 }

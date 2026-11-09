@@ -12,7 +12,6 @@ import (
 	"math"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -23,6 +22,7 @@ import (
 
 	"github.com/ThatOn3Gu7/ghapk/internal/activity"
 	"github.com/ThatOn3Gu7/ghapk/internal/apk"
+	"github.com/ThatOn3Gu7/ghapk/internal/pattern"
 	"github.com/ThatOn3Gu7/ghapk/internal/score"
 )
 
@@ -209,28 +209,37 @@ func CanReuseReleaseAsset(targetPath string, asset ReleaseAsset) bool {
 	return CanReuseReleaseAssetContext(context.Background(), targetPath, asset)
 }
 func CanReuseReleaseAssetContext(ctx context.Context, targetPath string, asset ReleaseAsset) bool {
+	ok, _ := CanReuseReleaseAssetHashContext(ctx, targetPath, asset)
+	return ok
+}
+
+// CanReuseReleaseAssetHashContext is CanReuseReleaseAssetContext plus the
+// SHA-256 it computed while checking the published digest. Callers can pass
+// that hash to apk.InspectContextWithSHA instead of reading the file again.
+func CanReuseReleaseAssetHashContext(ctx context.Context, targetPath string, asset ReleaseAsset) (bool, string) {
 	if ctx.Err() != nil {
-		return false
+		return false, ""
 	}
 	if _, _, err := validateDestFilePath(targetPath); err != nil {
-		return false
+		return false, ""
 	}
 	fi, err := os.Lstat(targetPath)
 	if err != nil || !fi.Mode().IsRegular() || fi.Size() <= 0 {
-		return false
+		return false, ""
 	}
 	if asset.Size > 0 && fi.Size() != asset.Size {
-		return false
+		return false, ""
 	}
 	if _, present, derr := apk.NormalizeExpectedSHA256(asset.Digest); derr != nil {
-		return false
+		return false, ""
 	} else if present {
-		st, _, verr := apk.VerifyExpectedSHA256Context(ctx, targetPath, asset.Digest)
+		st, actual, verr := apk.VerifyExpectedSHA256Context(ctx, targetPath, asset.Digest)
 		if verr != nil || st != apk.DigestVerified {
-			return false
+			return false, actual
 		}
+		return true, actual
 	}
-	return true
+	return true, ""
 }
 
 // DownloadArtifact streams the zip for an actions artifact to destZip atomically.
@@ -253,15 +262,20 @@ func DownloadReleaseAsset(repo string, asset ReleaseAsset, dest string, prog Pro
 }
 
 func downloadReleaseAssetWithOpts(opts streamOpts, repo string, asset ReleaseAsset, dest string, prog Progress) error {
+	_, err := downloadReleaseAssetWithOptsHash(opts, repo, asset, dest, prog)
+	return err
+}
+
+func downloadReleaseAssetWithOptsHash(opts streamOpts, repo string, asset ReleaseAsset, dest string, prog Progress) (string, error) {
 	resolvedDest, err := ResolveReleaseAssetDest(dest, asset.Name)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !opts.skipDigest && opts.expectedDigest == "" {
 		opts.expectedDigest = asset.Digest
 	}
 	endpoint := fmt.Sprintf("repos/%s/releases/assets/%d", repo, asset.ID)
-	return streamWithOpts(opts, endpoint, resolvedDest, asset.Size, prog,
+	return streamWithOptsHash(opts, endpoint, resolvedDest, asset.Size, prog,
 		"api", "-H", "Accept: application/octet-stream", endpoint)
 }
 
@@ -277,6 +291,14 @@ func DigestStatusFor(publishedDigest string) apk.DigestStatus {
 }
 
 func streamWithOpts(opts streamOpts, endpoint, dest string, expected int64, prog Progress, ghArgs ...string) error {
+	_, err := streamWithOptsHash(opts, endpoint, dest, expected, prog, ghArgs...)
+	return err
+}
+
+// streamWithOptsHash behaves like streamWithOpts and also returns the SHA-256
+// of the bytes written, so callers do not need to read the file again just to
+// inspect it.
+func streamWithOptsHash(opts streamOpts, endpoint, dest string, expected int64, prog Progress, ghArgs ...string) (string, error) {
 	if opts.maxBytes <= 0 {
 		opts.maxBytes = defaultMaxDownloadBytes
 	}
@@ -289,13 +311,13 @@ func streamWithOpts(opts streamOpts, endpoint, dest string, expected int64, prog
 
 	dir, leaf, err := validateDestFilePath(dest)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if expected < 0 {
-		return fmt.Errorf("invalid negative expected download size (%d)", expected)
+		return "", fmt.Errorf("invalid negative expected download size (%d)", expected)
 	}
 	if expected > opts.maxBytes {
-		return fmt.Errorf("download size (%d bytes) exceeds maximum allowed (%d bytes)", expected, opts.maxBytes)
+		return "", fmt.Errorf("download size (%d bytes) exceeds maximum allowed (%d bytes)", expected, opts.maxBytes)
 	}
 
 	var wantDigest string
@@ -304,24 +326,29 @@ func streamWithOpts(opts streamOpts, endpoint, dest string, expected int64, prog
 		var derr error
 		wantDigest, checkDigest, derr = apk.NormalizeExpectedSHA256(opts.expectedDigest)
 		if derr != nil {
-			return fmt.Errorf("gh %s: %w", endpoint, derr)
+			return "", fmt.Errorf("gh %s: %w", endpoint, derr)
 		}
 	}
 
 	if opts.ghBin == "gh" {
 		if !Available() {
-			return ErrNoGH
+			return "", ErrNoGH
 		}
 	} else if _, err := exec.LookPath(opts.ghBin); err != nil {
-		return ErrNoGH
+		return "", ErrNoGH
 	}
 
-	return writeFileAtomicInDir(opts.fs, dir, leaf, func(w io.Writer) error {
+	var digest string
+	err = writeFileAtomicInDir(opts.fs, dir, leaf, func(w io.Writer) error {
+		// Do not impose an absolute download deadline: a large APK on a slow
+		// link can make progress for hours. The stall timeout below still
+		// aborts downloads that stop receiving bytes, and the caller's context
+		// can cancel at any time.
 		parent := opts.ctx
 		if parent == nil {
 			parent = context.Background()
 		}
-		ctx, cancel := context.WithTimeout(parent, 30*time.Minute)
+		ctx, cancel := context.WithCancel(parent)
 		defer cancel()
 		cmd := activity.CommandContext(ctx, opts.ghBin, ghArgs...)
 		cmd.WaitDelay = time.Second
@@ -442,14 +469,12 @@ func streamWithOpts(opts streamOpts, endpoint, dest string, expected int64, prog
 		if got == 0 {
 			return fmt.Errorf("gh %s: empty response (artifact may have expired)", endpoint)
 		}
-		if checkDigest {
-			gotDigest := hex.EncodeToString(hasher.Sum(nil))
-			if !strings.EqualFold(gotDigest, wantDigest) {
-				return fmt.Errorf(
-					"gh %s: SHA-256 mismatch against published digest (expected %.12s…, got %.12s…)",
-					endpoint, wantDigest, gotDigest,
-				)
-			}
+		digest = hex.EncodeToString(hasher.Sum(nil))
+		if checkDigest && !strings.EqualFold(digest, wantDigest) {
+			return fmt.Errorf(
+				"gh %s: SHA-256 mismatch against published digest (expected %.12s…, got %.12s…)",
+				endpoint, wantDigest, digest,
+			)
 		}
 		if opts.ctx != nil && opts.ctx.Err() != nil {
 			return opts.ctx.Err()
@@ -459,6 +484,7 @@ func streamWithOpts(opts streamOpts, endpoint, dest string, expected int64, prog
 		}
 		return nil
 	})
+	return digest, err
 }
 
 type limitedBuffer struct {
@@ -621,7 +647,7 @@ func extractBestAPKWithOpts(zipPath, outDir, filePattern string, p score.Prefs, 
 			}
 
 			lower := strings.ToLower(leaf)
-			if opts.excludePattern != "" && matchAnyGlobFold(opts.excludePattern, leaf) {
+			if opts.excludePattern != "" && pattern.MatchList(opts.excludePattern, leaf) {
 				continue
 			}
 
@@ -664,8 +690,8 @@ func extractBestAPKWithOpts(zipPath, outDir, filePattern string, p score.Prefs, 
 			}
 
 			isAPK := strings.HasSuffix(lower, ".apk")
-			matchesPattern := !isAPK && filePattern != "" && matchAnyGlobFold(filePattern, leaf)
-			if isAPK && filePattern != "" && !strings.EqualFold(strings.TrimSpace(filePattern), "*.apk") && !matchAnyGlobFold(filePattern, leaf) {
+			matchesPattern := !isAPK && filePattern != "" && pattern.MatchList(filePattern, leaf)
+			if isAPK && filePattern != "" && !strings.EqualFold(strings.TrimSpace(filePattern), "*.apk") && !pattern.MatchList(filePattern, leaf) {
 				continue
 			}
 			if !isAPK && !matchesPattern {
@@ -1249,33 +1275,6 @@ func evalSymlinksAllowMissing(absPath string) (string, error) {
 	}
 }
 
-// matchGlobFold is path.Match against a lowercased leaf name and pattern,
-// falling back to substring match only when pattern has invalid glob syntax.
-func matchGlobFold(pattern, name string) bool {
-	p := strings.ToLower(strings.TrimSpace(pattern))
-	if p == "" {
-		return false
-	}
-	n := strings.ToLower(name)
-	ok, err := path.Match(p, n)
-	if err != nil {
-		sub := strings.Trim(p, "*")
-		return sub != "" && strings.Contains(n, sub)
-	}
-	return ok
-}
-
-// matchAnyGlobFold matches name against a comma-separated list of globs.
-func matchAnyGlobFold(patterns, name string) bool {
-	for _, part := range strings.Split(patterns, ",") {
-		part = strings.TrimSpace(part)
-		if part != "" && matchGlobFold(part, name) {
-			return true
-		}
-	}
-	return false
-}
-
 // RankedReleaseAsset pairs a ReleaseAsset with its parent Release metadata and
 // computed score/policy flags.
 type RankedReleaseAsset struct {
@@ -1299,14 +1298,14 @@ func RankReleaseAssets(rels []Release, artifactPattern, filePattern, excludePatt
 			low := strings.ToLower(a.Name)
 			isAPK := strings.HasSuffix(low, ".apk")
 			isZip := strings.HasSuffix(low, ".zip")
-			matchesFile := filePattern != "" && matchAnyGlobFold(filePattern, a.Name)
+			matchesFile := filePattern != "" && pattern.MatchList(filePattern, a.Name)
 			if !isAPK && !isZip && !matchesFile {
 				continue
 			}
-			if artifactPattern != "" && !matchAnyGlobFold(artifactPattern, a.Name) {
+			if artifactPattern != "" && !pattern.MatchList(artifactPattern, a.Name) {
 				continue
 			}
-			if excludePattern != "" && matchAnyGlobFold(excludePattern, a.Name) {
+			if excludePattern != "" && pattern.MatchList(excludePattern, a.Name) {
 				continue
 			}
 			a.Score = score.APKRank(a.Name, p, dev)
@@ -1356,14 +1355,27 @@ func FetchReleaseAPKWithDigest(repo string, asset ReleaseAsset, outDir, filePatt
 	if err != nil {
 		return ExtractedAPK{}, err
 	}
-	if allowCache && CanReuseReleaseAsset(resolved, checkAsset) {
-		if fi, statErr := os.Lstat(resolved); statErr == nil && prog != nil {
-			prog(fi.Size(), fi.Size())
+	var knownSHA string
+	if allowCache {
+		var cacheOK bool
+		cacheOK, knownSHA = CanReuseReleaseAssetHashContext(context.Background(), resolved, checkAsset)
+		if cacheOK {
+			if fi, statErr := os.Lstat(resolved); statErr == nil && prog != nil {
+				prog(fi.Size(), fi.Size())
+			}
+		} else {
+			opts := defaultStreamOpts()
+			opts.skipDigest = !verifyDigest
+			knownSHA, err = downloadReleaseAssetWithOptsHash(opts, repo, asset, resolved, prog)
+			if err != nil {
+				return ExtractedAPK{}, err
+			}
 		}
 	} else {
 		opts := defaultStreamOpts()
 		opts.skipDigest = !verifyDigest
-		if err := downloadReleaseAssetWithOpts(opts, repo, asset, resolved, prog); err != nil {
+		knownSHA, err = downloadReleaseAssetWithOptsHash(opts, repo, asset, resolved, prog)
+		if err != nil {
 			return ExtractedAPK{}, err
 		}
 	}
@@ -1376,8 +1388,10 @@ func FetchReleaseAPKWithDigest(repo string, asset ReleaseAsset, outDir, filePatt
 		if xerr != nil {
 			return ExtractedAPK{}, xerr
 		}
-		apkOut.DigestStatus = ds
-		apkOut.Meta.DigestStatus = ds
+		// The published digest covers the ZIP, not the APK inside it.
+		apkOut.DigestStatus = apk.DigestUnverified
+		apkOut.Meta.DigestStatus = apk.DigestUnverified
+		apkOut.Meta.ArchiveDigestStatus = ds
 		return apkOut, nil
 	}
 
@@ -1385,7 +1399,7 @@ func FetchReleaseAPKWithDigest(repo string, asset ReleaseAsset, outDir, filePatt
 	if statErr != nil || !fi.Mode().IsRegular() {
 		return ExtractedAPK{}, fmt.Errorf("downloaded release asset %q is not a regular file", resolved)
 	}
-	meta, _ := apk.Inspect(resolved)
+	meta, _ := apk.InspectContextWithSHA(context.Background(), resolved, knownSHA)
 	meta.DigestStatus = ds
 	return ExtractedAPK{
 		Path:         resolved,
@@ -1474,10 +1488,17 @@ func DownloadArtifactContext(ctx context.Context, repo string, art Artifact, des
 	return downloadArtifactWithOpts(opts, repo, art, dest, prog)
 }
 func DownloadReleaseAssetContext(ctx context.Context, repo string, asset ReleaseAsset, dest string, verify bool, prog Progress) error {
+	_, err := DownloadReleaseAssetContextHash(ctx, repo, asset, dest, verify, prog)
+	return err
+}
+
+// DownloadReleaseAssetContextHash also returns the SHA-256 of the downloaded
+// bytes for callers that immediately inspect the file.
+func DownloadReleaseAssetContextHash(ctx context.Context, repo string, asset ReleaseAsset, dest string, verify bool, prog Progress) (string, error) {
 	opts := defaultStreamOpts()
 	opts.ctx = ctx
 	opts.skipDigest = !verify
-	return downloadReleaseAssetWithOpts(opts, repo, asset, dest, prog)
+	return downloadReleaseAssetWithOptsHash(opts, repo, asset, dest, prog)
 }
 func ExtractBestAPKContext(ctx context.Context, zipPath, outDir, filePattern, excludePattern string, p score.Prefs, dev score.Device) (ExtractedAPK, error) {
 	opts := defaultExtractOpts()

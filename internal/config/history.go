@@ -104,13 +104,5 @@ func RecordInstall(repo string, update HistoryEntry) error {
 	}
 	sb.WriteString("  }\n}\n")
 
-	p := HistoryPath()
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		return err
-	}
-	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, []byte(sb.String()), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, p)
+	return writeFileAtomic(HistoryPath(), []byte(sb.String()), 0o600)
 }

@@ -6,16 +6,19 @@ package flow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ThatOn3Gu7/ghapk/internal/apk"
 	"github.com/ThatOn3Gu7/ghapk/internal/config"
 	"github.com/ThatOn3Gu7/ghapk/internal/device"
 	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
+	"github.com/ThatOn3Gu7/ghapk/internal/pattern"
 	"github.com/ThatOn3Gu7/ghapk/internal/score"
 )
 
@@ -50,7 +53,14 @@ func Run(o GetOptions) (code int) {
 	}
 	user, err := ghapi.AuthStatus()
 	if err != nil {
-		out("ghapk: gh is not authenticated — run: gh auth login")
+		switch {
+		case errors.Is(err, ghapi.ErrOffline):
+			out("ghapk: cannot reach GitHub — check your connection")
+		case errors.Is(err, ghapi.ErrNoAuth):
+			out("ghapk: gh is not authenticated — run: gh auth login")
+		default:
+			out("ghapk: could not check GitHub authentication")
+		}
 		return 4
 	}
 	_ = user
@@ -106,46 +116,45 @@ func Run(o GetOptions) (code int) {
 		}
 
 		var empty, unseen int
-		for _, r := range good {
-			arts, aerr := ghapi.ListArtifacts(repo, r.ID)
-			if aerr != nil {
-				unseen++
-				continue
-			}
-			var ranked []ghapi.Artifact
-			for _, a := range arts {
-				if a.Expired {
-					continue
-				}
-				if s.ArtifactName != "" && !strings.EqualFold(a.Name, s.ArtifactName) {
-					continue
-				}
-				if s.ArtifactName == "" {
-					if s.ArtifactPattern != "" && !containsFold(a.Name, s.ArtifactPattern) {
+		var scanErr error
+		art, run, empty, unseen, scanErr = scanArtifacts(context.Background(), repo, good, ghapi.ListArtifactsContext,
+			func(_ ghapi.Run, arts []ghapi.Artifact) (ghapi.Artifact, bool) {
+				var ranked []ghapi.Artifact
+				for _, a := range arts {
+					if a.Expired {
 						continue
 					}
-					if s.ExcludePattern != "" && containsFold(a.Name, s.ExcludePattern) {
+					if s.ArtifactName != "" && !strings.EqualFold(a.Name, s.ArtifactName) {
 						continue
 					}
+					if s.ArtifactName == "" {
+						if s.ArtifactPattern != "" && !pattern.MatchList(s.ArtifactPattern, a.Name) {
+							continue
+						}
+						if s.ExcludePattern != "" && pattern.MatchList(s.ExcludePattern, a.Name) {
+							continue
+						}
+					}
+					a.Score = score.ArtifactRank(a.Name, prefs, sd)
+					if !score.AllowedByPolicy(a.Name, prefs, sd) {
+						continue
+					}
+					ranked = append(ranked, a)
 				}
-				a.Score = score.ArtifactRank(a.Name, prefs, sd)
-				if !score.AllowedByPolicy(a.Name, prefs, sd) {
-					continue
+				if len(ranked) == 0 {
+					return ghapi.Artifact{}, false
 				}
-				ranked = append(ranked, a)
-			}
-			if len(ranked) == 0 {
-				empty++
-				continue
-			}
-			best := ranked[0]
-			for _, a := range ranked[1:] {
-				if a.Score > best.Score {
-					best = a
+				best := ranked[0]
+				for _, a := range ranked[1:] {
+					if a.Score > best.Score {
+						best = a
+					}
 				}
-			}
-			art, run = best, r
-			break
+				return best, true
+			})
+		if scanErr != nil {
+			out("ghapk: scanning artifacts: %v", scanErr)
+			return 5
 		}
 		if art.ID == 0 && s.Source == "actions" {
 			out("ghapk: no matching artifact in %d run(s) (%d empty, %d unreadable)",
@@ -209,9 +218,12 @@ func Run(o GetOptions) (code int) {
 		if !s.KeepCache && o.PrintDir == "" {
 			ghapi.PruneAPKCache(dir, s.KeepCount, apkOut.Path)
 		}
-		if apkOut.DigestStatus == apk.DigestVerified {
-			out("\rghapk: downloaded release asset (sha256 verified against GitHub digest)   ")
-		} else {
+		switch {
+		case apkOut.Meta.DigestStatus == apk.DigestVerified:
+			out("\rghapk: downloaded release APK (sha256 verified against GitHub digest)   ")
+		case apkOut.Meta.ArchiveDigestStatus == apk.DigestVerified:
+			out("\rghapk: downloaded release archive (sha256 verified against GitHub digest; APK not independently verified)   ")
+		default:
 			out("\rghapk: downloaded release asset (digest unverified — GitHub published none)   ")
 		}
 	} else {
@@ -230,9 +242,9 @@ func Run(o GetOptions) (code int) {
 		case cached:
 			out("\rghapk: reused verified cached archive %s   ", filepath.Base(zipPath))
 		case ds == apk.DigestVerified:
-			out("\rghapk: downloaded %s (sha256 verified against GitHub digest)   ", ghapi.HumanBytes(art.SizeInBytes))
+			out("\rghapk: downloaded %s (archive sha256 verified against GitHub digest)   ", ghapi.HumanBytes(art.SizeInBytes))
 		default:
-			out("\rghapk: downloaded %s (digest unverified — GitHub published none)   ", ghapi.HumanBytes(art.SizeInBytes))
+			out("\rghapk: downloaded %s (archive digest unverified — GitHub published none)   ", ghapi.HumanBytes(art.SizeInBytes))
 		}
 
 		var xerr error
@@ -247,8 +259,9 @@ func Run(o GetOptions) (code int) {
 			out("ghapk: unpacking: %v", xerr)
 			return 9
 		}
-		apkOut.DigestStatus = ds
-		apkOut.Meta.DigestStatus = ds
+		apkOut.DigestStatus = apk.DigestUnverified
+		apkOut.Meta.DigestStatus = apk.DigestUnverified
+		apkOut.Meta.ArchiveDigestStatus = ds
 	}
 	out("ghapk: apk %s (%s)", apkOut.Path, ghapi.HumanBytes(apkOut.Size))
 	if apkOut.Meta.HaveInfo {
@@ -360,17 +373,62 @@ func Run(o GetOptions) (code int) {
 	return 0
 }
 
+// artifactScanConcurrency bounds how many run-artifact requests are in flight.
+// Scanning every run sequentially made the first match wait on one network
+// round-trip after another, while fetching every run at once could trip
+// GitHub's rate limits on accounts with long histories.
+const artifactScanConcurrency = 4
+
+type artifactListFunc func(context.Context, string, int64) ([]ghapi.Artifact, error)
+
+// scanArtifacts checks runs newest-first in small parallel batches. It stops
+// after the newest run whose artifacts pass pick, so the chosen run matches
+// the old sequential behavior while finishing much sooner.
+func scanArtifacts(ctx context.Context, repo string, runs []ghapi.Run, fetch artifactListFunc,
+	pick func(ghapi.Run, []ghapi.Artifact) (ghapi.Artifact, bool)) (ghapi.Artifact, ghapi.Run, int, int, error) {
+	empty, unseen := 0, 0
+	for start := 0; start < len(runs); start += artifactScanConcurrency {
+		if err := ctx.Err(); err != nil {
+			return ghapi.Artifact{}, ghapi.Run{}, empty, unseen, err
+		}
+		end := start + artifactScanConcurrency
+		if end > len(runs) {
+			end = len(runs)
+		}
+		batch := runs[start:end]
+		lists := make([][]ghapi.Artifact, len(batch))
+		errs := make([]error, len(batch))
+		var wg sync.WaitGroup
+		for i := range batch {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				lists[i], errs[i] = fetch(ctx, repo, batch[i].ID)
+			}(i)
+		}
+		wg.Wait()
+		if err := ctx.Err(); err != nil {
+			return ghapi.Artifact{}, ghapi.Run{}, empty, unseen, err
+		}
+		for i, r := range batch {
+			if errs[i] != nil {
+				unseen++
+				continue
+			}
+			if art, ok := pick(r, lists[i]); ok {
+				return art, r, empty, unseen, nil
+			}
+			empty++
+		}
+	}
+	return ghapi.Artifact{}, ghapi.Run{}, empty, unseen, nil
+}
+
 func branchSuffix(b string) string {
 	if b == "" {
 		return ""
 	}
 	return " (branch " + b + ")"
-}
-
-func containsFold(name, pattern string) bool {
-	return strings.Contains(
-		strings.ToLower(name),
-		strings.ToLower(strings.Trim(pattern, "*")))
 }
 
 func recordFlowHistory(repo string, art ghapi.Artifact, run ghapi.Run, meta apk.Inspection) {

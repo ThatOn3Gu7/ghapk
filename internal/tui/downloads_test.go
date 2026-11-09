@@ -12,13 +12,13 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/ThatOn3Gu7/ghapk/internal/apk"
 	"github.com/ThatOn3Gu7/ghapk/internal/config"
 	"github.com/ThatOn3Gu7/ghapk/internal/device"
 	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func jobTestEnv(t *testing.T) (string, string) {
@@ -106,7 +106,7 @@ func TestConcurrentJobsSnapshotRepoAndSaveUniqueFiles(t *testing.T) {
 	go func() { defer wg.Done(); results[1] = collectJob(2, context.Background(), b) }()
 	wg.Wait()
 	for _, r := range results {
-		if r.err != nil || r.status != "done" || r.meta.DigestStatus != apk.DigestVerified {
+		if r.err != nil || r.status != "done" || r.meta.DigestStatus != apk.DigestUnverified || r.meta.ArchiveDigestStatus != apk.DigestVerified {
 			t.Fatalf("job: %+v", r)
 		}
 		if _, err := os.Stat(r.path); err != nil {
@@ -148,7 +148,7 @@ func TestJobCacheDigestAndReleaseZip(t *testing.T) {
 	s := jobSpec{repo: "one/repo", settings: settings, choice: planChoice{release: true, asset: ghapi.ReleaseAsset{ID: 4, Name: "release.zip", Digest: digest}}}
 	for i := 0; i < 2; i++ {
 		r := collectJob(i+1, context.Background(), s)
-		if r.err != nil || r.meta.DigestStatus != apk.DigestVerified {
+		if r.err != nil || r.meta.DigestStatus != apk.DigestUnverified || r.meta.ArchiveDigestStatus != apk.DigestVerified {
 			t.Fatalf("release %d: %+v", i, r)
 		}
 	}

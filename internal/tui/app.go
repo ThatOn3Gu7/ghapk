@@ -16,6 +16,7 @@ import (
 	"github.com/ThatOn3Gu7/ghapk/internal/config"
 	"github.com/ThatOn3Gu7/ghapk/internal/device"
 	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
+	"github.com/ThatOn3Gu7/ghapk/internal/pattern"
 	"github.com/ThatOn3Gu7/ghapk/internal/score"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/theme"
@@ -187,6 +188,8 @@ type Model struct {
 	userReposLoaded  bool
 	userReposLoading bool
 	userReposSeq     int
+	userReposPage    int
+	userReposHasMore bool
 	wfCatalog        []ghapi.Workflow
 
 	branchList components.List
@@ -349,6 +352,24 @@ func (m *Model) loadRecents(current string) {
 	} else if current != "" {
 		m.repos.SelectByID(current)
 	}
+}
+
+// appendUniqueRepos adds a later page without duplicating repositories that
+// moved between pages while the list was being paged.
+func appendUniqueRepos(existing, more []ghapi.Repo) []ghapi.Repo {
+	seen := make(map[string]bool, len(existing)+len(more))
+	for _, r := range existing {
+		seen[strings.ToLower(r.FullName)] = true
+	}
+	for _, r := range more {
+		key := strings.ToLower(r.FullName)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		existing = append(existing, r)
+	}
+	return existing
 }
 
 // authSpinner retains visible animation in ASCII mode as well as Unicode.
@@ -565,6 +586,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cachedUserRepos = nil
 			m.userReposLoaded = false
 			m.userReposLoading = false
+			m.userReposPage = 0
+			m.userReposHasMore = false
 			m.userReposSeq++
 		}
 		m.authChecking = false
@@ -825,7 +848,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.userReposLoading = false
 		if msg.Err == nil {
-			m.cachedUserRepos = msg.List
+			page := msg.Page
+			if page < 1 {
+				page = 1
+			}
+			if page == 1 {
+				m.cachedUserRepos = msg.List
+			} else {
+				m.cachedUserRepos = appendUniqueRepos(m.cachedUserRepos, msg.List)
+			}
+			m.userReposPage = page
+			m.userReposHasMore = msg.HasMore
 			m.userReposLoaded = true
 		}
 		if m.modal == ModalPickRepo && m.repoPicker != nil {
@@ -1348,10 +1381,10 @@ func (m *Model) scoreArtifacts(list []ghapi.Artifact) []ghapi.Artifact {
 			continue
 		}
 		if m.settings.ArtifactName == "" {
-			if m.settings.ArtifactPattern != "" && !globCIList(m.settings.ArtifactPattern, a.Name) {
+			if m.settings.ArtifactPattern != "" && !pattern.MatchList(m.settings.ArtifactPattern, a.Name) {
 				continue
 			}
-			if m.settings.ExcludePattern != "" && globCIList(m.settings.ExcludePattern, a.Name) {
+			if m.settings.ExcludePattern != "" && pattern.MatchList(m.settings.ExcludePattern, a.Name) {
 				continue
 			}
 		}
@@ -1366,62 +1399,6 @@ func (m *Model) scoreArtifacts(list []ghapi.Artifact) []ghapi.Artifact {
 		return out[i].Score > out[j].Score
 	})
 	return out
-}
-
-func globCIList(patterns, name string) bool {
-	for _, p := range strings.Split(patterns, ",") {
-		p = strings.TrimSpace(p)
-		if p != "" && globCI(p, name) {
-			return true
-		}
-	}
-	return false
-}
-
-func globCI(pattern, name string) bool {
-	p := strings.ToLower(pattern)
-	n := strings.ToLower(name)
-	if !strings.ContainsAny(p, "*?[") {
-		return strings.Contains(n, p)
-	}
-	ok, err := matchPath(p, n)
-	if err != nil {
-		return strings.Contains(n, strings.Trim(p, "*"))
-	}
-	return ok
-}
-
-func matchPath(pattern, name string) (bool, error) {
-	// path.Match without importing path for tiny helper
-	return wildcardMatch(pattern, name), nil
-}
-
-// wildcardMatch supports * and ? only.
-func wildcardMatch(pattern, name string) bool {
-	p, n := []rune(pattern), []rune(name)
-	pi, ni := 0, 0
-	star := -1
-	match := 0
-	for ni < len(n) {
-		if pi < len(p) && (p[pi] == '?' || p[pi] == n[ni]) {
-			pi++
-			ni++
-		} else if pi < len(p) && p[pi] == '*' {
-			star = pi
-			match = ni
-			pi++
-		} else if star != -1 {
-			pi = star + 1
-			match++
-			ni = match
-		} else {
-			return false
-		}
-	}
-	for pi < len(p) && p[pi] == '*' {
-		pi++
-	}
-	return pi == len(p)
 }
 
 // setArtifactItems rebuilds the Artifacts panel rows.

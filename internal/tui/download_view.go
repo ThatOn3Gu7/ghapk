@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/ThatOn3Gu7/ghapk/internal/apk"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/theme"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // Keep the compact badge geometry while using the active app theme.
@@ -319,7 +319,7 @@ func (m Model) downloadDetailPanel(r rect) string {
 					mark = "-"
 				}
 			}
-			if i == 1 && j.meta.DigestStatus == apk.DigestUnverified {
+			if i == 1 && j.meta.DigestStatus == apk.DigestUnverified && j.meta.ArchiveDigestStatus != apk.DigestVerified {
 				mark, style = "–", st.Dim
 				if st.G.OK == "+" {
 					mark = "-"
@@ -349,9 +349,12 @@ func (m Model) downloadDetailPanel(r rect) string {
 			add(st.Text, fmt.Sprintf("Version   %s (code %d)", j.meta.Info.VersionName, j.meta.Info.VersionCode))
 		}
 		if j.meta.LocalSHA256 != "" {
-			if j.meta.DigestStatus == apk.DigestVerified {
-				add(st.OK, "Checksum  "+st.G.OK+" matches GitHub SHA-256")
-			} else {
+			switch {
+			case j.meta.DigestStatus == apk.DigestVerified:
+				add(st.OK, "Checksum  "+st.G.OK+" APK matches GitHub SHA-256")
+			case j.meta.ArchiveDigestStatus == apk.DigestVerified:
+				add(st.OK, "Checksum  "+st.G.OK+" archive matches GitHub SHA-256 (APK not independently checked)")
+			default:
 				add(st.Warn, "Checksum  unverified")
 			}
 			add(st.Dim, "SHA-256   "+j.meta.LocalSHA256)
