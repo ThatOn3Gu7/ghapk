@@ -17,6 +17,14 @@
 
 ---
 
+## See it in action
+
+![ghapk demo: browse a repository, inspect builds, and download a test artifact](assets/demo.gif)
+
+*Recorded with ghapk using live public repository data. The download uses a locally supplied test artifact and checksum, not the project's real build; no APK is installed.*
+
+---
+
 ## ⚡ What is ghapk?
 
 Testing Android apps built with **GitHub Actions or Releases** usually means endless friction: opening your phone's browser, authenticating to GitHub, finding the workflow run, downloading a multi-hundred megabyte zip file, extracting the `.apk`, finding it in your file manager, and manually installing it.
