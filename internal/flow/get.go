@@ -97,9 +97,21 @@ func Run(o GetOptions) (code int) {
 
 	if s.Source != "releases" {
 		runs, err := ghapi.ListRuns(repo, s.Workflow, s.Branch, s.RunLimit)
-		if err != nil && s.Source == "actions" {
-			out("ghapk: listing runs: %v", err)
-			return 5
+		if err != nil {
+			title, hint := ghapi.Describe(err)
+			if s.Source == "actions" {
+				out("ghapk: listing runs: %s (%v)", title, err)
+				if hint != "" {
+					out("ghapk: hint: %s", hint)
+				}
+				return 5
+			}
+			// In auto mode a failed listing is not silent: say why before
+			// falling back to releases.
+			out("ghapk: could not list runs: %s — trying releases", title)
+			if hint != "" {
+				out("ghapk: hint: %s", hint)
+			}
 		}
 		var good []ghapi.Run
 		for _, r := range runs {

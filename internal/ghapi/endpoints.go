@@ -22,18 +22,28 @@ func GetRepo(repo string) (Repo, error) {
 
 // ListWorkflows mirrors `gh api repos/:repo/actions/workflows`.
 func ListWorkflows(repo string) ([]Workflow, error) {
-	var w workflowsResp
-	if err := api(&w, defaultTimeout, "repos/"+repo+"/actions/workflows"); err != nil {
+	all, err := listAllWorkflows(repo)
+	if err != nil {
 		return nil, err
 	}
 	var out []Workflow
-	for _, wf := range w.Workflows {
+	for _, wf := range all {
 		if wf.State == "disabled" || wf.State == "disabled_inactivity" {
 			continue
 		}
 		out = append(out, wf)
 	}
 	return out, nil
+}
+
+// listAllWorkflows includes disabled workflows: they stay selectable by name
+// because their old runs (and artifacts) are still on GitHub.
+func listAllWorkflows(repo string) ([]Workflow, error) {
+	var w workflowsResp
+	if err := api(&w, defaultTimeout, "repos/"+repo+"/actions/workflows"); err != nil {
+		return nil, err
+	}
+	return w.Workflows, nil
 }
 
 // ListRuns mirrors the script's run scan: newest first, optionally filtered
@@ -48,7 +58,7 @@ func ListRuns(repo, workflow, branch string, limit int) ([]Run, error) {
 			return nil, err
 		}
 		if wf == "" {
-			return nil, fmt.Errorf("no workflow matching %q", workflow)
+			return nil, &WorkflowNotFoundError{Name: workflow}
 		}
 		ep = "repos/" + repo + "/actions/workflows/" + wf + "/runs"
 	}
@@ -101,14 +111,19 @@ func resolveWorkflow(repo, wf string) (string, error) {
 	if allNumeric || strings.HasSuffix(wf, ".yml") || strings.HasSuffix(wf, ".yaml") {
 		return wf, nil
 	}
-	wfs, err := ListWorkflows(repo)
+	wfs, err := listAllWorkflows(repo)
 	if err != nil {
 		return "", err
 	}
 	needle := strings.ToLower(wf)
 	var partial []Workflow
 	for _, w := range wfs {
-		if strings.EqualFold(w.Name, wf) || strings.HasSuffix(w.Path, "/"+wf) {
+		base := w.Path
+		if i := strings.LastIndexByte(base, '/'); i >= 0 {
+			base = base[i+1:]
+		}
+		stem := strings.TrimSuffix(strings.TrimSuffix(base, ".yml"), ".yaml")
+		if strings.EqualFold(w.Name, wf) || strings.HasSuffix(w.Path, "/"+wf) || strings.EqualFold(base, wf) || strings.EqualFold(stem, wf) {
 			return fmt.Sprint(w.ID), nil
 		}
 		if strings.Contains(strings.ToLower(w.Name), needle) {
@@ -117,7 +132,11 @@ func resolveWorkflow(repo, wf string) (string, error) {
 	}
 	switch len(partial) {
 	case 0:
-		return "", fmt.Errorf("no workflow matching %q", wf)
+		known := make([]string, 0, len(wfs))
+		for _, w := range wfs {
+			known = append(known, w.Name)
+		}
+		return "", &WorkflowNotFoundError{Name: wf, Known: known}
 	case 1:
 		return fmt.Sprint(partial[0].ID), nil
 	default:
@@ -173,6 +192,17 @@ func ListArtifacts(repo string, runID int64) ([]Artifact, error) {
 func ListArtifactsContext(ctx context.Context, repo string, runID int64) ([]Artifact, error) {
 	var a artifactsResp
 	if err := apiContext(ctx, &a, defaultTimeout, fmt.Sprintf("repos/%s/actions/runs/%d/artifacts", repo, runID)); err != nil {
+		return nil, err
+	}
+	return a.Artifacts, nil
+}
+
+// ListRepoArtifacts returns the repository's newest artifacts in one call, so
+// the Builds list can show which runs have something to install without
+// opening each one. Failures are harmless: the marks simply stay off.
+func ListRepoArtifacts(ctx context.Context, repo string) ([]Artifact, error) {
+	var a artifactsResp
+	if err := apiContext(ctx, &a, defaultTimeout, fmt.Sprintf("repos/%s/actions/artifacts", repo)); err != nil {
 		return nil, err
 	}
 	return a.Artifacts, nil

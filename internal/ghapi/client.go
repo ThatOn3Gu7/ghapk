@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os/exec"
 	"strings"
 	"time"
@@ -57,12 +58,75 @@ func AuthStatus() (user string, err error) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return "", authCheckError(ctx, stdout.String()+"\n"+stderr.String())
+		output := stdout.String() + "\n" + stderr.String()
+		err := authCheckError(ctx, output)
+		if errors.Is(err, ErrNoAuth) && !definitelySignedOut(output) && localToken() {
+			// gh's wording matched a "log in" phrase, yet gh does hold a token
+			// on this machine and GitHub did not reject it with a 401. Telling
+			// someone who is signed in to run `gh auth login` is wrong, so say
+			// what is actually known and let them carry on.
+			err = ErrAuthCheck
+		}
+		if errors.Is(err, ErrAuthCheck) {
+			err = &authDetail{reason: failureReason(output)}
+		}
+		activity.Log("error", "auth check: "+firstLine(strings.TrimSpace(stderr.String()+" "+stdout.String())))
+		return "", err
 	}
 	if user := strings.TrimSpace(stdout.String()); user != "" {
 		return user, nil
 	}
 	return "", ErrAuthCheck
+}
+
+// authDetail is ErrAuthCheck plus a short, credential-free reason, so the setup
+// screen can say why the check failed instead of a generic sentence.
+type authDetail struct{ reason string }
+
+func (e *authDetail) Error() string { return ErrAuthCheck.Error() + " (" + e.reason + ")" }
+func (e *authDetail) Unwrap() error { return ErrAuthCheck }
+
+// AuthReason returns the short reason attached to a failed sign-in check, or "".
+func AuthReason(err error) string {
+	var d *authDetail
+	if errors.As(err, &d) {
+		return d.reason
+	}
+	return ""
+}
+
+// failureReason names a failure without echoing gh's own text, which can
+// mention tokens: the HTTP status when there is one, else a generic phrase.
+func failureReason(output string) string {
+	if m := httpStatusRe.FindStringSubmatch(output); m != nil {
+		return "GitHub answered HTTP " + m[1]
+	}
+	if strings.TrimSpace(output) == "" {
+		return "gh returned nothing"
+	}
+	return "gh exited with an error"
+}
+
+// definitelySignedOut is true only when GitHub itself rejected the credentials
+// (a 401 / bad token). Phrases like "gh auth login" also appear in unrelated
+// gh messages, so they are not proof on their own.
+func definitelySignedOut(output string) bool {
+	t := strings.ToLower(output)
+	return strings.Contains(t, "http 401") || strings.Contains(t, "bad credentials") ||
+		strings.Contains(t, "invalid token") || strings.Contains(t, "token is invalid") ||
+		(strings.Contains(t, "token") && strings.Contains(t, "invalid"))
+}
+
+// localToken reports whether gh holds a token on this machine (stored login or
+// GH_TOKEN/GITHUB_TOKEN). `gh auth token` reads local state only, so it works
+// offline; the token itself is discarded and never logged. Older gh without
+// that subcommand simply reports false, which keeps the old behaviour.
+func localToken() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "auth", "token")
+	out, err := cmd.Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
 func authCheckError(ctx context.Context, output string) error {
@@ -115,35 +179,19 @@ func api(v any, timeout time.Duration, endpoint string, args ...string) error {
 
 // apiContext is api with a caller-owned cancellation context.
 func apiContext(parent context.Context, v any, timeout time.Duration, endpoint string, args ...string) error {
-	if !Available() {
-		return ErrNoGH
-	}
 	if !strings.Contains(endpoint, "?") && (strings.Contains(endpoint, "/runs") || strings.Contains(endpoint, "/artifacts") || strings.Contains(endpoint, "/branches") || strings.Contains(endpoint, "/workflows") || strings.Contains(endpoint, "/releases")) {
 		endpoint += "?per_page=100"
 	}
-	full := append([]string{"api", endpoint}, args...)
-	if parent == nil {
-		parent = context.Background()
-	}
-	ctx, cancel := context.WithTimeout(parent, timeout)
-	defer cancel()
-	cmd := activity.CommandContext(ctx, "gh", full...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		msg := firstLine(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return fmt.Errorf("gh api %s: %s", endpoint, msg)
+	out, err := runGH(parent, timeout, endpoint, args...)
+	if err != nil {
+		return err
 	}
 	if v == nil {
 		return nil
 	}
-	dec := json.NewDecoder(&stdout)
+	dec := json.NewDecoder(bytes.NewReader(out))
 	if err := dec.Decode(v); err != nil {
-		return fmt.Errorf("decoding %s: %w", endpoint, err)
+		return fmt.Errorf("decoding %s: %w", stripQuery(endpoint), err)
 	}
 	return nil
 }
@@ -151,24 +199,76 @@ func apiContext(parent context.Context, v any, timeout time.Duration, endpoint s
 // rawAPI runs `gh api <endpoint> [args...]` and returns the body verbatim
 // (no JSON decoding) — for the contents API with a raw Accept header.
 func rawAPI(timeout time.Duration, endpoint string, args ...string) (string, error) {
+	out, err := runGH(context.Background(), timeout, endpoint, args...)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// Retry tuning. Variables so tests can shrink the waits.
+var (
+	maxAttempts = 3
+	retryBase   = 700 * time.Millisecond
+)
+
+// runGH is the one place that executes `gh api`. Failures come back as a
+// classified *Error. Reads that fail for a transient reason (a 5xx, or no
+// connection) are retried with a short jittered back-off; everything else —
+// auth, missing, forbidden, rate limit, timeout — fails at once, because
+// asking again cannot change the answer. The logged line records which
+// endpoint failed and why, so the Log tab can explain a 404 after the fact.
+func runGH(parent context.Context, timeout time.Duration, endpoint string, args ...string) ([]byte, error) {
 	if !Available() {
-		return "", ErrNoGH
+		return nil, ErrNoGH
+	}
+	if parent == nil {
+		parent = context.Background()
 	}
 	full := append([]string{"api", endpoint}, args...)
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	cmd := activity.CommandContext(ctx, "gh", full...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		msg := firstLine(stderr.String())
-		if msg == "" {
-			msg = err.Error()
+	for attempt := 1; ; attempt++ {
+		ctx, cancel := context.WithTimeout(parent, timeout)
+		cmd := activity.CommandContext(ctx, "gh", full...)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
+		cancel()
+		if err == nil {
+			return stdout.Bytes(), nil
 		}
-		return "", fmt.Errorf("gh api %s: %s", endpoint, msg)
+		if perr := parent.Err(); errors.Is(perr, context.Canceled) {
+			// The caller gave up (a screen changed, the app is quitting): that
+			// is not a GitHub failure and must not be reported as one.
+			return nil, perr
+		} else if perr != nil {
+			timedOut = true // the caller's own deadline ran out
+		}
+		ge := classify(endpoint, stderr.String(), err, timedOut)
+		activity.Log("error", fmt.Sprintf("gh api %s -> %s", ge.Endpoint, ge.logLine()))
+		if !ge.Retryable() || attempt >= maxAttempts {
+			return nil, ge
+		}
+		if sleepCtx(parent, backoff(attempt)) != nil {
+			return nil, parent.Err()
+		}
 	}
-	return stdout.String(), nil
+}
+
+func backoff(attempt int) time.Duration {
+	d := retryBase << uint(attempt-1)
+	return d/2 + time.Duration(rand.Int63n(int64(d/2)+1))
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 func quickCmd(timeout time.Duration, name string, args ...string) (string, error) {

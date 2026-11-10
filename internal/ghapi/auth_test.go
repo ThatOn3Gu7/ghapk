@@ -54,3 +54,43 @@ func TestAuthTimeoutIsConnectivityFailure(t *testing.T) {
 		t.Fatal("timeout was classified as missing authentication")
 	}
 }
+
+// A "log in" phrase in gh's output is not proof of being signed out when gh
+// holds a token locally and GitHub did not reject it.
+func TestAuthStatusTrustsLocalTokenUnlessRejected(t *testing.T) {
+	cases := []struct {
+		name, apiOut string
+		hasToken     bool
+		want         error
+		reason       string
+	}{
+		{"login phrase but token present", `echo 'To authenticate, please run gh auth login.' >&2; exit 1`, true, ErrAuthCheck, "gh exited with an error"},
+		{"login phrase and no token", `echo 'To authenticate, please run gh auth login.' >&2; exit 1`, false, ErrNoAuth, ""},
+		{"rejected despite token", `echo 'Bad credentials (HTTP 401)' >&2; exit 1`, true, ErrNoAuth, ""},
+		{"status code is shown", `echo 'gh: please run gh auth login (HTTP 403)' >&2; exit 1`, true, ErrAuthCheck, "GitHub answered HTTP 403"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			tok := "exit 1"
+			if tc.hasToken {
+				tok = "echo ghp_secretsecret; exit 0"
+			}
+			script := "#!/bin/sh\nif [ \"$1\" = auth ]; then " + tok + "; fi\n" + tc.apiOut + "\n"
+			if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0755); err != nil {
+				t.Fatal(err)
+			}
+			_, err := AuthStatus()
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("error=%v, want %v", err, tc.want)
+			}
+			if got := AuthReason(err); got != tc.reason {
+				t.Fatalf("reason=%q, want %q", got, tc.reason)
+			}
+			if err != nil && strings.Contains(err.Error(), "secret") {
+				t.Fatal("token leaked into error")
+			}
+		})
+	}
+}
