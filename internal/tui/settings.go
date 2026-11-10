@@ -191,7 +191,7 @@ func (s *SettingsUI) changeRow(m *Model, row SettingRow, raw *string) tea.Cmd {
 	}
 	if err := config.SaveSetting(scope, row.Key, raw); err != nil {
 		m.auditSetting(row.Key, s.scopeFor(m, row.Key), "save failed")
-		m.toastf("save failed: %s", err)
+		m.toastErrf("save failed: %s", err)
 		return nil
 	}
 	m.auditSetting(row.Key, s.scopeFor(m, row.Key), op)
@@ -199,7 +199,7 @@ func (s *SettingsUI) changeRow(m *Model, row SettingRow, raw *string) tea.Cmd {
 	preserveSelection := isFilter && scope == "" && config.HasRepoSetting(m.settings.Repo, row.Key)
 	if isFilter && m.settings.Repo != "" && !preserveSelection {
 		if err := config.ClearRememberedFilter(m.settings.Repo, row.Key); err != nil {
-			m.toastf("saved, but could not clear remembered choice: %s", shortErr(err))
+			m.toastErrf("saved, but could not clear remembered choice: %s", shortErr(err))
 			return nil
 		}
 	}
@@ -212,7 +212,7 @@ func (s *SettingsUI) changeRow(m *Model, row SettingRow, raw *string) tea.Cmd {
 		value = v
 	}
 	if err := config.SetValue(&m.settings, row.Key, value); err != nil {
-		m.toastf("setting saved, but could not apply: %s", err)
+		m.toastErrf("setting saved, but could not apply: %s", err)
 		return nil
 	}
 	src := s.source(m, row.Key)
@@ -343,6 +343,44 @@ func (s *SettingsUI) handleKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 	return *m, nil
 }
 
+// settingDetail is the About panel: the setting's name and description first,
+// then an aligned table of where its value comes from. Every row that can wrap
+// hangs under its label instead of falling back to the left edge.
+func (m *Model) settingDetail(s *SettingsUI, row SettingRow, source, target string, width int) string {
+	st := m.st
+	if source == "" {
+		source = "default"
+	}
+	const labW = 9
+	valW := max(8, width-labW-2)
+	var b strings.Builder
+	b.WriteString(" " + st.Bold.Render(row.Label) + "\n")
+	for _, ln := range strings.Split(ansi.Wrap(row.Hint, max(8, width-2), ""), "\n") {
+		b.WriteString(" " + st.Muted.Render(ln) + "\n")
+	}
+	b.WriteString("\n")
+	field := func(label, value string, style lipgloss.Style) {
+		if value == "" {
+			value = "—"
+		}
+		for i, ln := range strings.Split(ansi.Wrap(value, valW, ""), "\n") {
+			lead := strings.Repeat(" ", labW)
+			if i == 0 {
+				lead = components.Pad(label, labW)
+			}
+			b.WriteString(" " + st.Dim.Render(lead) + " " + style.Render(ln) + "\n")
+		}
+	}
+	field("Active", s.value(m, row), st.Bold)
+	field("From", source, st.Muted)
+	field("Saves to", s.scope(m)+": "+target, st.Muted)
+	field("Default", config.Value(config.Defaults(), row.Key), st.Muted)
+	if len(row.Values) > 0 {
+		field("Choices", strings.Join(row.Values, " · "), st.Accent)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func (s *SettingsUI) render(m *Model, h int) string {
 	w := m.width
 	innerW := max(1, w-4)
@@ -396,6 +434,13 @@ func (s *SettingsUI) render(m *Model, h int) string {
 		line = components.Fit(components.Clamp(" "+line, lw), lw)
 		if l.row == s.cursor {
 			line = m.st.RowSel.Render(line)
+		} else if !s.editing && strings.HasSuffix(line, suffix) {
+			// quiet "[default]", but let a real override stand out
+			tag := m.st.Dim
+			if source != "default" {
+				tag = m.st.AccentAlt
+			}
+			line = strings.TrimSuffix(line, suffix) + tag.Render(suffix)
 		}
 		list = append(list, line)
 	}
@@ -409,17 +454,10 @@ func (s *SettingsUI) render(m *Model, h int) string {
 	if source == "" {
 		source = "default"
 	}
-	summary := "  save " + s.scope(m) + ": " + target + "\n  active [" + source + "]: " + s.value(m, row)
-	detail := "  " + m.st.Bold.Render(row.Label) + "\n" + summary + "\n" + ansi.Wrap("  "+row.Hint, max(1, innerW-2), "") + "\n  default: " + config.Value(config.Defaults(), row.Key)
-	if len(row.Values) > 0 {
-		detail += "\n  choices: " + strings.Join(row.Values, ", ")
-	}
+	detail := m.settingDetail(s, row, sources[row.Key], target, innerW)
 	if wide {
 		dw := w - listW
-		detail = "  " + row.Label + "\n" + summary + "\n" + ansi.Wrap("  "+row.Hint, max(1, dw-4), "") + "\n  default: " + config.Value(config.Defaults(), row.Key)
-		if len(row.Values) > 0 {
-			detail += "\n" + ansi.Wrap("  choices: "+strings.Join(row.Values, ", "), max(1, dw-4), "")
-		}
+		detail = m.settingDetail(s, row, sources[row.Key], target, max(1, dw-4))
 		box := components.Panel{Title: "About", Width: dw, Height: h, Content: detail}.Render(m.st)
 		return lipgloss.JoinHorizontal(lipgloss.Top, listBox, box)
 	}
