@@ -38,6 +38,14 @@ func (m Model) headerLayout() (string, rect) {
 
 	// Right side: "@user theme" — first thing to shrink on narrow terminals.
 	right := ""
+	// What is on the phone right now: the answer to "am I up to date?".
+	if m.instFound && m.instApp.VersionName != "" {
+		ver := components.Clamp(safeJobText(m.instApp.VersionName), 16)
+		if !strings.HasPrefix(ver, "v") {
+			ver = "v" + ver
+		}
+		right += st.OK.Render(st.G.OK+" "+ver) + "  "
+	}
 	if m.authUser != "" {
 		right += st.Muted.Render("@" + m.authUser)
 	}
@@ -81,7 +89,12 @@ func (m Model) headerLayout() (string, rect) {
 			out += "  " + st.Muted.Render(strings.TrimSpace(st.G.Branch)+" "+compMiddleEll(bname, branchW))
 		}
 		if wfW > 0 && m.settings.Workflow != "" {
-			out += "  " + st.Muted.Render("wf:"+compMiddleEll(m.settings.Workflow, wfW))
+			if m.wfIgnored != "" && m.wfIgnored == m.settings.Workflow {
+				// the filter exists in settings but matches nothing here
+				out += "  " + st.Warn.Render("wf:"+compMiddleEll(m.settings.Workflow, wfW)+" ≠")
+			} else {
+				out += "  " + st.Muted.Render("wf:"+compMiddleEll(m.settings.Workflow, wfW))
+			}
 		}
 		out += busy
 		return out
@@ -248,6 +261,14 @@ func (m Model) statusBar() components.StatusBar {
 			add("→", "artifacts", "right")
 			add("d", "download", "d")
 			add("i", "install", "i")
+			add("I", "newest", "I")
+			if r, ok := m.selectedRun(); ok && r.Active() {
+				add("n", "when done", "n")
+			}
+			add("f", "status", "f")
+			if r, ok := m.selectedRun(); ok && r.Finished() && r.Conclusion != "success" {
+				add("e", "why failed", "e")
+			}
 			add("o", "open", "o")
 		}
 		add("tab", "panels", "tab")
@@ -257,7 +278,7 @@ func (m Model) statusBar() components.StatusBar {
 		add("?", "help", "?")
 		add("q", "quit", "q")
 	}
-	return components.StatusBar{Width: m.width, Hints: hints, Message: m.toastIfFresh(), Busy: m.busy, BusyMsg: m.busyMsg, Spinner: m.spin.View()}
+	return components.StatusBar{Width: m.width, Hints: hints, Message: m.toastIfFresh(), MessageErr: m.toastErr, Busy: m.busy, BusyMsg: m.busyMsg, Spinner: m.spin.View()}
 }
 
 func (m Model) toastIfFresh() string {

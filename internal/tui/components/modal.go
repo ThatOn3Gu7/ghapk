@@ -3,18 +3,19 @@ package components
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/theme"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // StatusBar is the single bottom line with key hints and a message.
 type StatusBar struct {
-	Width   int
-	Hints   []Hint
-	Message string
-	Busy    bool
-	BusyMsg string
-	Spinner string // current spinner frame, if busy
+	Width      int
+	Hints      []Hint
+	Message    string
+	MessageErr bool // style the message as a failure
+	Busy       bool
+	BusyMsg    string
+	Spinner    string // current spinner frame, if busy
 }
 
 // Hint is one "key: action" pair. Action is the keyboard action to dispatch
@@ -30,47 +31,83 @@ func (sb StatusBar) Layout(st theme.Styles) (string, []HintSpan) {
 	if sb.Width <= 0 {
 		return "", nil
 	}
-	var left strings.Builder
-	x := 0
+	busy := ""
 	if sb.Busy {
-		busy := st.StatusKey.Render(sb.Spinner + " " + sb.BusyMsg)
+		busy = st.StatusKey.Render(sb.Spinner + " " + sb.BusyMsg)
 		// On phones, keep the spinner but leave the line for tappable actions.
 		if sb.Width < 48 {
 			busy = st.StatusKey.Render(strings.TrimSpace(StripANSI(sb.Spinner)))
 		} else {
 			busy = Clamp(busy, max(1, sb.Width/3))
 		}
+	}
+	busyW := VisibleWidth(busy)
+
+	// place lays the hints out left to right inside budget cells, skipping any
+	// that do not fit whole (a cut label could suggest the wrong action).
+	place := func(budget int) (string, []HintSpan, int) {
+		var left strings.Builder
 		left.WriteString(busy)
-		x = VisibleWidth(busy)
-	}
-	var spans []HintSpan
-	for i, h := range sb.Hints {
-		label := st.StatusKey.Render(h.Key) + st.StatusText.Render(":"+h.Desc)
-		w := VisibleWidth(label)
-		gap := 0
-		if x > 0 {
-			gap = 2
+		x := busyW
+		var spans []HintSpan
+		for i, h := range sb.Hints {
+			label := st.StatusKey.Render(h.Key) + st.StatusText.Render(":"+h.Desc)
+			w := VisibleWidth(label)
+			gap := 0
+			if x > 0 {
+				gap = 2
+			}
+			if x+gap+w > budget {
+				continue
+			}
+			left.WriteString(strings.Repeat(" ", gap))
+			x += gap
+			spans = append(spans, HintSpan{Index: i, Start: x, End: x + w})
+			left.WriteString(label)
+			x += w
 		}
-		if x+gap+w > sb.Width {
-			continue
+		return left.String(), spans, x
+	}
+	toast := func(maxW int) (string, int) {
+		if sb.Message == "" || maxW < 6 {
+			return "", 0
 		}
-		left.WriteString(strings.Repeat(" ", gap))
-		x += gap
-		spans = append(spans, HintSpan{Index: i, Start: x, End: x + w})
-		left.WriteString(label)
-		x += w
+		// the toast styles pad one cell each side, on top of the spaces below
+		text := Clamp(sb.Message, maxW-4)
+		style := st.Toast
+		if sb.MessageErr {
+			style = st.ToastErr
+		}
+		m := style.Render(" " + text + " ")
+		return m, VisibleWidth(m)
 	}
-	msg := ""
-	if sb.Message != "" {
-		msg = st.Toast.Render(" " + sb.Message + " ")
+
+	msg, mw := toast(sb.Width)
+	left, spans, x := place(sb.Width)
+	if msg != "" && sb.Width-x-mw < 1 {
+		if sb.MessageErr {
+			// A failure must not vanish just because the hint row is long:
+			// keep only the hints that fit beside it and, if even that is not
+			// enough, shorten the message itself.
+			left, spans, x = place(sb.Width - mw - 1)
+			if sb.Width-x-mw < 1 {
+				msg, mw = toast(sb.Width - x - 1)
+			}
+		} else {
+			// Routine notices never push a tappable hint out; they take what
+			// room is left, shortened, or nothing at all when that is too small.
+			msg, mw = toast(sb.Width - x - 1)
+			if mw < 14 {
+				msg, mw = "", 0
+			}
+		}
 	}
-	msgWidth := VisibleWidth(msg)
-	gap := sb.Width - x - msgWidth
-	if msg != "" && gap >= 1 {
-		left.WriteString(strings.Repeat(" ", gap))
-		left.WriteString(msg)
+	if msg != "" {
+		if gap := sb.Width - x - mw; gap >= 1 {
+			left += strings.Repeat(" ", gap) + msg
+		}
 	}
-	return Pad(left.String(), sb.Width), spans
+	return Pad(left, sb.Width), spans
 }
 
 // Render draws the bar.

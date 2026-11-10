@@ -99,6 +99,10 @@ func (m Model) modalBox() string {
 		if m.plan != nil {
 			return m.planBox()
 		}
+	case ModalWhy:
+		if m.why != nil {
+			return m.modalWindow("Why did it fail?", m.why.view(&m))
+		}
 	case ModalDoctor:
 		if m.doctor != nil {
 			device_CanInstall = m.dev.CanInstall

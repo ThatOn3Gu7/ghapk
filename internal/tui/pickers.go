@@ -265,13 +265,13 @@ func (rp *RepoPicker) handleKey(msg tea.KeyMsg, m *Model) (tea.Model, tea.Cmd) {
 			err := m.setRepo(repo, true)
 			m.toastf("repo: %s", repo)
 			if err != nil {
-				m.toastf("could not save selection: %s", shortErr(err))
+				m.toastErrf("could not save selection: %s", shortErr(err))
 			}
 			return *m, tea.Batch(m.refreshAll()...)
 		}
 		config.TouchRecent(repo)
 		if err := config.RememberSelection(repo, true, nil, nil); err != nil {
-			m.toastf("could not save selection: %s", shortErr(err))
+			m.toastErrf("could not save selection: %s", shortErr(err))
 		}
 		return *m, nil
 	}

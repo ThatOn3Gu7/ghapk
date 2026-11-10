@@ -95,7 +95,9 @@ func asciiDecoration(r rune) (string, bool) {
 		return "'", true
 	case '⌫':
 		return "<", true
-	case '≠':
+	case '▣':
+		return "#", true
+	case '≠', '⚠':
 		return "!", true
 	case '∅':
 		return "-", true

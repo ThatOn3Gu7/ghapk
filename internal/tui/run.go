@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/ThatOn3Gu7/ghapk/internal/activity"
 	"github.com/ThatOn3Gu7/ghapk/internal/config"
@@ -15,7 +16,10 @@ func Run(opts Options) error {
 	path := KeybindingPath()
 	keys, err := LoadKeyBindings(path)
 	if err != nil {
-		return fmt.Errorf("key bindings (%s): %w; fix the file or remove it to restore defaults", path, err)
+		// A typo in the key file must not lock anyone out of the tool. Start
+		// with the built-in keys, leave the file exactly as it is, and say so.
+		keys = defaultKeyBindings()
+		opts.StartupNotice = fmt.Sprintf("key bindings ignored (%s) — using defaults; fix or delete %s", firstLine(err.Error()), path)
 	}
 	opts.KeyBindings = keys
 	store, logErr := activity.Open(config.Dir(), activity.DefaultMaxBytes)
@@ -53,4 +57,11 @@ func Run(opts Options) error {
 		fmt.Printf("Saved APK: %s\n", final.downloadedAPK.Path)
 	}
 	return nil
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	return s
 }

@@ -246,7 +246,9 @@ func (m Model) deviceLines(w int) []string {
 // visible slice is shown, with a scrollbar and touch/keyboard scrolling.
 func (m Model) deviceContent(w, h int, _ *Model) string {
 	if m.dev.OS == "" {
-		return centerEmpty(m.spin.View()+m.st.Dim.Render(" probing device…"), w, h)
+		// The Device panel centres its own content (Panel.Center); centring here
+		// as well pushed this message a quarter of the screen to the right.
+		return m.spin.View() + m.st.Dim.Render(" probing device…")
 	}
 	lines := m.deviceLines(w)
 	ih := max(1, h-2)

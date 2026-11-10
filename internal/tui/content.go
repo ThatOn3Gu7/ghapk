@@ -11,6 +11,7 @@ import (
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/theme"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/mattn/go-runewidth"
 )
 
 func humanSize(b int64) string { return ghapi.HumanBytes(b) }
@@ -41,6 +42,139 @@ func (m Model) emptyState(icon, title, desc, hint string, w, h int) string {
 	}
 	return centerEmpty(b.String(), w, h)
 }
+
+// wrapPlain word-wraps plain text to width cells.
+func wrapPlain(s string, width int) string {
+	if width < 12 {
+		width = 12
+	}
+	var out []string
+	line := ""
+	for _, word := range strings.Fields(s) {
+		switch {
+		case line == "":
+			line = word
+		case components.VisibleWidth(line)+1+components.VisibleWidth(word) <= width:
+			line += " " + word
+		default:
+			out = append(out, line)
+			line = word
+		}
+	}
+	if line != "" {
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+// wrapHard breaks s into rows of at most width cells, splitting inside words
+// when it must (API paths have no spaces to wrap at).
+func wrapHard(s string, width int) []string {
+	if width < 4 {
+		width = 4
+	}
+	var rows []string
+	cur := []rune{}
+	cw, lastSlash := 0, -1 // lastSlash: index in cur just after the last '/'
+	for _, r := range s {
+		rw := runewidth.RuneWidth(r)
+		if cw+rw > width {
+			cut := len(cur)
+			// break after a path separator when one sits in the back half of the row
+			if lastSlash > len(cur)/2 {
+				cut = lastSlash
+			}
+			rows = append(rows, string(cur[:cut]))
+			cur = append([]rune{}, cur[cut:]...)
+			cw = runewidth.StringWidth(string(cur))
+			lastSlash = -1
+		}
+		cur = append(cur, r)
+		cw += rw
+		if r == '/' {
+			lastSlash = len(cur)
+		}
+	}
+	if len(cur) > 0 {
+		rows = append(rows, string(cur))
+	}
+	return rows
+}
+
+// centerRows centres every row inside the widest one, so a block of short
+// lines reads as centred text instead of a left-aligned lump.
+func centerRows(rows []string, width int) string {
+	mw := 0
+	for _, r := range rows {
+		if w := components.VisibleWidth(r); w > mw {
+			mw = w
+		}
+	}
+	if mw > width {
+		mw = width
+	}
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		if pad := (mw - components.VisibleWidth(r)) / 2; pad > 0 {
+			r = strings.Repeat(" ", pad) + r
+		}
+		out[i] = r
+	}
+	return strings.Join(out, "\n")
+}
+
+// errorState is the panel shown when a load failed and there is nothing to
+// fall back on. It says what happened in plain words, names the call that
+// failed (so a 404 on a workflow can be told apart from a missing repo), and
+// offers the keys that actually fix it. Nothing here disappears on a timer.
+// w and h are the panel's outer size, like emptyState.
+func (m Model) errorState(err error, w, h int) string {
+	st := m.st
+	inner := w - 8
+	title, hint := ghapi.Describe(err)
+	repoGone := m.repoErr != nil && ghapi.IsClass(m.repoErr, ghapi.ClassMissing) && ghapi.IsClass(err, ghapi.ClassMissing)
+	if repoGone {
+		// The repository lookup itself failed, so the 404 on its builds is
+		// not a stale filter: the name is wrong or there is no access.
+		title = "Repository not found"
+		hint = "Check the owner/name, and that gh is signed in to an account that can see it. Private repos need the repo scope."
+		err = m.repoErr
+	}
+	rows := []string{st.Warn.Render("⚠"), ""} // asciiInterface maps ⚠ to "!"
+	for _, ln := range wrapHardWords(title, inner) {
+		rows = append(rows, st.Bold.Render(ln))
+	}
+	if ge, ok := ghapi.AsError(err); ok {
+		where := ge.Endpoint
+		if ge.Status != 0 {
+			where = fmt.Sprintf("HTTP %d · %s", ge.Status, where)
+		}
+		if where != "" {
+			for _, ln := range wrapHard(where, inner) {
+				rows = append(rows, st.Dim.Render(ln))
+			}
+		}
+	}
+	if hint != "" {
+		rows = append(rows, "")
+		for _, ln := range strings.Split(wrapPlain(hint, inner), "\n") {
+			rows = append(rows, st.Muted.Render(ln))
+		}
+	}
+	keys := []string{m.keyName("dashboard", "r") + " retry"}
+	if repoGone {
+		keys = append(keys, m.keyName("dashboard", "R")+" pick repo")
+	} else if m.settings.Workflow != "" {
+		keys = append(keys, m.keyName("dashboard", "W")+" workflow")
+	}
+	if m.branchSel != "" {
+		keys = append(keys, m.keyName("dashboard", "B")+" branch")
+	}
+	rows = append(rows, "", st.Accent.Render(strings.Join(keys, "  ·  ")))
+	return centerEmpty(centerRows(rows, inner), w, h)
+}
+
+func wrapHardWords(s string, width int) []string { return strings.Split(wrapPlain(s, width), "\n") }
 
 // reposSplit calculates the banner height and repo list box height.
 // When there is ample vertical space, it introduces top padding so the logo and
@@ -390,6 +524,11 @@ func renderBoxedList(l components.List, st theme.Styles, width, height int, focu
 					row = components.Fit(row, innerW)
 				}
 
+				if isCursor {
+					// The highlight bar is a solid fill; a row drawn in the same
+					// accent colour (the "◆ any workflow" entry) vanished into it.
+					row = components.StripANSI(row)
+				}
 				switch {
 				case isSel && isCursor:
 					row = components.ReStyle(row, bothSeq)
@@ -697,6 +836,9 @@ func (m Model) runsContent(w, h int, mm *Model) string {
 		return centerEmpty(m.spin.View()+" "+st.Accent.Render("Loading workflow runs…")+"\n\n"+st.Dim.Render("fetching from GitHub"), w, h)
 	}
 	l := m.runs
+	if m.runsErr != nil && len(l.Items) == 0 {
+		return m.errorState(m.runsErr, w, h)
+	}
 	if len(l.Items) == 0 {
 		return m.emptyState("⚡ ∅", "No workflow runs yet", "Push a commit or trigger a workflow\non GitHub to see runs here", "press "+m.keyName("dashboard", "r")+" to refresh", w, h)
 	}
@@ -1197,12 +1339,20 @@ func (m Model) renderSetup() string {
 		b.WriteString(st.Bold.Render("    gh auth login") + "\n\n")
 	} else {
 		b.WriteString(st.Warn.Render("  Could not check GitHub authentication.") + "\n\n")
-		b.WriteString("  Check gh and your connection, then retry.\n\n")
+		if why := ghapi.AuthReason(m.authErr); why != "" {
+			b.WriteString(st.Muted.Render("  "+why) + "\n\n")
+		}
+		b.WriteString("  gh is signed in on this device, but the check\n  did not complete. Retry, or continue anyway —\n  real problems will show on the Builds panel.\n\n")
 	}
 	if m.authChecking {
 		b.WriteString("  " + m.authSpinner() + st.Accent.Render(" Checking GitHub...") + "\n\n")
 	}
-	b.WriteString(st.Muted.Render("  "+m.keyName("setup", "r")+"  re-check      "+m.keyName("setup", "q")+"  quit") + "\n")
+	hints := "  " + m.keyName("setup", "r") + "  re-check      "
+	if m.canContinueUnverified() {
+		hints += m.keyName("setup", "continue_anyway") + "  continue anyway      "
+	}
+	hints += m.keyName("setup", "q") + "  quit"
+	b.WriteString(st.Muted.Render(hints) + "\n")
 	// Wrap and fit setup guidance on phones, preserving the retry/quit hints.
 	body := strings.TrimSuffix(ansi.Wrap(b.String(), max(1, m.width-2), ""), "\n")
 	lines := strings.Split(body, "\n")

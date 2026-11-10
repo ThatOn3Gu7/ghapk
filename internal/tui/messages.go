@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -39,6 +40,9 @@ type RunsMsg struct {
 	Repo, Workflow, Branch string
 	List                   []ghapi.Run
 	Err                    error
+	// IgnoredWorkflow is set when the configured workflow does not exist in
+	// this repository and every workflow was listed instead.
+	IgnoredWorkflow string
 }
 
 // WorkflowFileMsg carries a workflow YAML preview.
@@ -179,10 +183,31 @@ func fetchWorkflowsCmd(repo string) tea.Cmd {
 	}
 }
 
+// staleWorkflowErr reports whether err means "no such workflow in this repo"
+// (as opposed to the repo being unreachable or the token being refused).
+func staleWorkflowErr(err error) bool {
+	var nf *ghapi.WorkflowNotFoundError
+	if errors.As(err, &nf) {
+		return true
+	}
+	ge, ok := ghapi.AsError(err)
+	return ok && ge.Class == ghapi.ClassMissing && strings.Contains(ge.Endpoint, "/actions/workflows/")
+}
+
 func fetchRunsCmd(repo, workflow, branch string, limit int) tea.Cmd {
 	return func() tea.Msg {
 		rs, err := ghapi.ListRuns(repo, workflow, branch, limit)
-		return RunsMsg{Repo: repo, Workflow: workflow, Branch: branch, List: rs, Err: err}
+		ignored := ""
+		if workflow != "" && staleWorkflowErr(err) {
+			// A workflow remembered from another repo, an old config or another
+			// tool no longer exists here. Showing nothing would hide every
+			// build behind a setting the person may not remember making, so
+			// list all workflows and say so (the header and a toast do).
+			if all, err2 := ghapi.ListRuns(repo, "", branch, limit); err2 == nil {
+				rs, err, ignored = all, nil, workflow
+			}
+		}
+		return RunsMsg{Repo: repo, Workflow: workflow, Branch: branch, List: rs, Err: err, IgnoredWorkflow: ignored}
 	}
 }
 
@@ -474,4 +499,28 @@ func parseGitRemote(url string) string {
 		}
 	}
 	return ""
+}
+
+// ArtifactIndexMsg says how many unexpired artifacts each run has, from one
+// repo-wide listing. It only drives the marks in the Builds list.
+type ArtifactIndexMsg struct {
+	Repo  string
+	Count map[int64]int
+	Err   error
+}
+
+func fetchArtifactIndexCmd(repo string) tea.Cmd {
+	return func() tea.Msg {
+		list, err := ghapi.ListRepoArtifacts(context.Background(), repo)
+		if err != nil {
+			return ArtifactIndexMsg{Repo: repo, Err: err}
+		}
+		count := map[int64]int{}
+		for _, a := range list {
+			if !a.Expired && a.WorkflowRun.ID != 0 {
+				count[a.WorkflowRun.ID]++
+			}
+		}
+		return ArtifactIndexMsg{Repo: repo, Count: count}
+	}
 }

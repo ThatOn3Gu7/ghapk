@@ -31,6 +31,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "r", "enter":
 			cmd := m.recheckAuth()
 			return m, cmd
+		case "c":
+			// The sign-in check could not finish (but nothing proved the user
+			// is signed out): let them in. Every GitHub call still reports its
+			// own classified failure, so nothing is hidden by continuing.
+			if m.canContinueUnverified() && !m.authChecking {
+				m.screen = ScreenDashboard
+				return m, m.bootstrapDashboard()
+			}
 		}
 		return m, nil
 	}
@@ -317,6 +325,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.requestDownload(true)
 
+	case "I":
+		return m, m.installNewest()
+
+	case "n":
+		if m.focus == PanelRuns || m.focus == PanelArtifacts {
+			return m, m.toggleArmedRun()
+		}
+		return m, nil
+
 	case "o":
 		if m.activeTab() == PanelRuns && m.usingReleaseAssets() {
 			if a, ok := m.selectedReleaseAsset(); ok {
@@ -339,6 +356,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "f":
+		if m.focus == PanelRuns && !m.usingReleaseAssets() {
+			m.cycleStatusFilter()
+			return m, nil
+		}
 		// favourite the highlighted recent repo
 		if m.focus == PanelRepos && !m.repoBranchFocused {
 			if sel, ok := m.repos.Selected(); ok {
@@ -357,6 +378,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "e":
+		// On a build, "e" explains why it failed; on a repo it edits the entry.
+		if m.focus == PanelRuns || m.focus == PanelArtifacts {
+			return m, m.explainSelectedRun()
+		}
 		// edit the highlighted repo entry (fix a typo'd slug, rename…)
 		if m.focus == PanelRepos && !m.repoBranchFocused {
 			if sel, ok := m.repos.Selected(); ok {
@@ -368,6 +393,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "x":
+		if m.focus == PanelRuns {
+			if !m.clearBuildFilters() {
+				m.toastf("no filters to clear")
+			}
+			return m, nil
+		}
 		// remove the highlighted repo entry from the config
 		if m.focus == PanelRepos && !m.repoBranchFocused {
 			if sel, ok := m.repos.Selected(); ok {
@@ -492,7 +523,7 @@ func (m *Model) activate() tea.Cmd {
 				m.navWorkflowSet = false
 				m.toastf("repo: %s", repo)
 				if saveErr != nil {
-					m.toastf("could not save selection: %s", shortErr(saveErr))
+					m.toastErrf("could not save selection: %s", shortErr(saveErr))
 				}
 				return tea.Batch(m.refreshAll()...)
 			}
@@ -515,6 +546,7 @@ func (m *Model) activate() tea.Cmd {
 			m.settings.Workflow = name
 			m.workflowSel = name
 			m.runsLoaded = false
+			m.runsErr = nil
 			m.runs.SetItems(nil)
 			m.arts.SetItems(nil)
 			m.selectedRunID, m.selectedArtID = 0, 0
@@ -588,6 +620,8 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case ModalPlan:
 		return m.handlePlanKey(msg)
+	case ModalWhy:
+		return m.handleWhyKey(msg)
 	case ModalHelp:
 		switch key {
 		case "w", "W":
@@ -640,6 +674,7 @@ func (m Model) handleModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.workflowSel = val
 				m.selectWorkflowOption(val)
 				m.runsLoaded = false
+				m.runsErr = nil
 				m.runs.SetItems(nil)
 				m.arts.SetItems(nil)
 				m.workflowPicker = nil
@@ -837,7 +872,7 @@ func (m *Model) saveRepoEdit() tea.Cmd {
 		err := m.setRepo(new, true)
 		m.toastf("repo: %s", new)
 		if err != nil {
-			m.toastf("could not save selection: %s", shortErr(err))
+			m.toastErrf("could not save selection: %s", shortErr(err))
 		}
 		return tea.Batch(m.refreshAll()...)
 	}
@@ -973,7 +1008,7 @@ func (m *Model) confirmAccept() tea.Cmd {
 			m.loadRecents(m.settings.Repo)
 			m.toastf("removed %s from recents", target)
 			if err := config.ForgetSelectedRepo(target); err != nil {
-				m.toastf("could not save selection: %s", shortErr(err))
+				m.toastErrf("could not save selection: %s", shortErr(err))
 			}
 		}
 		return nil
@@ -987,6 +1022,7 @@ func (m *Model) selectBranch(branch string) tea.Cmd {
 	m.settings.Branch = branch
 	m.navWorkflowSet = false
 	m.runsLoaded = false
+	m.runsErr = nil
 	m.runs.SetItems(nil)
 	m.arts.SetItems(nil)
 	m.selectedRunID, m.selectedArtID = 0, 0

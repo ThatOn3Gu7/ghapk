@@ -3,6 +3,7 @@
 package theme
 
 import (
+	"math"
 	"os"
 
 	"github.com/charmbracelet/lipgloss"
@@ -172,6 +173,7 @@ type Styles struct {
 	StatusKey     lipgloss.Style
 	StatusText    lipgloss.Style
 	Toast         lipgloss.Style
+	ToastErr      lipgloss.Style // a toast about something that failed
 	ButtonFocus   lipgloss.Style
 	ButtonBlur    lipgloss.Style
 	FieldFocused  lipgloss.Style
@@ -225,6 +227,7 @@ func New(p Palette) Styles {
 	s.StatusKey = lipgloss.NewStyle().Foreground(p.Accent).Bold(true)
 	s.StatusText = lipgloss.NewStyle().Foreground(p.Muted)
 	s.Toast = lipgloss.NewStyle().Foreground(p.OnAccent).Background(p.AccentAlt).PaddingLeft(1).PaddingRight(1)
+	s.ToastErr = lipgloss.NewStyle().Foreground(readableOn(p.Error)).Background(p.Error).Bold(true).PaddingLeft(1).PaddingRight(1)
 	s.ButtonFocus = lipgloss.NewStyle().Foreground(p.OnAccent).Background(p.Accent).PaddingLeft(2).PaddingRight(2).Bold(true)
 	s.ButtonBlur = lipgloss.NewStyle().Foreground(p.Text).PaddingLeft(2).PaddingRight(2)
 	s.FieldFocused = lipgloss.NewStyle().Foreground(p.Text).Background(p.Selection)
@@ -263,6 +266,41 @@ func noColorStyles(s Styles) Styles {
 	s.Running = plain
 	s.StatusKey = plain
 	s.Toast = plain.Reverse(true)
+	s.ToastErr = plain.Reverse(true).Bold(true)
 	s.ButtonFocus = plain.Reverse(true)
 	return s
+}
+
+// readableOn picks black or white text, whichever reads better on a #RRGGBB
+// background (WCAG relative luminance). Non-hex colours get white.
+func readableOn(bg lipgloss.Color) lipgloss.Color {
+	h := string(bg)
+	if len(h) != 7 || h[0] != '#' {
+		return "#FFFFFF"
+	}
+	lin := func(i int) float64 {
+		var v int
+		for _, c := range h[i : i+2] {
+			v <<= 4
+			switch {
+			case c >= '0' && c <= '9':
+				v |= int(c - '0')
+			case c >= 'a' && c <= 'f':
+				v |= int(c-'a') + 10
+			case c >= 'A' && c <= 'F':
+				v |= int(c-'A') + 10
+			}
+		}
+		f := float64(v) / 255
+		if f <= 0.03928 {
+			return f / 12.92
+		}
+		return math.Pow((f+0.055)/1.055, 2.4)
+	}
+	l := 0.2126*lin(1) + 0.7152*lin(3) + 0.0722*lin(5)
+	// contrast with white = 1.05/(l+0.05); with black = (l+0.05)/0.05
+	if 1.05/(l+0.05) >= (l+0.05)/0.05 {
+		return "#FFFFFF"
+	}
+	return "#101010"
 }

@@ -25,7 +25,7 @@ func bind(name, key string) bindingDef { return bindingDef{name, key, key} }
 var dashboardBindings = []bindingDef{
 	bind("quit", "q"), bind("suspend", "ctrl+z"), bind("help", "?"), bind("doctor", "D"),
 	bind("repo_picker", "R"), bind("branch_picker", "B"), bind("workflow_picker", "W"),
-	bind("theme", "t"), bind("watch", "w"), bind("refresh", "r"),
+	bind("install_newest", "I"), bind("install_when_done", "n"), bind("theme", "t"), bind("watch", "w"), bind("refresh", "r"),
 	bind("next_panel", "tab"), bind("previous_panel", "shift+tab"),
 	bind("first", "g"), bind("last", "G"), bind("down", "down"), bind("down_alternate", "j"),
 	bind("up", "up"), bind("up_alternate", "k"), bind("page_down", "pgdown"), bind("page_down_alternate", "ctrl+d"),
@@ -55,8 +55,9 @@ var keySections = map[string][]bindingDef{
 	"device":           {bind("recheck", "r"), bind("down", "down"), bind("down_alternate", "j"), bind("up", "up"), bind("up_alternate", "k"), bind("page_down", "pgdown"), bind("page_down_alternate", "ctrl+d"), bind("page_up", "pgup"), bind("page_up_alternate", "ctrl+u"), bind("first", "g"), bind("last", "G")},
 	"log":              {bind("follow", "f"), bind("copy", "y"), bind("down", "down"), bind("down_alternate", "j"), bind("up", "up"), bind("up_alternate", "k"), bind("page_down", "pgdown"), bind("page_down_alternate", "ctrl+d"), bind("page_up", "pgup"), bind("page_up_alternate", "ctrl+u"), bind("first", "g"), bind("last", "G")},
 	"workflow_preview": {bind("back", "esc"), bind("left", "left"), bind("left_alternate", "h"), bind("next_panel", "tab"), bind("previous_panel", "shift+tab"), bind("down", "down"), bind("down_alternate", "j"), bind("up", "up"), bind("up_alternate", "k"), bind("page_down", "pgdown"), bind("page_down_alternate", "ctrl+d"), bind("page_up", "pgup"), bind("page_up_alternate", "ctrl+u"), bind("first", "g"), bind("last", "G")},
-	"setup":            {bind("quit", "q"), bind("quit_alternate", "esc"), bind("retry", "r"), bind("retry_alternate", "enter")},
+	"setup":            {bind("quit", "q"), bind("quit_alternate", "esc"), bind("retry", "r"), bind("retry_alternate", "enter"), bind("continue_anyway", "c")},
 	"help":             {bind("wrap", "W"), bind("wrap_alternate", "w"), bind("close", "esc"), bind("close_alternate", "q"), bind("close_help_key", "?"), bind("down", "down"), bind("down_alternate", "j"), bind("up", "up"), bind("up_alternate", "k"), bind("page_down", "pgdown"), bind("page_down_alternate", "ctrl+d"), bind("page_up", "pgup"), bind("page_up_alternate", "ctrl+u")},
+	"why":              {bind("close", "esc"), bind("close_alternate", "q"), bind("close_why_key", "e"), bind("open", "o"), bind("down", "down"), bind("down_alternate", "j"), bind("up", "up"), bind("up_alternate", "k"), bind("page_down", "pgdown"), bind("page_up", "pgup")},
 	"doctor":           {bind("close", "esc"), bind("close_alternate", "q"), bind("close_doctor_key", "D"), bind("refresh", "r"), bind("down", "down"), bind("down_alternate", "j"), bind("up", "up"), bind("up_alternate", "k")},
 	"repo_picker":      pickerBindings(true), "filter_picker": pickerBindings(false),
 	"editor":  {bind("cancel", "esc"), bind("save", "enter")},
@@ -385,6 +386,8 @@ func (m Model) keyContext() string {
 		return "help"
 	case ModalDoctor:
 		return "doctor"
+	case ModalWhy:
+		return "why"
 	case ModalPickRepo:
 		return "repo_picker"
 	case ModalPickBranch, ModalPickWorkflow:

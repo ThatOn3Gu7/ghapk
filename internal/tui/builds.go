@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
 )
 
 // Builds has a full-height list on the left and artifacts/details on the right.
@@ -96,7 +96,19 @@ func (m Model) buildRuns(r rect) string {
 		it.Rendered = fmt.Sprintf("%s %s %s", icon, m.st.Dim.Render(fmt.Sprintf("#%d", run.RunNumber)), title)
 		it.Detail = reltime(run.CreatedAt)
 		if it.Detail != "" {
-			it.Rendered = components.Clamp(it.Rendered, max(1, r.w-5-components.VisibleWidth(it.Detail)))
+			room := max(1, r.w-5-components.VisibleWidth(it.Detail))
+			// A one-cell mark before the time: this build has something to
+			// install. Only drawn once the artifact index has loaded, and
+			// only when there is room for it.
+			if m.artIndex != nil && room > 12 && r.w >= 34 {
+				mark := " "
+				if m.artIndex[run.ID] > 0 {
+					mark = m.st.OK.Render("▣")
+				}
+				it.Rendered = components.Pad(components.Clamp(it.Rendered, room-2), room-2) + " " + mark
+			} else {
+				it.Rendered = components.Clamp(it.Rendered, room)
+			}
 		}
 		items = append(items, it)
 	}
@@ -104,12 +116,23 @@ func (m Model) buildRuns(r rect) string {
 	l.Empty = "No builds found. Press " + m.keyName("dashboard", "R") + " to choose a repository."
 	if m.settings.Repo != "" && !m.runsLoaded {
 		l.Empty = m.spin.View() + " loading builds…"
+	} else if m.statusFilter != "" && len(m.allRuns) > 0 {
+		l.Empty = "No " + m.statusFilter + " builds in the loaded list. Press " + m.keyName("dashboard", "x") + " to clear the filter."
 	}
 	badge := listBadge("Builds", &l, 0)
+	if m.statusFilter != "" {
+		badge = m.statusFilter + " " + badge
+	}
 	if l.Filter != "" {
 		badge = "/" + l.Filter + " " + badge
 	}
-	return components.Panel{Title: "Builds", Badge: badge, Focused: m.focus == PanelRuns, Width: r.w, Height: r.h, Content: l.Render(m.st, r.w-4)}.Render(m.st)
+	content := l.Render(m.st, r.w-4)
+	if m.runsErr != nil && len(l.Items) == 0 && m.runsLoaded {
+		// Say what failed and what to press, instead of a bare empty list.
+		content = m.errorState(m.runsErr, r.w, r.h)
+		badge = ""
+	}
+	return components.Panel{Title: "Builds", Badge: badge, Focused: m.focus == PanelRuns, Width: r.w, Height: r.h, Content: content}.Render(m.st)
 }
 
 func (m Model) buildArtifacts(r rect) string {
@@ -122,6 +145,9 @@ func (m Model) buildArtifacts(r rect) string {
 	}
 	if m.settings.Repo == "" {
 		l.Empty = "Choose a repository first (R)."
+	}
+	if m.runsErr != nil && len(m.runs.Items) == 0 && m.runsLoaded {
+		l.Empty = "Builds could not be loaded."
 	}
 	if run, ok := m.selectedRun(); ok && m.artifactErrors[run.ID] != "" {
 		l.Empty = "Couldn't load artifacts. Press " + m.keyName("dashboard", "r") + " to retry."
@@ -241,6 +267,9 @@ func (m Model) buildDetails(r rect) string {
 			add(m.st.Dim.Render("By        ") + run.Actor.Login + "  " + reltime(run.CreatedAt) + " ago")
 		} else if !run.CreatedAt.IsZero() {
 			add(m.st.Dim.Render("Started   ") + run.CreatedAt.Local().Format("2006-01-02 15:04"))
+		}
+		if run.Finished() && !runMatchesStatus(run, "success") && run.Conclusion != "cancelled" && run.Conclusion != "skipped" {
+			add(m.st.Warn.Render("Press " + m.keyName("dashboard", "e") + " to see why it failed"))
 		}
 		if !run.CreatedAt.IsZero() {
 			end := run.UpdatedAt

@@ -49,6 +49,7 @@ const (
 	ModalTask
 	ModalDoctor
 	ModalPlan
+	ModalWhy
 )
 
 // Options customises a session (flags from the CLI).
@@ -63,6 +64,9 @@ type Options struct {
 	Activity         *activity.Store
 	LogError         string
 	KeyBindings      *KeyBindings
+	// StartupNotice is shown as a red toast on launch: something was skipped
+	// or replaced by a default and the person should know.
+	StartupNotice string
 }
 
 // Model is the root Bubble Tea model.
@@ -120,10 +124,21 @@ type Model struct {
 	navWorkflow       string
 	navWorkflowSet    bool
 
+	why            *whyState
+	artIndex       map[int64]int // unexpired artifacts per run; nil until the index loads
+	artIndexBusy   bool
+	armedRun       int64       // an active run the user asked to install when it finishes
+	allRuns        []ghapi.Run // unfiltered, so the status filter can be re-applied
+	statusFilter   string      // "", success, failed, running
+	pendingPlanRun int64       // run whose artifacts are loading for install-newest
+	whySeq         int
 	runCache       map[int64][]ghapi.Artifact // scored+sorted artifacts per run
 	fetching       map[int64]bool
 	artifactErrors map[int64]string
 	runsLoaded     bool
+	runsErr        error  // why the last runs load failed; cleared by the next attempt
+	repoErr        error  // why the repository itself could not be loaded
+	wfIgnored      string // configured workflow that does not exist in this repo (all runs are shown)
 
 	wfPaths       map[string]string // workflow name → repo path (for previews)
 	wfCache       map[string]string // path → YAML text (nil LRU, workflows are small)
@@ -166,6 +181,7 @@ type Model struct {
 
 	// toasts
 	toast      string
+	toastErr   bool // the current toast reports a failure
 	toastUntil time.Time
 
 	// modal state
@@ -300,6 +316,10 @@ func New(opts Options) Model {
 	m.repos.Empty = "  no recent repos — press " + m.keyName("dashboard", "R")
 	m.loadRecents("")
 	m.updateListBounds()
+	if opts.StartupNotice != "" {
+		m.toastErrf("%s", opts.StartupNotice)
+		m.toastUntil = time.Now().Add(12 * time.Second)
+	}
 	return m
 }
 
@@ -474,7 +494,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case logCopiedMsg:
 		if msg.err != nil {
-			m.toastf("copy failed: %s", shortErr(msg.err))
+			m.toastErrf("copy failed: %s", shortErr(msg.err))
 		} else {
 			m.toastf("copied last 60 log entries")
 		}
@@ -486,6 +506,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.plan.pkg = msg.pkg
 			m.plan.app = msg.app
 			m.plan.found = msg.found
+			m.plan.changes, m.plan.changesAhead, m.plan.lastInstall = msg.changes, msg.ahead, msg.since
 			if !msg.dev.CanInstall {
 				m.plan.button = 1
 			}
@@ -678,8 +699,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.RequestedRepo != "" && msg.RequestedRepo != m.settings.Repo {
 			return m, nil
 		}
+		m.repoErr = msg.Err
 		if msg.Err != nil {
-			m.toastf("repo: %s", shortErr(msg.Err))
+			m.toastErrf("repo: %s", shortErr(msg.Err))
 			return m, nil
 		}
 		m.repo = msg.Repo
@@ -697,7 +719,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.modal == ModalPickWorkflow && m.workflowPicker != nil {
 				m.workflowPicker.setOptions(&m, m.buildWorkflowOptions(), msg.Err)
 			}
-			m.toastf("workflows: %s", shortErr(msg.Err))
+			m.toastErrf("workflows: %s", shortErr(msg.Err))
 			return m, nil
 		}
 		m.wfCatalog = msg.List
@@ -754,8 +776,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.runsLoaded = true
+		m.runsErr = msg.Err
+		if msg.IgnoredWorkflow != "" {
+			if m.wfIgnored != msg.IgnoredWorkflow {
+				m.toastErrf("workflow %q is not in this repo — showing all runs", msg.IgnoredWorkflow)
+			}
+			m.wfIgnored = msg.IgnoredWorkflow
+		} else if msg.Err == nil {
+			m.wfIgnored = ""
+		}
 		if msg.Err != nil {
-			m.toastf("runs: %s", shortErr(msg.Err))
+			m.toastErrf("runs: %s", shortErr(msg.Err))
 			m.runs.SetItems(nil)
 			m.busy = false
 			m.busyMsg = ""
@@ -768,7 +799,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rememberRunBranches(msg.List)
 		m.rebuildBranchList()
 		m.syncBuildSelection()
-		return m, m.fetchArtifactsForSelection()
+		if cmd := m.checkArmedRun(); cmd != nil {
+			return m, cmd
+		}
+		return m, tea.Batch(m.fetchArtifactsForSelection(), m.refreshArtifactIndex())
+
+	case ArtifactIndexMsg:
+		if msg.Repo != m.settings.Repo {
+			return m, nil
+		}
+		m.artIndexBusy = false
+		if msg.Err == nil {
+			m.artIndex = msg.Count
+		}
+		return m, nil
 
 	case ArtifactsMsg:
 		if msg.Repo != "" && msg.Repo != m.settings.Repo {
@@ -776,14 +820,39 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.Err != nil {
 			m.artifactErrors[msg.RunID] = shortErr(msg.Err)
-			m.toastf("artifacts: %s", shortErr(msg.Err))
+			m.toastErrf("artifacts: %s", shortErr(msg.Err))
 			delete(m.fetching, msg.RunID)
+			if m.pendingPlanRun == msg.RunID {
+				m.pendingPlanRun = 0
+			}
 			return m, nil
 		}
 		delete(m.fetching, msg.RunID)
 		delete(m.artifactErrors, msg.RunID)
 		arts := m.scoreArtifacts(msg.List)
 		m.runCache[msg.RunID] = arts
+		if m.artIndex != nil {
+			n := 0
+			for _, a := range msg.List {
+				if !a.Expired {
+					n++
+				}
+			}
+			m.artIndex[msg.RunID] = n
+		}
+		if m.pendingPlanRun == msg.RunID {
+			m.pendingPlanRun = 0
+			if m.modal == ModalNone && m.screen == ScreenDashboard {
+				if sel, ok := m.selectedRun(); ok && sel.ID == msg.RunID {
+					if len(arts) == 0 {
+						m.toastErrf("the newest successful build has no artifacts")
+					} else {
+						m.setArtifactItems(arts)
+						return m, m.beginPlan()
+					}
+				}
+			}
+		}
 		if sel, ok := m.selectedRun(); ok && sel.ID == msg.RunID {
 			if m.usingReleaseAssets() {
 				m.syncReleaseArtifactItems()
@@ -814,7 +883,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.modal == ModalPickBranch && m.branchPicker != nil {
 				m.branchPicker.setOptions(&m, m.buildBranchOptions(m.apiBranches), msg.Err)
 			}
-			m.toastf("branches: %s", shortErr(msg.Err))
+			m.toastErrf("branches: %s", shortErr(msg.Err))
 			return m, nil
 		}
 		m.apiBranches = msg.List
@@ -878,7 +947,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.task != nil {
 				m.task.fail(msg.Err)
 			} else {
-				m.toastf("download failed: %s", shortErr(msg.Err))
+				m.toastErrf("download failed: %s", shortErr(msg.Err))
 			}
 			m.busy = false
 			return m, nil
@@ -944,9 +1013,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case msg.Err != nil || msg.Result.Outcome == device.OutcomeFailed:
 			if msg.Err != nil {
-				m.toastf("install failed: %s", shortErr(msg.Err))
+				m.toastErrf("install failed: %s", shortErr(msg.Err))
 			} else {
-				m.toastf("install failed")
+				m.toastErrf("install failed")
 			}
 		case msg.Result.Outcome == device.OutcomeLaunched:
 			m.toastf("installer launched (%s) — confirm on device", msg.Result.Via)
@@ -985,6 +1054,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case whyDoneMsg:
+		if m.why != nil && m.why.seq == msg.seq {
+			m.why.loading, m.why.err, m.why.verdict = false, msg.err, msg.report
+		}
+		return m, nil
+
 	case DoctorDoneMsg:
 		if m.modal == ModalDoctor && m.doctor != nil {
 			m.doctor.Rows = msg.Rows
@@ -1012,7 +1087,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case FatalErrMsg:
-		m.toastf("%s: %s", msg.Context, shortErr(msg.Err))
+		m.toastErrf("%s: %s", msg.Context, shortErr(msg.Err))
 		return m, nil
 	}
 
@@ -1038,16 +1113,19 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// shortErr is the one-line form of an error for toasts: gh's plumbing
+// ("gh api repos/…: gh: Not Found (HTTP 404)") is replaced by what it means,
+// and the cut is made on a rune boundary so it never splits a character.
 func shortErr(err error) string {
 	if err == nil {
 		return ""
 	}
-	s := err.Error()
-	if i := strings.Index(s, "gh api"); i >= 0 {
-		// trim the noisy prefix
+	s, _ := ghapi.Describe(err)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
 	}
-	if len(s) > 90 {
-		s = s[:87] + "…"
+	if r := []rune(s); len(r) > 90 {
+		s = string(r[:89]) + "…"
 	}
 	return s
 }
@@ -1107,11 +1185,11 @@ func (m *Model) bootstrapDashboard() tea.Cmd {
 	opts.Settings.Repo = m.settings.Repo
 	repo, err := startupRepo(opts)
 	if err != nil {
-		m.toastf("could not load selection: %s", shortErr(err))
+		m.toastErrf("could not load selection: %s", shortErr(err))
 	}
 	if repo != "" {
 		if err := m.setRepo(repo, false); err != nil {
-			m.toastf("could not load selection: %s", shortErr(err))
+			m.toastErrf("could not load selection: %s", shortErr(err))
 		}
 		if m.opts.BranchOverride {
 			m.settings.Branch = m.opts.Settings.Branch
@@ -1191,6 +1269,10 @@ func (m *Model) setRepo(repo string, persist bool) error {
 	m.wfFetching = map[string]bool{}
 	m.wfCatalog = nil
 	m.wfMissToasted = false
+	m.wfIgnored = ""
+	m.statusFilter, m.allRuns, m.armedRun = "", nil, 0
+	m.artIndex, m.artIndexBusy = nil, false
+	m.repoErr = nil
 	m.wfScroll = 0
 	m.wfYAMLFocused = false
 	m.buildDetail = false
@@ -1199,6 +1281,7 @@ func (m *Model) setRepo(repo string, persist bool) error {
 	m.selectedRunID = 0
 	m.selectedArtID = 0
 	m.runsLoaded = false
+	m.runsErr = nil
 	m.runs.SetItems(nil)
 	m.arts.SetItems(nil)
 	m.workflows.Filter = ""
@@ -1255,7 +1338,7 @@ func (m *Model) saveSelection(branch, workflow *string) {
 		return
 	}
 	if err := config.RememberSelection(m.settings.Repo, true, branch, workflow); err != nil {
-		m.toastf("could not save selection: %s", shortErr(err))
+		m.toastErrf("could not save selection: %s", shortErr(err))
 	}
 }
 
@@ -1287,6 +1370,9 @@ func (m *Model) refreshAll() []tea.Cmd {
 }
 
 func (m *Model) effectiveRefreshSecs() int {
+	if m.armedRun != 0 {
+		return 15 // waiting for a build to finish
+	}
 	// fast ticks while something is in flight, the configured cadence otherwise
 	if m.settings.Watch && m.watchActive() {
 		return 15
@@ -1299,11 +1385,16 @@ func (m *Model) effectiveRefreshSecs() int {
 
 // watchActive reports whether any listed run is still running.
 func (m *Model) watchActive() bool {
+	// Look at every loaded run, not just the visible ones: a status filter
+	// must not stop the refresh of a build that is still going.
+	for _, r := range m.allRuns {
+		if r.Active() {
+			return true
+		}
+	}
 	for _, it := range m.runs.Items {
-		if r, ok := it.ID.(runRow); ok {
-			if r.run.Active() {
-				return true
-			}
+		if r, ok := it.ID.(runRow); ok && r.run.Active() {
+			return true
 		}
 	}
 	return false
@@ -1316,6 +1407,16 @@ type runRow struct {
 
 // setRuns rebuilds the runs list preserving cursor position by run id.
 func (m *Model) setRuns(list []ghapi.Run) {
+	m.allRuns = list
+	if m.statusFilter != "" {
+		kept := make([]ghapi.Run, 0, len(list))
+		for _, r := range list {
+			if runMatchesStatus(r, m.statusFilter) {
+				kept = append(kept, r)
+			}
+		}
+		list = kept
+	}
 	prevID := int64(0)
 	if sel, ok := m.runs.Selected(); ok {
 		if rr, ok := sel.ID.(runRow); ok {
@@ -1573,7 +1674,16 @@ func (m *Model) toastf(format string, a ...any) {
 		_ = m.activity.Write("notice", message)
 	}
 	m.toast = fmt.Sprintf(format, a...)
+	m.toastErr = false
 	m.toastUntil = time.Now().Add(4 * time.Second)
+}
+
+// toastErrf is toastf for failures: red, and held a little longer so there is
+// time to read what went wrong.
+func (m *Model) toastErrf(format string, a ...any) {
+	m.toastf(format, a...)
+	m.toastErr = true
+	m.toastUntil = time.Now().Add(6 * time.Second)
 }
 
 func (m *Model) detailLog(line string) {
@@ -1759,4 +1869,67 @@ func (m *Model) cursorReleaseAsset() (ghapi.RankedReleaseAsset, bool) {
 		}
 	}
 	return ghapi.RankedReleaseAsset{}, false
+}
+
+// canContinueUnverified is true on the setup screen when the sign-in check
+// failed for a reason that is not "signed out" or "gh missing".
+func (m Model) canContinueUnverified() bool {
+	return m.screen == ScreenSetup && errors.Is(m.authErr, ghapi.ErrAuthCheck)
+}
+
+// statusFilters is the cycle of the Builds status filter.
+var statusFilters = []string{"", "success", "failed", "running"}
+
+func runMatchesStatus(r ghapi.Run, f string) bool {
+	switch f {
+	case "success":
+		return r.Finished() && r.Conclusion == "success"
+	case "failed":
+		return r.Finished() && (r.Conclusion == "failure" || r.Conclusion == "timed_out" || r.Conclusion == "startup_failure")
+	case "running":
+		return r.Active()
+	}
+	return true
+}
+
+// cycleStatusFilter moves to the next status filter and re-applies it.
+func (m *Model) cycleStatusFilter() {
+	next := 0
+	for i, f := range statusFilters {
+		if f == m.statusFilter {
+			next = (i + 1) % len(statusFilters)
+		}
+	}
+	m.statusFilter = statusFilters[next]
+	m.setRuns(m.allRuns)
+	switch {
+	case m.statusFilter == "":
+		m.toastf("showing all builds")
+	case len(m.runs.Items) == 0:
+		m.toastf("no %s builds in the loaded list", m.statusFilter)
+	default:
+		m.toastf("showing %s builds (%d of %d)", m.statusFilter, len(m.runs.Items), len(m.allRuns))
+	}
+}
+
+// clearBuildFilters drops the status filter and the search text.
+func (m *Model) clearBuildFilters() bool {
+	if m.statusFilter == "" && m.runs.Filter == "" {
+		return false
+	}
+	m.statusFilter, m.runs.Filter = "", ""
+	m.setRuns(m.allRuns)
+	m.toastf("filters cleared")
+	return true
+}
+
+// refreshArtifactIndex loads the repo-wide artifact listing behind the marks in
+// the Builds list. One call per runs refresh, never overlapping, and skipped
+// for release sources and offline sessions.
+func (m *Model) refreshArtifactIndex() tea.Cmd {
+	if m.artIndexBusy || m.settings.Repo == "" || m.usingReleaseAssets() || errors.Is(m.authErr, ghapi.ErrOffline) {
+		return nil
+	}
+	m.artIndexBusy = true
+	return fetchArtifactIndexCmd(m.settings.Repo)
 }

@@ -4,13 +4,15 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/ThatOn3Gu7/ghapk/internal/config"
 	"github.com/ThatOn3Gu7/ghapk/internal/device"
 	"github.com/ThatOn3Gu7/ghapk/internal/ghapi"
 	"github.com/ThatOn3Gu7/ghapk/internal/tui/components"
+	"github.com/ThatOn3Gu7/ghapk/internal/version"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type planChoice struct {
@@ -42,13 +44,23 @@ type installPlan struct {
 	pkg                      string
 	app                      device.InstalledApp
 	found                    bool
+	// What changed since the last install ("N commits since your last
+	// install"), and a newer run that is still building. Both are courtesies
+	// computed beside the device check; the plan works without them.
+	changes      []ghapi.Commit
+	changesAhead int
+	lastInstall  time.Time
+	building     string
 }
 type planReadyMsg struct {
-	seq   int
-	dev   device.Info
-	pkg   string
-	app   device.InstalledApp
-	found bool
+	seq     int
+	dev     device.Info
+	pkg     string
+	app     device.InstalledApp
+	found   bool
+	changes []ghapi.Commit
+	ahead   int
+	since   time.Time
 }
 
 func (m *Model) beginPlan() tea.Cmd {
@@ -73,6 +85,9 @@ func (m *Model) beginPlan() tea.Cmd {
 		m.toastf("select an available artifact in Builds")
 		return nil
 	}
+	if !m.usingReleaseAssets() {
+		p.building = m.newerActiveRun(p.run)
+	}
 	m.planSeq++
 	p.seq = m.planSeq
 	ctx, cancel := context.WithCancel(context.Background())
@@ -80,6 +95,7 @@ func (m *Model) beginPlan() tea.Cmd {
 	m.plan = p
 	m.modal = ModalPlan
 	settings, seq := p.settings, p.seq
+	headSHA, isRelease := p.run.HeadSHA, m.usingReleaseAssets()
 	return func() tea.Msg {
 		dev := device.ProbeContext(ctx)
 		pkg := settings.PackageName
@@ -93,8 +109,52 @@ func (m *Model) beginPlan() tea.Cmd {
 		if pkg != "" {
 			app, found = device.QueryPackageContext(ctx, pkg)
 		}
-		return planReadyMsg{seq, dev, pkg, app, found}
+		msg := planReadyMsg{seq: seq, dev: dev, pkg: pkg, app: app, found: found}
+		if h, ok := config.History(settings.Repo); ok && !isRelease && h.SHA != "" && headSHA != "" && h.SHA != headSHA {
+			if ahead, commits, err := ghapi.CompareCommits(ctx, settings.Repo, h.SHA, headSHA); err == nil && len(commits) > 0 {
+				msg.changes, msg.ahead = commits, max(ahead, len(commits))
+				if h.When > 0 {
+					msg.since = time.Unix(h.When, 0)
+				}
+			}
+		}
+		return msg
 	}
+}
+
+// newerActiveRun names a run that started after run and is still building, so
+// the plan can warn that a fresher APK may be minutes away.
+func (m *Model) newerActiveRun(run ghapi.Run) string {
+	var best ghapi.Run
+	for _, r := range m.allRuns {
+		if !r.Active() || !r.CreatedAt.After(run.CreatedAt) {
+			continue
+		}
+		if best.ID == 0 || r.CreatedAt.After(best.CreatedAt) {
+			best = r
+		}
+	}
+	if best.ID == 0 {
+		return ""
+	}
+	if best.RunNumber > 0 {
+		return fmt.Sprintf("#%d", best.RunNumber)
+	}
+	return fmt.Sprintf("#%d", best.ID)
+}
+
+// agoText is "3h ago" for recent times and a plain date for old ones.
+func agoText(t time.Time) string {
+	r := reltime(t)
+	switch {
+	case r == "":
+		return ""
+	case r == "now":
+		return "just now"
+	case strings.Contains(r, "-"):
+		return r
+	}
+	return r + " ago"
 }
 
 type planLayout struct {
@@ -148,7 +208,17 @@ func (p *installPlan) layout(m *Model) planLayout {
 		if title != "" {
 			add(st.Text.Render("          " + safeJobText(title)))
 		}
-		add(st.Dim.Render("          " + safeJobText(p.repo)))
+		meta := safeJobText(p.repo)
+		if !choice.release {
+			if when := agoText(p.run.CreatedAt); when != "" {
+				who := ""
+				if p.run.Actor.Login != "" {
+					who = " · " + safeJobText(p.run.Actor.Login)
+				}
+				meta = when + who + " · " + meta
+			}
+		}
+		add(st.Dim.Render(components.Clamp("          "+meta, w)))
 		add("")
 	}
 	if p.loading {
@@ -183,7 +253,13 @@ func (p *installPlan) layout(m *Model) planLayout {
 		}
 		add(label("Installed") + st.Text.Render(safeJobText(installed)))
 	}
-	add(label("Version") + st.Dim.Render("unknown until downloaded"))
+	add(p.versionLine(m, label, choice))
+	if note := p.versionNote(m, choice); note != "" {
+		add(note)
+	}
+	if p.building != "" {
+		add("          " + st.Warn.Render(st.G.Running+" "+safeJobText(p.building)+" is still building, so a newer APK may follow"))
+	}
 	if m.height >= 24 {
 		add("")
 	}
@@ -244,6 +320,12 @@ func (p *installPlan) layout(m *Model) planLayout {
 		row := sty.Render(prefix+name) + strings.Repeat(" ", padding) + st.Dim.Render(size)
 		out.choices = append(out.choices, rect{x: 0, y: len(out.lines), w: w, h: 1})
 		add(row)
+	}
+	if sec := p.commitLines(m, w, len(out.lines), buttonLines); len(sec) > 0 {
+		add("")
+		for _, ln := range sec {
+			add(ln)
+		}
 	}
 	add("")
 	if horizontal {
@@ -389,4 +471,209 @@ func (m Model) handlePlanMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// installedVersionText is what the device reports, "" when unknown.
+func (p *installPlan) installedVersionText() string {
+	if !p.found {
+		return ""
+	}
+	if p.app.VersionName != "" {
+		return p.app.VersionName
+	}
+	if p.app.VersionCode > 0 {
+		return fmt.Sprint(p.app.VersionCode)
+	}
+	return ""
+}
+
+// versionLine shows the version in the artifact's name next to what is
+// installed, e.g. "1.4.2  →  installed 1.4.1".
+func (p *installPlan) versionLine(m *Model, label func(string) string, c planChoice) string {
+	st := m.downloadStyles()
+	ver := version.Extract(c.name())
+	if ver == "" {
+		return label("Version") + st.Dim.Render("unknown until downloaded")
+	}
+	line := label("Version") + st.Text.Render(ver)
+	if in := p.installedVersionText(); in != "" {
+		line += st.Dim.Render("  " + st.G.Arrow + "  installed " + safeJobText(in))
+	}
+	return line
+}
+
+// versionNote says whether installing moves forward, back or nowhere. It only
+// speaks when both versions are known and comparable.
+func (p *installPlan) versionNote(m *Model, c planChoice) string {
+	st := m.downloadStyles()
+	ver := version.Extract(c.name())
+	in := version.Extract(p.installedVersionText())
+	if p.loading || ver == "" || in == "" {
+		return ""
+	}
+	pad := "          "
+	switch version.Compare(ver, in) {
+	case -1:
+		return pad + st.Err.Render(st.G.Fail+" older than what is installed")
+	case 0:
+		return pad + st.Warn.Render(st.G.Dot+" same version as installed")
+	}
+	return pad + st.OK.Render(st.G.OK+" newer than installed")
+}
+
+// commitLines is the "since your last install" section, trimmed to the room
+// the dialog has left so the buttons never fall off a short screen.
+func (p *installPlan) commitLines(m *Model, w, used, buttonLines int) []string {
+	if len(p.changes) == 0 || p.loading {
+		return nil
+	}
+	st := m.downloadStyles()
+	room := m.height - 4 - used - buttonLines - 3 // heading, spacer before and after
+	if room < 2 {
+		return nil
+	}
+	count := p.changesAhead
+	if count < len(p.changes) {
+		count = len(p.changes)
+	}
+	noun := "commits"
+	if count == 1 {
+		noun = "commit"
+	}
+	head := fmt.Sprintf("Since your last install  %s  %d %s", st.G.Dot, count, noun)
+	if !p.lastInstall.IsZero() {
+		head += " · " + agoText(p.lastInstall)
+	}
+	lines := []string{st.PanelTitleFoc.Render(components.Clamp(head, w))}
+	show := p.changes
+	// Newest first: the commit people care about is the latest one.
+	rev := make([]ghapi.Commit, len(show))
+	for i, c := range show {
+		rev[len(show)-1-i] = c
+	}
+	limit := min(len(rev), min(6, room))
+	more := len(rev) - limit
+	if more > 0 && limit > 1 {
+		limit--
+		more++
+	}
+	for _, c := range rev[:limit] {
+		subject := components.Clamp(safeJobText(c.Subject()), max(1, w-9))
+		lines = append(lines, st.Dim.Render(c.Short()+" ")+st.Text.Render(subject))
+	}
+	if more > 0 {
+		lines = append(lines, st.Dim.Render(fmt.Sprintf("%s…and %d more", "        ", more)))
+	}
+	return lines
+}
+
+// installNewest is the one-key path: pick the newest successful build, load its
+// artifacts if needed, and open the same install preview as everywhere else.
+// Nothing is installed without the preview's confirmation.
+func (m *Model) installNewest() tea.Cmd {
+	if m.settings.Repo == "" {
+		m.toastf("pick a repository first")
+		return nil
+	}
+	m.pendingPlanRun = 0
+	if m.settings.Source == "releases" {
+		m.focus = PanelRuns
+		return m.beginPlan()
+	}
+	// In auto mode the cursor may sit on a run without artifacts, which makes
+	// the screen show release assets. "Newest build" still means Actions first.
+	for _, r := range m.allRuns {
+		if !r.Finished() || r.Conclusion != "success" {
+			continue
+		}
+		// Once the artifact index is known, skip good builds that shipped nothing.
+		if m.artIndex != nil && m.artIndex[r.ID] == 0 && len(m.runCache[r.ID]) == 0 {
+			continue
+		}
+		m.focus = PanelRuns
+		// The newest good build may be hidden by a status filter; show it.
+		if m.statusFilter != "" && !runMatchesStatus(r, m.statusFilter) {
+			m.statusFilter = ""
+			m.setRuns(m.allRuns)
+		}
+		m.selectedRunID, m.selectedArtID = r.ID, 0
+		m.runs.SelectByID(runRowByID(m.runs.Items, r.ID))
+		if len(m.runCache[r.ID]) > 0 {
+			return m.beginPlan()
+		}
+		m.pendingPlanRun = r.ID
+		m.fetching[r.ID] = true
+		m.toastf("finding the newest build…")
+		return fetchArtifactsCmd(m.settings.Repo, r.ID)
+	}
+	if m.usingReleaseAssets() {
+		m.focus = PanelRuns
+		return m.beginPlan() // no Actions build to offer: fall back to the release
+	}
+	if len(m.allRuns) == 0 && !m.runsLoaded {
+		m.toastf("builds are still loading")
+	} else {
+		m.toastf("no successful build to install")
+	}
+	return nil
+}
+
+// toggleArmedRun marks the selected running build to be installed the moment it
+// succeeds, or cancels that wait. The refresh tick polls while armed.
+func (m *Model) toggleArmedRun() tea.Cmd {
+	run, ok := m.selectedRun()
+	if !ok {
+		return nil
+	}
+	if m.armedRun == run.ID {
+		m.armedRun = 0
+		m.toastf("no longer waiting for #%d", run.RunNumber)
+		return nil
+	}
+	if !run.Active() {
+		m.toastf("that build is not running — use %s to install it", m.keyName("dashboard", "i"))
+		return nil
+	}
+	m.armedRun = run.ID
+	m.toastf("waiting for #%d — the install preview opens when it succeeds", run.RunNumber)
+	m.refreshSeq++
+	return refreshTickCmd(m.effectiveRefreshSecs(), m.refreshSeq)
+}
+
+// checkArmedRun runs after each runs refresh. Success opens the preview (the
+// same one as everywhere, so nothing installs unconfirmed); a failed or
+// cancelled run ends the wait and says so.
+func (m *Model) checkArmedRun() tea.Cmd {
+	if m.armedRun == 0 {
+		return nil
+	}
+	for _, r := range m.allRuns {
+		if r.ID != m.armedRun {
+			continue
+		}
+		switch {
+		case r.Active():
+			return nil
+		case r.Conclusion == "success":
+			m.armedRun = 0
+			if m.modal != ModalNone {
+				m.toastf("#%d finished — press %s to install it", r.RunNumber, m.keyName("dashboard", "I"))
+				return nil
+			}
+			m.statusFilter = ""
+			m.setRuns(m.allRuns)
+			m.selectedRunID, m.selectedArtID, m.focus = r.ID, 0, PanelRuns
+			m.runs.SelectByID(runRowByID(m.runs.Items, r.ID))
+			m.pendingPlanRun = r.ID
+			m.fetching[r.ID] = true
+			m.toastf("#%d finished", r.RunNumber)
+			return fetchArtifactsCmd(m.settings.Repo, r.ID)
+		default:
+			m.armedRun = 0
+			m.toastErrf("#%d ended as %s — nothing to install", r.RunNumber, strings.ReplaceAll(r.Conclusion, "_", " "))
+			return nil
+		}
+	}
+	m.armedRun = 0 // the run left the list
+	return nil
 }
