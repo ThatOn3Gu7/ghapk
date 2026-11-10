@@ -163,13 +163,16 @@ precedence for that launch.
 | `Enter` / `→` | Open a build’s artifacts; Enter on an artifact opens the install plan |
 | **Mouse / Touch** | Tap to select; tap the repo name for the picker or a bottom hint to run it; tap outside an overlay to dismiss it; swipe Device details, or swipe/drag the scroll bar in Help |
 | `d` | Download selected artifact to local cache |
-| `i` | Check the device, choose an artifact, then install or download only |
+| `i` | Check the device, choose an artifact, then install or download only. The preview shows when and by whom the build was made, whether its version is newer or older than what is installed, and the commits since your last install |
+| `I` | Install the newest successful build that has an artifact (same preview first) |
+| `n` | On a running build: open the install preview the moment it succeeds |
+| `e` | On a failed build: show the failing job and step with the log lines around the first error (on Repos: edit the entry) |
+| `f` / `x` | On Builds: cycle the status filter (all · success · failed · running) / clear filters. On Repos: star / remove |
 | `R` | Repository picker (accessible GitHub repos, recents, git remote, search) |
 | `B` | Switch the Actions branch filter (release assets are not branch-filtered) |
 | `r` | Refresh current view from GitHub API |
 | `w` | Toggle watch mode (live polling for running CI workflows) |
 | `/` | Real-time case-insensitive substring filter within current panel |
-| `f` | Star / favorite a repository |
 | `s` | In Downloads, focus saved APKs; in Settings, switch save scope |
 | `t` | Cycle color theme (`action`, `mocha`, `emerald`, `paper`) |
 | `D` | Run diagnostic Doctor tool |
@@ -430,6 +433,38 @@ Cancelled downloads restart from the beginning. Cancellation cannot undo an
 installer handoff already made to Android. An installer launch is reported as
 unconfirmed unless installation can actually be verified on the device.
 
+
+### When something goes wrong
+
+Failures are classified and explained instead of dumped as raw `gh` output.
+The Builds panel keeps an error card on screen (it does not vanish with the
+toast) naming what failed, the exact API call, and the keys that fix it.
+
+| You see | Meaning | Do this |
+| --- | --- | --- |
+| **GitHub says you are signed out** | `gh` has no valid login | `gh auth login` |
+| **GitHub refused access** | token lacks scope, or no access to the repo | `gh auth refresh -s repo,workflow` |
+| **GitHub request limit reached** | API rate limit | wait for the reset, then `r` |
+| **Repository not found** | wrong `owner/name`, or no access | `R` to pick a repo |
+| **Not found on GitHub** on an Actions call | the repository is fine; a saved workflow/branch filter is stale | `W` / `B`, or clear the filter |
+| **Cannot reach GitHub** / **took too long** | network | check the connection, `r` |
+
+Transient failures (HTTP 5xx, connection errors) are retried up to three times
+with a short back-off; auth, 404, 403, rate-limit and timeout errors fail
+immediately because repeating them cannot help. Every failed call is written to
+the Log tab with its endpoint and status.
+
+A configured `workflow` that does not exist in the current repository (a
+leftover from another repo, an old config, or another tool sharing
+`~/.config/ghapk`) no longer hides every build: the TUI lists all workflows,
+shows `wf:<name> ≠` in the header and says so in a toast. The non-interactive
+`get` command stays strict and exits with an explanation instead, because a
+script should never silently take an artifact from a different workflow.
+Workflows can be named by display name, file name, path, file name without
+extension, or numeric id; disabled workflows still resolve.
+
+A broken `keybinding.json` no longer stops the program from starting: the built-in
+keys are used, the file is left untouched, and a red notice names the problem.
 
 ---
 
